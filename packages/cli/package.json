@@ -1,0 +1,23 @@
+{
+  "name": "@agentsync/cli",
+  "version": "0.1.0",
+  "description": "The AgentSync CLI scaffold",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "agentsync": "dist/index.js"
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^7.0.2"
+  }
+}

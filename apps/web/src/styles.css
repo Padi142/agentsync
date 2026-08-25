@@ -1,0 +1,319 @@
+:root {
+  color: #25221f;
+  background: #f6f1e8;
+  font-family: 'Avenir Next', 'Segoe UI', sans-serif;
+  font-synthesis: none;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    linear-gradient(rgba(58, 50, 43, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(58, 50, 43, 0.06) 1px, transparent 1px),
+    #f6f1e8;
+  background-size: 28px 28px;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #f47a29;
+  outline-offset: 3px;
+}
+
+.topbar {
+  align-items: center;
+  border-bottom: 1px solid rgba(37, 34, 31, 0.15);
+  display: flex;
+  justify-content: space-between;
+  margin: 0 auto;
+  max-width: 1240px;
+  padding: 22px 32px;
+}
+
+.brand {
+  align-items: center;
+  color: inherit;
+  display: inline-flex;
+  font-size: 1.05rem;
+  font-weight: 700;
+  gap: 9px;
+  letter-spacing: -0.03em;
+  text-decoration: none;
+}
+
+.brand-mark {
+  align-items: center;
+  background: #25221f;
+  color: #b9e83a;
+  display: inline-flex;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.1rem;
+  height: 28px;
+  justify-content: center;
+  transform: rotate(-8deg);
+  width: 28px;
+}
+
+.topbar-note,
+.eyebrow,
+.kicker,
+.status-line,
+.file-item small {
+  color: #756d64;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+}
+
+.page-shell {
+  margin: 0 auto;
+  max-width: 1240px;
+  padding: 82px 32px 110px;
+}
+
+.dashboard {
+  display: grid;
+  gap: 48px;
+  grid-template-columns: minmax(260px, 0.75fr) minmax(0, 1.25fr);
+}
+
+.intro {
+  align-self: start;
+  max-width: 450px;
+  padding-top: 20px;
+}
+
+.kicker,
+.eyebrow {
+  margin: 0 0 13px;
+  text-transform: lowercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: clamp(2.6rem, 5vw, 4.9rem);
+  font-weight: 400;
+  letter-spacing: -0.065em;
+  line-height: 0.98;
+  margin-bottom: 24px;
+}
+
+h2 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 2rem;
+  font-weight: 400;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  margin-bottom: 0;
+}
+
+.lede {
+  color: #5d554d;
+  font-size: 1rem;
+  max-width: 36ch;
+}
+
+.status-line {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-top: 36px;
+}
+
+.status-dot {
+  background: #f47a29;
+  border-radius: 50%;
+  height: 8px;
+  width: 8px;
+}
+
+.auth-panel,
+.workspace-panel {
+  background: rgba(255, 252, 247, 0.75);
+  border: 1px solid rgba(37, 34, 31, 0.18);
+  box-shadow: 10px 10px 0 rgba(37, 34, 31, 0.08);
+  padding: 30px;
+}
+
+.panel-heading {
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(37, 34, 31, 0.13);
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 30px;
+  padding-bottom: 22px;
+}
+
+.quiet-button,
+.new-file {
+  background: transparent;
+  border: 0;
+  color: #5d554d;
+  cursor: pointer;
+  font-size: 0.82rem;
+  padding: 5px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.auth-form,
+.editor {
+  display: grid;
+  gap: 20px;
+}
+
+label {
+  color: #5d554d;
+  display: grid;
+  font-size: 0.8rem;
+  gap: 8px;
+}
+
+input,
+textarea {
+  background: #fffdf9;
+  border: 1px solid rgba(37, 34, 31, 0.24);
+  border-radius: 0;
+  color: #25221f;
+  padding: 11px 12px;
+  width: 100%;
+}
+
+textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.primary-button {
+  background: #25221f;
+  border: 1px solid #25221f;
+  color: #fffdf9;
+  cursor: pointer;
+  justify-self: start;
+  padding: 11px 18px;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.primary-button:hover {
+  background: #f47a29;
+  border-color: #f47a29;
+  color: #25221f;
+}
+
+.workspace-grid {
+  display: grid;
+  gap: 26px;
+  grid-template-columns: minmax(140px, 0.45fr) minmax(0, 1fr);
+}
+
+.file-list {
+  align-content: start;
+  display: grid;
+  gap: 7px;
+}
+
+.file-item {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  text-align: left;
+}
+
+.file-item:hover,
+.file-item.active {
+  background: rgba(244, 122, 41, 0.1);
+  border-left-color: #f47a29;
+}
+
+.file-item small {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+}
+
+.new-file {
+  justify-self: start;
+  margin-top: 6px;
+}
+
+.empty-state,
+.notice,
+.loading {
+  color: #756d64;
+  font-size: 0.85rem;
+}
+
+.notice {
+  border-left: 2px solid #b9e83a;
+  margin: 24px 0 0;
+  padding-left: 10px;
+}
+
+.loading {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 780px) {
+  .topbar {
+    padding: 18px 20px;
+  }
+
+  .topbar-note {
+    display: none;
+  }
+
+  .page-shell {
+    padding: 50px 20px 80px;
+  }
+
+  .dashboard,
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard {
+    gap: 34px;
+  }
+
+  .auth-panel,
+  .workspace-panel {
+    padding: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .primary-button {
+    transition: none;
+  }
+}

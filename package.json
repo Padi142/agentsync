@@ -1,0 +1,15 @@
+{
+  "name": "agentsync",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build": "pnpm --filter @agentsync/web build && pnpm --filter @agentsync/cli build",
+    "dev": "pnpm --filter @agentsync/web dev",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @agentsync/web db:generate",
+    "db:migrate:local": "pnpm --filter @agentsync/web db:migrate:local",
+    "cf-typegen": "pnpm --filter @agentsync/web cf-typegen"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agentsync-web",
+  "main": "src/server.ts",
+  "compatibility_date": "2026-09-07",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "agentsync-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "drizzle/migrations",
+      "migrations_pattern": "drizzle/migrations/*.sql"
+    }
+  ],
+  "vars": {
+    "BETTER_AUTH_URL": "http://localhost:3000"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@agentsync/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply agentsync-db --local --config wrangler.jsonc",
+    "cf-typegen": "wrangler types --config wrangler.jsonc",
+    "deploy": "pnpm build && wrangler deploy --config wrangler.jsonc"
+  },
+  "dependencies": {
+    "@better-auth/drizzle-adapter": "^1.7.3",
+    "@orpc/client": "^1.15.0",
+    "@orpc/server": "^1.15.0",
+    "@tanstack/react-router": "^1.170.33",
+    "@tanstack/react-start": "^1.168.50",
+    "better-auth": "^1.7.3",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.7",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.54.4",
+    "@cloudflare/workers-types": "^5.20260907.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "wrangler": "^4.129.0"
+  }
+}
