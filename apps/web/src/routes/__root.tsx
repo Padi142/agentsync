@@ -2,7 +2,6 @@ import {
   createRootRoute,
   HeadContent,
   Link,
-  Outlet,
   Scripts,
 } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
@@ -22,10 +21,10 @@ export const Route = createRootRoute({
     ],
     links: [{ rel: 'stylesheet', href: appCss }],
   }),
-  component: RootDocument,
+  shellComponent: RootDocument,
 });
 
-function RootDocument() {
+function RootDocument({ children }: { children: ReactNode }) {
   return (
     <DocumentShell>
       <header className="topbar">
@@ -38,7 +37,7 @@ function RootDocument() {
         <span className="topbar-note">Keep your agent context close</span>
       </header>
       <main className="page-shell">
-        <Outlet />
+        {children}
       </main>
     </DocumentShell>
   );
