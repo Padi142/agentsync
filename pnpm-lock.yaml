@@ -25,6 +25,9 @@ importers:
       '@tanstack/react-start':
         specifier: ^1.168.50
         version: 1.168.50(esbuild@0.28.2)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.7)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
+      '@workos-inc/node':
+        specifier: ^12.0.0
+        version: 12.0.0
       better-auth:
         specifier: ^1.7.3
         version: 1.7.3(@cloudflare/workers-types@5.20260907.1)(@tanstack/react-start@1.168.50(esbuild@0.28.2)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.7)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)))(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@cloudflare/workers-types@5.20260907.1)(kysely@0.29.5))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1567,6 +1570,10 @@ packages:
         optional: true
       oxc-transform-react:
         optional: true
+
+  '@workos-inc/node@12.0.0':
+    resolution: {integrity: sha512-ujB+xdaOHUrfHe5oMnNOrHV/g+AzZ+5VPCGayDLC4mHWTBHCZg6U5e9X8EDCmKSir8pSXAmJaJylTJNRZ+BSew==}
+    engines: {node: '>=22.11.0'}
 
   ansis@4.3.1:
     resolution: {integrity: sha512-BJ8/l4R5LRE7hW9WdSuGYrLSHi2ynxeFpDFbH0K/CgNeY/tyhk+vO6TYxXC5r5CpUhNVX310xzPsN/H9lCdfOA==}
@@ -3422,6 +3429,8 @@ snapshots:
     dependencies:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)
+
+  '@workos-inc/node@12.0.0': {}
 
   ansis@4.3.1: {}
 

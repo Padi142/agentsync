@@ -13,9 +13,7 @@
       "migrations_pattern": "drizzle/migrations/*.sql"
     }
   ],
-  "vars": {
-    "BETTER_AUTH_URL": "http://localhost:3000"
-  },
+  "vars": {},
   "observability": {
     "enabled": true
   }

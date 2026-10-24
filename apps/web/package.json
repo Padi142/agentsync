@@ -19,6 +19,7 @@
     "@orpc/server": "^1.15.0",
     "@tanstack/react-router": "^1.170.33",
     "@tanstack/react-start": "^1.168.50",
+    "@workos-inc/node": "^12.0.0",
     "better-auth": "^1.7.3",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.7",

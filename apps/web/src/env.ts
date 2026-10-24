@@ -1,5 +1,7 @@
 export interface Env {
   DB: D1Database;
-  BETTER_AUTH_SECRET: string;
-  BETTER_AUTH_URL: string;
+  WORKOS_API_KEY: string;
+  WORKOS_CLIENT_ID: string;
+  WORKOS_COOKIE_PASSWORD: string;
+  WORKOS_REDIRECT_URI: string;
 }

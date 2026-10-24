@@ -5,8 +5,10 @@ import type { Env } from './env';
 const isApiPath = (pathname: string) =>
   pathname === '/rpc' ||
   pathname.startsWith('/rpc/') ||
-  pathname === '/api/auth' ||
-  pathname.startsWith('/api/auth/');
+  pathname === '/login' ||
+  pathname === '/callback' ||
+  pathname === '/logout' ||
+  pathname === '/api/auth/get-session';
 
 export default createServerEntry({
   fetch(request, env) {

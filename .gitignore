@@ -9,3 +9,5 @@ dist/
 .dev.vars.*
 *.local
 .DS_Store
+.env.local
+.env.local.bak

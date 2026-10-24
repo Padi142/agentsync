@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@9.1.1",
   "scripts": {
     "build": "pnpm --filter @agentsync/web build && pnpm --filter @agentsync/cli build",
     "dev": "pnpm --filter @agentsync/web dev",

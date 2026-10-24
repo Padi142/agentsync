@@ -127,10 +127,15 @@ const session = base.handler(async ({ context }) => {
     return null;
   }
 
+  const user = context.session.user;
+  const name = [user.firstName, user.lastName]
+    .filter(Boolean)
+    .join(' ') || user.email;
+
   return {
-    id: context.session.user.id,
-    name: context.session.user.name,
-    email: context.session.user.email,
+    id: user.id,
+    name,
+    email: user.email,
   };
 });
 

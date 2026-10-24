@@ -27,10 +27,6 @@ function HomePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [path, setPath] = useState('AGENTS.md');
   const [content, setContent] = useState('# Shared agent instructions\n');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -95,42 +91,6 @@ function HomePage() {
       .catch(() => setNotice('Could not load your files.'));
   }, [user]);
 
-  const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setNotice('');
-    const endpoint =
-      mode === 'sign-in' ? '/api/auth/sign-in/email' : '/api/auth/sign-up/email';
-    const body =
-      mode === 'sign-in'
-        ? { email, password }
-        : { name, email, password };
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      setNotice('That account request was not accepted.');
-      return;
-    }
-
-    const sessionResponse = await fetch('/api/auth/get-session');
-    const payload: unknown = await sessionResponse.json();
-    if (isRecord(payload) && isRecord(payload.user)) {
-      const account = payload.user;
-      if (
-        typeof account.id === 'string' &&
-        typeof account.name === 'string' &&
-        typeof account.email === 'string'
-      ) {
-        setUser({ id: account.id, name: account.name, email: account.email });
-        setNotice('Signed in.');
-      }
-    }
-  };
-
   const saveFile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!user) return;
@@ -170,9 +130,8 @@ function HomePage() {
   };
 
   const signOut = async () => {
-    await fetch('/api/auth/sign-out', { method: 'POST' });
-    setUser(null);
-    setNotice('Signed out.');
+    // Redirect to WorkOS logout which will clear session and redirect back
+    window.location.href = '/logout';
   };
 
   if (loading) {
@@ -266,46 +225,17 @@ function HomePage() {
           <div className="panel-heading">
             <div>
               <p className="eyebrow">Start here</p>
-              <h2>{mode === 'sign-in' ? 'Open your shelf' : 'Create your shelf'}</h2>
+              <h2>Open your shelf</h2>
             </div>
-            <button
-              className="quiet-button"
-              type="button"
-              onClick={() => setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')}
-            >
-              {mode === 'sign-in' ? 'Create account' : 'I have an account'}
-            </button>
           </div>
-          <form className="auth-form" onSubmit={submitAuth}>
-            {mode === 'sign-up' ? (
-              <label>
-                Name
-                <input value={name} onChange={(event) => setName(event.target.value)} required />
-              </label>
-            ) : null}
-            <label>
-              Email
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                required
-              />
-            </label>
-            <label>
-              Password
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                minLength={8}
-                required
-              />
-            </label>
-            <button className="primary-button" type="submit">
-              {mode === 'sign-in' ? 'Sign in' : 'Create account'}
-            </button>
-          </form>
+          <div className="auth-form">
+            <p style={{ marginBottom: '1rem', color: 'var(--color-text-secondary)' }}>
+              Sign in to access your instruction files and keep them synced across your machines.
+            </p>
+            <a href="/login" className="primary-button" style={{ display: 'inline-block', textAlign: 'center', textDecoration: 'none' }}>
+              Sign in
+            </a>
+          </div>
           {notice ? <p className="notice" role="status">{notice}</p> : null}
         </section>
       )}
