@@ -14,8 +14,11 @@ export const api = new Hono<HonoEnv>();
 api.use('*', async (c, next) => {
   c.header('Cache-Control', 'private, no-store');
   c.header('Referrer-Policy', 'no-referrer');
+  // Browsers send Origin on every POST. A request with neither Origin nor cookies (the CLI)
+  // carries no ambient credentials, so it cannot be a cross-site forgery.
+  const origin = c.req.header('Origin');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method) &&
-      c.req.header('Origin') !== getAppOrigin(c.env)) {
+      (origin ? origin !== getAppOrigin(c.env) : c.req.header('Cookie') !== undefined)) {
     return c.json({ error: 'Invalid request origin.' }, 403);
   }
   await next();

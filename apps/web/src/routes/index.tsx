@@ -1,32 +1,22 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useEffect, useState, type FormEvent } from 'react';
-import { createORPCClient } from '@orpc/client';
+import { createORPCClient, isDefinedError, safe } from '@orpc/client';
 import { RPCLink } from '@orpc/client/fetch';
-import type { RouterClient } from '@orpc/server';
-import type { AppRouter } from '../api/router';
+import type { ContractClient } from '@agentsync/contract';
 
 export const Route = createFileRoute('/')({ component: HomePage });
 
 type User = { id: string; name: string; email: string };
-type FileRecord = {
-  id: string;
-  path: string;
-  content: string;
-  revision: number;
-  updatedAt: string;
-};
 
 const getRpcClient = () => {
   const link = new RPCLink({ url: `${window.location.origin}/rpc` });
-  return createORPCClient<RouterClient<AppRouter>>(link);
+  return createORPCClient<ContractClient>(link);
 };
 
 function HomePage() {
   const [user, setUser] = useState<User | null>(null);
-  const [files, setFiles] = useState<FileRecord[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [path, setPath] = useState('AGENTS.md');
-  const [content, setContent] = useState('# Shared agent instructions\n');
+  const [revision, setRevision] = useState(0);
+  const [text, setText] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -75,64 +65,36 @@ function HomePage() {
 
   useEffect(() => {
     if (!user) {
-      setFiles([]);
-      setSelectedId(null);
+      setRevision(0);
+      setText('');
       return;
     }
 
     getRpcClient()
-      .files.list(undefined)
-      .then((result) => {
-        const nextFiles = result.map((item) => ({
-          ...item,
-          updatedAt: item.updatedAt.toISOString(),
-        }));
-        setFiles(nextFiles);
-        const first = nextFiles[0];
-        if (first) {
-          setSelectedId(first.id);
-          setPath(first.path);
-          setContent(first.content);
-        }
+      .template.get()
+      .then((template) => {
+        setRevision(template.revision);
+        setText(template.text);
       })
-      .catch(() => setNotice('Could not load your files.'));
+      .catch(() => setNotice('Could not load your Template.'));
   }, [user]);
 
-  const saveFile = async (event: FormEvent<HTMLFormElement>) => {
+  const saveTemplate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!user) return;
 
     setNotice('');
-    const client = getRpcClient();
-    try {
-      if (selectedId) {
-        const current = files.find((item) => item.id === selectedId);
-        if (!current) return;
-        const saved = await client.files.update({
-          id: selectedId,
-          path,
-          content,
-          expectedRevision: current.revision,
-        });
-        setFiles((currentFiles) =>
-          currentFiles.map((item) =>
-            item.id === saved.id
-              ? { ...saved, updatedAt: saved.updatedAt.toISOString() }
-              : item,
-          ),
-        );
-        setNotice('Saved.');
-      } else {
-        const created = await client.files.create({ path, content });
-        setFiles((currentFiles) => [
-          ...currentFiles,
-          { ...created, updatedAt: created.updatedAt.toISOString() },
-        ]);
-        setSelectedId(created.id);
-        setNotice('File created.');
-      }
-    } catch {
-      setNotice('Save failed. Refresh and resolve any concurrent edit.');
+    const [error, saved] = await safe(getRpcClient().template.put({ text, expectedRevision: revision }));
+    if (!error) {
+      setRevision(saved.revision);
+      setNotice(`Saved revision ${saved.revision}.`);
+    } else if (isDefinedError(error) && error.code === 'INVALID_TEMPLATE') {
+      const [issue] = error.data.issues;
+      setNotice(`Line ${issue.line}, column ${issue.column}: ${issue.message}`);
+    } else if (isDefinedError(error) && error.code === 'CONFLICT') {
+      setNotice(`The Template changed (now revision ${error.data.currentRevision}). Copy your edit and reload.`);
+    } else {
+      setNotice('Save failed. Please try again.');
     }
   };
 
@@ -158,68 +120,28 @@ function HomePage() {
       </section>
 
       {user ? (
-        <section className="workspace-panel" aria-label="Your instruction files">
+        <section className="workspace-panel" aria-label="Your Template">
           <div className="panel-heading">
             <div>
-              <p className="eyebrow">Your files</p>
-              <h2>Instruction shelf</h2>
+              <p className="eyebrow">Your Global Instructions</p>
+              <h2>Template</h2>
             </div>
             <form action="/logout" method="post">
               <button className="quiet-button" type="submit">Sign out</button>
             </form>
           </div>
-          <div className="workspace-grid">
-            <aside className="file-list">
-              {files.length > 0 ? (
-                files.map((item) => (
-                  <button
-                    className={item.id === selectedId ? 'file-item active' : 'file-item'}
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedId(item.id);
-                      setPath(item.path);
-                      setContent(item.content);
-                    }}
-                  >
-                    <span>{item.path}</span>
-                    <small>rev {item.revision}</small>
-                  </button>
-                ))
-              ) : (
-                <p className="empty-state">No files yet. Add your first one.</p>
-              )}
-              <button
-                className="new-file"
-                type="button"
-                onClick={() => {
-                  setSelectedId(null);
-                  setPath('CLAUDE.md');
-                  setContent('# Shared Claude instructions\n');
-                }}
-              >
-                + New file
-              </button>
-            </aside>
-            <form className="editor" onSubmit={saveFile}>
-              <label>
-                File path
-                <input value={path} onChange={(event) => setPath(event.target.value)} />
-              </label>
-              <label>
-                Content
-                <textarea
-                  value={content}
-                  onChange={(event) => setContent(event.target.value)}
-                  rows={16}
-                  spellCheck={false}
-                />
-              </label>
-              <button className="primary-button" type="submit">
-                {selectedId ? 'Save changes' : 'Create file'}
-              </button>
-            </form>
-          </div>
+          <form className="editor" onSubmit={saveTemplate}>
+            <label>
+              Template <small>rev {revision}</small>
+              <textarea
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                rows={16}
+                spellCheck={false}
+              />
+            </label>
+            <button className="primary-button" type="submit">Save Template</button>
+          </form>
           {notice ? <p className="notice" role="status">{notice}</p> : null}
         </section>
       ) : (

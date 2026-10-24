@@ -4,9 +4,10 @@ AgentSync is an open source starting point for keeping `AGENTS.md`,
 `AGENT.md`, and `CLAUDE.md` instructions available across machines.
 
 The web app uses TanStack Start, WorkOS AuthKit, Cloudflare Workers + D1,
-Drizzle, and a typed oRPC API. It includes a small instruction file editor.
-The sync engine, hook installers, revision history, and CLI authentication
-are not implemented yet.
+Drizzle, and a typed oRPC API that implements `@agentsync/contract`: the
+Template, Machines and their Variables (with revision history), Conflicts, and
+Machine registration through the WorkOS device flow. The CLI, hook installers,
+and the full web UI are not implemented yet.
 
 ## Layout
 
@@ -65,15 +66,33 @@ creating the authorization URL.
   and sets an encrypted HttpOnly session cookie. Cookies are Secure on HTTPS.
 - `GET /api/auth/get-session` returns only the local user's ID, name, and email.
 - `POST /logout` clears the cookie and redirects through WorkOS to end the session.
-- `/rpc/*` uses the same session handling, including refreshed session cookies.
-  File queries are scoped to the local user and updates require the expected revision.
-- Mutating API requests require the configured application's Origin header.
+- `/rpc/*` implements `@agentsync/contract`. A browser authenticates with the session
+  cookie (refreshed as above); a Machine sends `Authorization: Bearer <Machine token>`.
+  Every query is scoped to the caller's user, and a Machine token reaches only its
+  own Machine record and Variables. Each call with a token updates the Machine's
+  `lastSeenAt`.
+- Mutating API requests must carry the configured application's Origin header, or
+  neither an Origin nor cookies (the CLI), which carries no ambient credentials.
+- `machines.deviceStart`/`devicePoll` run the WorkOS AuthKit CLI Auth device flow
+  server-side. The server remembers each device code (as a hash) until it is used, so
+  unknown or reused codes are `invalid` and a code registers at most one Machine. Only
+  the SHA-256 hash of each Machine token is stored; revoking a Machine deletes it.
+
+Template and Variable writes insert the new revision row and move the head row in one
+D1 batch, conditional on `expectedRevision`; otherwise they fail with `CONFLICT`.
+`conflicts.create` merges the losing edit with the current Template line by line
+(diff3) and marks only the overlapping lines with `<<<<<<<`/`=======`/`>>>>>>>`.
+
+Migration `0003_sync_engine.sql` replaces the old `file` table with the sync tables
+(`template`, `template_revision`, `machine`, `machine_credential`, `machine_variables`,
+`machine_variables_revision`, `conflict`, `device_authorization`). Files saved before
+it are dropped; there is no production data.
 
 Migration `0002_workos_users.sql` adds a unique WorkOS identity to the existing
-user table. Existing files keep their original owner IDs. A WorkOS user with a
+user table. A WorkOS user with a
 verified email can claim the matching legacy account on first sign-in; an
 unverified email or an email already linked to another WorkOS identity cannot.
-New WorkOS users get a local user record before any files are saved.
+New WorkOS users get a local user record before anything is saved.
 
 Better Auth sessions and passwords are no longer used. Existing users sign in
 or create an account through WorkOS. The legacy account/session/verification
@@ -88,11 +107,12 @@ pnpm typecheck
 pnpm build
 ```
 
-Tests use an isolated local D1 database and mock WorkOS token exchanges. They
-cover callback state/PKCE, refresh and logout, CSRF protection, legacy file
-ownership, user isolation, and revision conflicts. To verify the real provider
-flow, open `/login` while signed out, complete AuthKit sign-in, create a file,
-and sign out. This needs valid WorkOS credentials and dashboard URLs.
+Tests use an isolated local D1 database and mock WorkOS token exchanges and
+device endpoints. They cover callback state/PKCE, refresh and logout, CSRF
+protection, legacy user linking, Template revisions, conflicts and rollback, the
+Conflict lifecycle, device registration, the Machine-token boundary, and
+revocation. To verify the real provider flow, open `/login` while signed out,
+complete AuthKit sign-in, save the Template, and sign out. This needs valid WorkOS credentials and dashboard URLs.
 
 ## Deployment
 
