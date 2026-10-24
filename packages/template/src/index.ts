@@ -98,10 +98,20 @@ export function referencedVariables(template: string): string[] {
 
 /**
  * True if the text still contains git-style Conflict markers (`<<<<<<<`, `|||||||`, `>>>>>>>`).
- * A bare `=======` line is not checked, because it is also a Markdown heading underline.
+ * A leftover `=======` separator is reported by `suspectedConflictMarkers` instead.
  */
 export function hasConflictMarkers(text: string): boolean {
   return /^(<{7}|\|{7}|>{7})(?![<|>])/m.test(text);
+}
+
+/**
+ * The 1-based lines that are exactly `=======`: possibly a leftover Conflict separator, but
+ * indistinguishable from a Markdown heading underline, so callers should warn, not block.
+ */
+export function suspectedConflictMarkers(text: string): number[] {
+  return text
+    .split('\n')
+    .flatMap((line, i) => (/^={7}\r?$/.test(line) ? [i + 1] : []));
 }
 
 /** True if users may set a Machine Variable with this name: not reserved, and referenceable. */
@@ -147,6 +157,8 @@ type Node =
 const IF = /^if\s+([\w.]+)\s*(==|!=)\s*"([^"]*)"$/;
 const NAME = /^[A-Za-z_]\w*$/;
 const KEYWORDS = ['if', 'else', 'end'];
+// Bounds the recursion in render and referencedVariables.
+const MAX_NESTING = 64;
 const TRAILING = /[ \t]*(\r?\n|$)/y;
 
 function parse(source: string): Node[] {
@@ -158,6 +170,19 @@ function parse(source: string): Node[] {
       node,
     );
   };
+  // The scanner only moves forward, so positions are tracked incrementally to keep parsing linear.
+  let line = 1;
+  let lineStart = 0;
+  let scanned = 0;
+  const positionAt = (offset: number): Position => {
+    for (; scanned < offset; scanned++) {
+      if (source.charCodeAt(scanned) === 10) {
+        line++;
+        lineStart = scanned + 1;
+      }
+    }
+    return { line, column: offset - lineStart + 1 };
+  };
   let index = 0;
   while (index < source.length) {
     const start = source.indexOf('{{', index);
@@ -167,19 +192,20 @@ function parse(source: string): Node[] {
       index = start + 2;
       continue;
     }
-    const position = positionAt(source, start);
+    const position = positionAt(start);
     const fail = (message: string): never => {
       throw new TemplateSyntaxError(message, position);
     };
-    const end = source.indexOf('}}', start + 2);
+    const end = closingDelimiter(source, start + 2);
     if (end === -1) fail('Unclosed Expression: add a matching }}');
     const tag = source.slice(start + 2, end).trim();
     // A block tag alone on its line takes the whole line with it, so it leaves no blank line.
-    const lineStart = source.lastIndexOf('\n', start - 1) + 1;
+    // If the line started before `index`, an earlier Expression shares it.
     TRAILING.lastIndex = end + 2;
     const trailing = TRAILING.exec(source);
     const standalone =
       /^(if|else|end)(\s|$)/.test(tag) &&
+      lineStart >= index &&
       /^[ \t]*$/.test(source.slice(lineStart, start)) &&
       trailing !== null;
     push({
@@ -196,6 +222,9 @@ function parse(source: string): Node[] {
           'Malformed {{if}}: expected {{if name == "value"}} or {{if name != "value"}}',
         );
       checkName(name, fail);
+      if (open.length === MAX_NESTING) {
+        fail(`{{if}} blocks can only be nested ${MAX_NESTING} deep`);
+      }
       const node: IfNode = {
         type: 'if',
         name,
@@ -229,17 +258,20 @@ function parse(source: string): Node[] {
   return root;
 }
 
+/** The index of the `}}` that closes an Expression, skipping any inside a quoted value; -1 if none. */
+function closingDelimiter(source: string, from: number): number {
+  let quoted = false;
+  for (let i = from; i < source.length - 1; i++) {
+    if (source[i] === '"') quoted = !quoted;
+    else if (!quoted && source[i] === '}' && source[i + 1] === '}') return i;
+  }
+  return -1;
+}
+
 function checkName(name: string, fail: (message: string) => never): void {
   if (isBuiltin(name)) return;
   if (name === 'machine' || name.startsWith('machine.')) {
     fail(`Unknown Built-in Variable "${name}"`);
   }
   if (!isSettableVariableName(name)) fail(`Invalid Variable name "${name}"`);
-}
-
-function positionAt(source: string, offset: number): Position {
-  const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
-  let line = 1;
-  for (let i = 0; i < lineStart; i++) if (source[i] === '\n') line++;
-  return { line, column: offset - lineStart + 1 };
 }

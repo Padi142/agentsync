@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   hasConflictMarkers,
   isSettableVariableName,
+  suspectedConflictMarkers,
   referencedVariables,
   render,
   TemplateSyntaxError,
@@ -65,6 +66,23 @@ describe('render', () => {
     };
     expect(render(template, codexOnLinux).text).toBe('linux');
   });
+
+  it.each([
+    ['}}', '==', 'yes'],
+    ['}}', '!=', 'no'],
+    ['{{', '==', 'yes'],
+    ['{{', '!=', 'no'],
+  ])(
+    'finds the closing }} outside a quoted %s in an %s comparison',
+    (delimiter, operator, expected) => {
+      const template = `{{if x ${operator} "a${delimiter}b"}}yes{{else}}no{{end}}`;
+      const context = { ...laptop, variables: { x: `a${delimiter}b` } };
+      expect(render(template, context)).toEqual({
+        text: expected,
+        warnings: [],
+      });
+    },
+  );
 
   it('compares a missing Variable as empty and warns', () => {
     const { text, warnings } = render('{{if pager == ""}}none{{end}}', laptop);
@@ -268,6 +286,54 @@ describe('validate', () => {
   });
 });
 
+describe('large Templates', () => {
+  // Sized so a parser that rescans the source per Expression overruns the default test timeout
+  // several times over, while a linear one takes milliseconds. No timing threshold is asserted.
+  const lines = 30_000;
+
+  it('validates many lines of Expressions and positions an error on the last line', () => {
+    const template = '{{agent}}\n'.repeat(lines);
+    expect(validate(template)).toBeNull();
+    expect(validate(template + '  {{end}}')).toEqual({
+      line: lines + 1,
+      column: 3,
+      message: '{{end}} has no matching {{if}}',
+    });
+  });
+
+  it('validates many Expressions on one line and positions an error at its end', () => {
+    const template = '{{agent}}'.repeat(lines);
+    expect(validate(template)).toBeNull();
+    expect(validate(template + '{{end}}')).toMatchObject({
+      line: 1,
+      column: lines * '{{agent}}'.length + 1,
+    });
+  });
+});
+
+describe('nesting', () => {
+  const nested = (depth: number) =>
+    '{{if agent == "claude"}}'.repeat(depth) +
+    '{{editor}}' +
+    '{{end}}'.repeat(depth);
+
+  it('renders {{if}} blocks nested 64 deep', () => {
+    expect(validate(nested(64))).toBeNull();
+    expect(render(nested(64), laptop).text).toBe('helix');
+    expect(referencedVariables(nested(64))).toEqual(['editor']);
+  });
+
+  it('rejects the 65th nested {{if}} at its position', () => {
+    const tag = '{{if agent == "claude"}}';
+    expect(validate(nested(65))).toEqual({
+      line: 1,
+      column: 64 * tag.length + 1,
+      message: '{{if}} blocks can only be nested 64 deep',
+    });
+    expect(() => render(nested(10_000), laptop)).toThrow(TemplateSyntaxError);
+  });
+});
+
 describe('render with malformed syntax', () => {
   it('throws a TemplateSyntaxError instead of producing output', () => {
     const attempt = () => render('ok\n{{end}}', laptop);
@@ -326,6 +392,24 @@ describe('hasConflictMarkers', () => {
     expect(hasConflictMarkers('> quote\n>> nested\n  <<<<<<< indented')).toBe(
       false,
     );
+  });
+});
+
+describe('suspectedConflictMarkers', () => {
+  it('reports the lines of a leftover ======= separator without making it a hard marker', () => {
+    const text = 'left\n=======\nright\r\n=======\r\nend';
+    expect(hasConflictMarkers(text)).toBe(false);
+    expect(suspectedConflictMarkers(text)).toEqual([2, 4]);
+  });
+
+  it('also reports a Markdown heading underline of exactly seven =, which it cannot tell apart', () => {
+    expect(suspectedConflictMarkers('Title\n=======\nBody')).toEqual([2]);
+  });
+
+  it('ignores other runs of =', () => {
+    expect(
+      suspectedConflictMarkers('Title\n========\n======\n a = b\n ======='),
+    ).toEqual([]);
   });
 });
 
