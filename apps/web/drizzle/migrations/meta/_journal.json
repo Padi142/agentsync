@@ -15,6 +15,13 @@
       "when": 1792867331389,
       "tag": "0002_workos_users",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792875862948,
+      "tag": "0003_sync_engine",
+      "breakpoints": true
     }
   ]
 }

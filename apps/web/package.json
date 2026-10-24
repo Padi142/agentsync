@@ -15,13 +15,17 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@agentsync/contract": "workspace:^",
+    "@agentsync/template": "workspace:^",
     "@orpc/client": "^1.15.0",
+    "@orpc/contract": "^1.15.0",
     "@orpc/server": "^1.15.0",
     "@tanstack/react-router": "^1.170.33",
     "@tanstack/react-start": "^1.168.50",
     "@workos-inc/node": "^12.0.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.7",
+    "node-diff3": "^3.2.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zod": "^4.5.4"

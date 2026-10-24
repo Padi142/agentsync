@@ -5,13 +5,16 @@ import { user } from './schema';
 import type { Env } from '../env';
 
 export type AppUser = { id: string; name: string; email: string };
+/** The WorkOS user fields provisioning reads, from a session or a device-flow approval. */
+export type WorkOSIdentity = Pick<WorkOSUser,
+  'id' | 'email' | 'firstName' | 'lastName' | 'emailVerified' | 'profilePictureUrl'>;
 const publicFields = { id: user.id, name: user.name, email: user.email };
 
 export async function findUser(env: Pick<Env, 'DB'>, workosId: string) {
   return createDb(env).select(publicFields).from(user).where(eq(user.workosId, workosId)).get();
 }
 
-export async function provisionUser(env: Pick<Env, 'DB'>, identity: WorkOSUser): Promise<AppUser> {
+export async function provisionUser(env: Pick<Env, 'DB'>, identity: WorkOSIdentity): Promise<AppUser> {
   const db = createDb(env);
   const profile = {
     name: [identity.firstName, identity.lastName].filter(Boolean).join(' ') || identity.email,
