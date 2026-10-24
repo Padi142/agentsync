@@ -89,6 +89,21 @@ describe('template', () => {
     });
   });
 
+  it('accepts exactly one of two concurrent edits from a later revision', async () => {
+    await browser().template.put({ text: 'one', expectedRevision: 0 });
+    await browser().template.put({ text: 'two', expectedRevision: 1 });
+    const results = await Promise.allSettled([
+      browser().template.put({ text: 'a', expectedRevision: 2 }),
+      browser().template.put({ text: 'b', expectedRevision: 2 }),
+    ]);
+    const [won] = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+    expect(results.filter((r) => r.status === 'rejected')).toMatchObject([
+      { reason: { code: 'CONFLICT', data: { currentRevision: 3 } } },
+    ]);
+    expect(await browser().template.get()).toMatchObject({ text: won.text, revision: 3 });
+    expect((await browser().template.history()).map((r) => r.revision)).toEqual([3, 2, 1]);
+  });
+
   it('refuses malformed Expressions with their position', async () => {
     await expect(browser().template.put({ text: 'ok\n{{if x == "y"}} open', expectedRevision: 0 }))
       .rejects.toMatchObject({ code: 'INVALID_TEMPLATE', data: { issues: [{ line: 2, column: expect.any(Number) }] } });
@@ -140,11 +155,42 @@ describe('Machine registration', () => {
 
   it('keeps the raised interval after WorkOS asks to slow down', async () => {
     const { deviceCode } = await cli().machines.deviceStart();
-    workos.set(deviceCode, 'slow_down');
+    workos.slowDown(deviceCode);
     expect(await cli().machines.devicePoll({ ...registration, deviceCode })).toEqual({ status: 'pending', interval: 10 });
     expect(await cli().machines.devicePoll({ ...registration, deviceCode })).toEqual({ status: 'pending', interval: 10 });
-    workos.set(deviceCode, 'slow_down');
+    workos.slowDown(deviceCode);
     expect(await cli().machines.devicePoll({ ...registration, deviceCode })).toEqual({ status: 'pending', interval: 15 });
+  });
+
+  it('counts every slow_down, even from polls that overlap', async () => {
+    const { deviceCode } = await cli().machines.deviceStart();
+    workos.slowDown(deviceCode, 2);
+    const both = await Promise.all([
+      cli().machines.devicePoll({ ...registration, deviceCode }),
+      cli().machines.devicePoll({ ...registration, deviceCode }),
+    ]);
+    expect(both.map((r) => r.status === 'pending' && r.interval).sort()).toEqual([10, 15]);
+    expect(await cli().machines.devicePoll({ ...registration, deviceCode })).toEqual({ status: 'pending', interval: 15 });
+  });
+
+  it('reports the interval as it is after an overlapping slow_down, not as it was when the poll began', async () => {
+    const { deviceCode } = await cli().machines.deviceStart();
+    workos.slowDown(deviceCode);
+    const [slowed, pending] = await Promise.all([
+      cli().machines.devicePoll({ ...registration, deviceCode }),
+      cli().machines.devicePoll({ ...registration, deviceCode }),
+    ]);
+    expect(slowed).toEqual({ status: 'pending', interval: 10 });
+    expect(pending).toEqual({ status: 'pending', interval: 10 });
+  });
+
+  it('registers the Machine to the user who approved it, whoever is signed in where it polls', async () => {
+    const { deviceCode } = await cli().machines.deviceStart();
+    workos.approve(deviceCode, identities.alice);
+    const approved = await browser('bob').machines.devicePoll({ ...registration, deviceCode });
+    expect(approved.status).toBe('approved');
+    expect((await browser('alice').machines.list()).map((m) => m.name)).toEqual(['laptop']);
+    expect(await browser('bob').machines.list()).toEqual([]);
   });
 
   it('registers the Machine once on approval and returns its token', async () => {
@@ -221,6 +267,19 @@ describe('Variables and the Machine-token boundary', () => {
       .toMatchObject({ variables: { editor: 'helix', shell: 'fish' }, revision: 2 });
     expect((await browser().variables.history({ machineId: machine.id })).map((r) => [r.revision, r.variables]))
       .toEqual([[2, { editor: 'helix', shell: 'fish' }], [1, { editor: 'vim' }]]);
+  });
+
+  it('accepts exactly one of two concurrent Variable edits from a later revision', async () => {
+    const { machine, client } = await registerMachine();
+    await client.variables.put({ machineId: machine.id, variables: { v: '1' }, expectedRevision: 0 });
+    const results = await Promise.allSettled([
+      client.variables.put({ machineId: machine.id, variables: { v: 'a' }, expectedRevision: 1 }),
+      browser().variables.put({ machineId: machine.id, variables: { v: 'b' }, expectedRevision: 1 }),
+    ]);
+    expect(results.filter((r) => r.status === 'rejected')).toMatchObject([
+      { reason: { code: 'CONFLICT', data: { currentRevision: 2 } } },
+    ]);
+    expect((await browser().variables.history({ machineId: machine.id })).map((r) => r.revision)).toEqual([2, 1]);
   });
 
   it('refuses Variable names that are reserved or cannot be referenced', async () => {
@@ -390,6 +449,42 @@ describe('Conflicts', () => {
     expect(await browser().template.get()).toMatchObject({ text: 'merged\n', revision: 4 });
     await expect(browser().conflicts.resolve({ conflictId: created.id, text: 'again', expectedRevision: 4 }))
       .rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('lets only one of a resolution and a racing Template save from the same head win', async () => {
+    const created = await lostEdit();
+    const [resolved, saved] = await Promise.allSettled([
+      browser().conflicts.resolve({ conflictId: created.id, text: 'merged\n', expectedRevision: 2 }),
+      browser().template.put({ text: 'other save\n', expectedRevision: 2 }),
+    ]);
+    expect([resolved.status, saved.status].sort()).toEqual(['fulfilled', 'rejected']);
+    const status = (await browser().conflicts.get({ conflictId: created.id })).status;
+    const template = await browser().template.get();
+    expect(template.revision).toBe(3);
+    if (resolved.status === 'fulfilled') {
+      expect([status, template.text]).toEqual(['resolved', 'merged\n']);
+    } else {
+      expect(resolved.reason).toMatchObject({ code: 'CONFLICT', data: { currentRevision: 3 } });
+      expect([status, template.text]).toEqual(['open', 'other save\n']);
+    }
+  });
+
+  it('lets only one of a resolution and a racing discard close the Conflict', async () => {
+    const created = await lostEdit();
+    const [resolved, discarded] = await Promise.allSettled([
+      browser().conflicts.resolve({ conflictId: created.id, text: 'merged\n', expectedRevision: 2 }),
+      browser().conflicts.discard({ conflictId: created.id }),
+    ]);
+    expect([resolved.status, discarded.status].sort()).toEqual(['fulfilled', 'rejected']);
+    const status = (await browser().conflicts.get({ conflictId: created.id })).status;
+    const template = await browser().template.get();
+    if (resolved.status === 'fulfilled') {
+      expect([status, template.revision]).toEqual(['resolved', 3]);
+      expect(discarded).toMatchObject({ reason: { code: 'NOT_FOUND' } });
+    } else {
+      expect(resolved.reason).toMatchObject({ code: 'NOT_FOUND' });
+      expect([status, template.revision]).toEqual(['discarded', 2]);
+    }
   });
 
   it('refuses a resolution with leftover markers or malformed Expressions, but allows a lone =======', async () => {

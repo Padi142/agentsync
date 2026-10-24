@@ -1,8 +1,9 @@
-import { onError } from '@orpc/server';
+import { onError, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { Hono } from 'hono';
+import { HTTPException } from 'hono/http-exception';
 import { router, createRPCContext } from './router';
-import { getAppOrigin, handleLogin, handleCallback, handleLogout, getSession } from '../auth';
+import { getAppOrigin, handleLogin, handleCallback, handleLogout, getSession, type AuthSession } from '../auth';
 import type { Env } from '../env';
 
 type HonoEnv = { Bindings: Env };
@@ -30,9 +31,18 @@ api.post('/logout', handleLogout);
 api.get('/api/auth/get-session', async (c) => c.json(await getSession(c)));
 
 api.use('/rpc/*', async (c, next) => {
+  let session: Promise<AuthSession> | undefined;
+  // Loaded only when a procedure needs it. Inside oRPC, keep the status of auth failures
+  // such as a 503 during a WorkOS outage instead of turning them into a 500.
+  const loadSession = () => session ??= getSession(c).catch((error: unknown) => {
+    if (!(error instanceof HTTPException)) throw error;
+    throw new ORPCError(error.status === 503 ? 'SERVICE_UNAVAILABLE' : 'INTERNAL_SERVER_ERROR', {
+      status: error.status, message: error.message,
+    });
+  });
   const { matched, response } = await rpcHandler.handle(c.req.raw, {
     prefix: '/rpc',
-    context: createRPCContext(c.req.raw, c.env, await getSession(c)),
+    context: createRPCContext(c.req.raw, c.env, loadSession),
   });
   if (matched) return c.newResponse(response.body, response);
   await next();

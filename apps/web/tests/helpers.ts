@@ -62,7 +62,7 @@ export function rpcClient(env: Env, auth: { cookie?: string; token?: string } = 
   }));
 }
 
-type DeviceState = 'authorization_pending' | 'slow_down' | 'access_denied' | 'expired_token' | { user: Record<string, unknown> };
+type DeviceState = 'authorization_pending' | 'access_denied' | 'expired_token' | { user: Record<string, unknown> };
 
 /**
  * A fake of the WorkOS CLI Auth device endpoints behind `fetch`. Other requests pass through.
@@ -71,6 +71,7 @@ type DeviceState = 'authorization_pending' | 'slow_down' | 'access_denied' | 'ex
  */
 export function fakeWorkOSDevice() {
   const codes = new Map<string, DeviceState>();
+  const slowDowns = new Map<string, number>();
   const polls: URLSearchParams[] = [];
   let issued = 0;
   const realFetch = globalThis.fetch;
@@ -100,10 +101,14 @@ export function fakeWorkOSDevice() {
           body.get('client_id') !== 'client_fixture' || !state) {
         return json({ error: 'invalid_grant' }, 400);
       }
+      const slow = slowDowns.get(body.get('device_code')!) ?? 0;
+      if (slow > 0) {
+        slowDowns.set(body.get('device_code')!, slow - 1);
+        return json({ error: 'slow_down', error_description: 'slow_down' }, 400);
+      }
       if (typeof state === 'object') {
         return json({ user: state.user, access_token: 'workos-access', refresh_token: 'workos-refresh' });
       }
-      if (state === 'slow_down') codes.set(body.get('device_code')!, 'authorization_pending');
       return json({ error: state, error_description: state }, 400);
     }
     return json({ error: 'not_found' }, 404);
@@ -111,6 +116,8 @@ export function fakeWorkOSDevice() {
   return {
     polls,
     set(deviceCode: string, state: DeviceState) { codes.set(deviceCode, state); },
+    /** Answer the next `times` polls for this code with `slow_down`. */
+    slowDown(deviceCode: string, times = 1) { slowDowns.set(deviceCode, times); },
     approve(deviceCode: string, identity: { id: string; email: string; firstName: string | null }) {
       codes.set(deviceCode, { user: {
         object: 'user', id: identity.id, email: identity.email, first_name: identity.firstName,
