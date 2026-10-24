@@ -1,0 +1,29 @@
+{
+  "name": "@agentsync/contract",
+  "version": "0.1.0",
+  "description": "The AgentSync API contract: oRPC procedure signatures and zod schemas",
+  "license": "MIT",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@orpc/contract": "^1.15.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}

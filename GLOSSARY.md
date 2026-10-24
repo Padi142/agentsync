@@ -20,6 +20,10 @@ _Avoid_: Repo instructions, local instructions
 A computer that a user has registered with their AgentSync account and that receives their instructions.
 _Avoid_: Device, host, client, computer
 
+**Machine token**:
+The secret a Machine sends to the AgentSync server to act for its user. It is issued once at registration and reaches only that Machine's own data; revoking the Machine deletes it.
+_Avoid_: API key, device token, access token
+
 ### Rendering
 
 **Template**:
