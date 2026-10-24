@@ -10,6 +10,7 @@
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @agentsync/web db:generate",
     "db:migrate:local": "pnpm --filter @agentsync/web db:migrate:local",
-    "cf-typegen": "pnpm --filter @agentsync/web cf-typegen"
+    "cf-typegen": "pnpm --filter @agentsync/web cf-typegen",
+    "test": "pnpm --filter @agentsync/web test"
   }
 }

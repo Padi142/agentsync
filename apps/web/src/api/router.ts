@@ -1,7 +1,7 @@
 import { ORPCError, os } from '@orpc/server';
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { getSession, type AuthSession } from '../auth';
+import type { AuthSession } from '../auth';
 import { createDb } from '../db';
 import { file } from '../db/schema';
 import type { Env } from '../env';
@@ -127,16 +127,7 @@ const session = base.handler(async ({ context }) => {
     return null;
   }
 
-  const user = context.session.user;
-  const name = [user.firstName, user.lastName]
-    .filter(Boolean)
-    .join(' ') || user.email;
-
-  return {
-    id: user.id,
-    name,
-    email: user.email,
-  };
+  return context.session.user;
 });
 
 export const router = {
@@ -151,10 +142,10 @@ export const router = {
 
 export type AppRouter = typeof router;
 
-export async function createRPCContext(request: Request, env: Env) {
+export function createRPCContext(request: Request, env: Env, session: AuthSession) {
   return {
     env,
     request,
-    session: await getSession(request, env),
+    session,
   } satisfies RPCContext;
 }

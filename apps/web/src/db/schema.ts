@@ -5,6 +5,7 @@ const timestamp = (name: string) =>
 
 export const user = sqliteTable('user', {
   id: text('id').primaryKey(),
+  workosId: text('workos_id').unique(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
   emailVerified: integer('email_verified', { mode: 'boolean' }).notNull(),

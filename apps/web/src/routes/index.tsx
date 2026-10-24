@@ -32,10 +32,17 @@ function HomePage() {
 
   useEffect(() => {
     let active = true;
+    const authError = new URLSearchParams(window.location.search).get('authError');
+    if (authError) {
+      setNotice(authError === 'cancelled'
+        ? 'Sign-in was cancelled. You can try again.'
+        : 'Sign-in could not be completed. Please try again.');
+      window.history.replaceState(null, '', '/');
+    }
 
     fetch('/api/auth/get-session')
       .then(async (response) => {
-        if (!response.ok) return null;
+        if (!response.ok) throw new Error('Session unavailable');
         const payload: unknown = await response.json();
         if (!isRecord(payload) || !isRecord(payload.user)) return null;
         const account = payload.user;
@@ -129,11 +136,6 @@ function HomePage() {
     }
   };
 
-  const signOut = async () => {
-    // Redirect to WorkOS logout which will clear session and redirect back
-    window.location.href = '/logout';
-  };
-
   if (loading) {
     return <p className="loading">Checking your session…</p>;
   }
@@ -162,9 +164,9 @@ function HomePage() {
               <p className="eyebrow">Your files</p>
               <h2>Instruction shelf</h2>
             </div>
-            <button className="quiet-button" type="button" onClick={signOut}>
-              Sign out
-            </button>
+            <form action="/logout" method="post">
+              <button className="quiet-button" type="submit">Sign out</button>
+            </form>
           </div>
           <div className="workspace-grid">
             <aside className="file-list">
@@ -229,8 +231,8 @@ function HomePage() {
             </div>
           </div>
           <div className="auth-form">
-            <p style={{ marginBottom: '1rem', color: 'var(--color-text-secondary)' }}>
-              Sign in to access your instruction files and keep them synced across your machines.
+            <p style={{ marginBottom: '1rem', color: '#746b61' }}>
+              Sign in or create an account to manage your instruction files.
             </p>
             <a href="/login" className="primary-button" style={{ display: 'inline-block', textAlign: 'center', textDecoration: 'none' }}>
               Sign in

@@ -1,172 +1,147 @@
 import { WorkOS } from '@workos-inc/node';
+import type { Context } from 'hono';
+import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
+import { HTTPException } from 'hono/http-exception';
+import { findUser, provisionUser, type AppUser } from './db/users';
 import type { Env } from './env';
 
 const SESSION_COOKIE = 'wos-session';
+const LOGIN_COOKIE = 'wos-login';
+const LOGIN_TTL = 10 * 60;
+const SESSION_TTL = 30 * 24 * 60 * 60;
+type AuthContext = Context<{ Bindings: Env }>;
+export type AuthSession = { user: AppUser | null };
 
-export interface WorkOSUser {
-  id: string;
-  email: string;
-  firstName: string | null;
-  lastName: string | null;
-}
-
-export interface AuthSession {
-  user: WorkOSUser | null;
+export function getAppOrigin(env: Env) {
+  return new URL(env.WORKOS_REDIRECT_URI).origin;
 }
 
 function getWorkOS(env: Env) {
-  return new WorkOS(env.WORKOS_API_KEY, {
-    clientId: env.WORKOS_CLIENT_ID,
-  });
+  if (!env.WORKOS_API_KEY || !env.WORKOS_CLIENT_ID || (env.WORKOS_COOKIE_PASSWORD?.length ?? 0) < 32) {
+    throw new HTTPException(503, { message: 'Authentication is not configured.' });
+  }
+  const callback = new URL(env.WORKOS_REDIRECT_URI);
+  if (callback.pathname !== '/callback' || callback.search || callback.hash) {
+    throw new HTTPException(503, { message: 'WORKOS_REDIRECT_URI must point to /callback.' });
+  }
+  return new WorkOS(env.WORKOS_API_KEY, { clientId: env.WORKOS_CLIENT_ID });
 }
 
-export function getAuthorizationUrl(env: Env): string {
-  const workos = getWorkOS(env);
-  return workos.userManagement.getAuthorizationUrl({
+function cookieOptions(c: AuthContext) {
+  return {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'Lax' as const,
+    secure: new URL(c.env.WORKOS_REDIRECT_URI).protocol === 'https:',
+  };
+}
+
+function setSession(c: AuthContext, value: string) {
+  setCookie(c, SESSION_COOKIE, value, { ...cookieOptions(c), maxAge: SESSION_TTL });
+}
+
+function clearSession(c: AuthContext) {
+  deleteCookie(c, SESSION_COOKIE, cookieOptions(c));
+}
+
+export async function handleLogin(c: AuthContext) {
+  const workos = getWorkOS(c.env);
+  const origin = getAppOrigin(c.env);
+  // The login cookie and callback must live on the same origin.
+  if (new URL(c.req.url).origin !== origin) return c.redirect(`${origin}/login`);
+
+  const { url, state, codeVerifier } = await workos.userManagement.getAuthorizationUrlWithPKCE({
     provider: 'authkit',
-    redirectUri: env.WORKOS_REDIRECT_URI,
-    clientId: env.WORKOS_CLIENT_ID,
+    clientId: c.env.WORKOS_CLIENT_ID,
+    redirectUri: c.env.WORKOS_REDIRECT_URI,
   });
+  await setSignedCookie(c, LOGIN_COOKIE, JSON.stringify({
+    state, codeVerifier, expiresAt: Date.now() + LOGIN_TTL * 1000,
+  }), c.env.WORKOS_COOKIE_PASSWORD, { ...cookieOptions(c), maxAge: LOGIN_TTL });
+  return c.redirect(url);
 }
 
-export async function handleCallback(
-  request: Request,
-  env: Env
-): Promise<Response> {
-  const url = new URL(request.url);
-  const code = url.searchParams.get('code');
-
-  if (!code) {
-    return new Response('No authorization code provided', { status: 400 });
+export async function handleCallback(c: AuthContext) {
+  const workos = getWorkOS(c.env);
+  const state = c.req.query('state');
+  let login: { state?: unknown; codeVerifier?: unknown; expiresAt?: unknown } | null = null;
+  try {
+    const value = await getSignedCookie(c, c.env.WORKOS_COOKIE_PASSWORD, LOGIN_COOKIE);
+    if (value) login = JSON.parse(value);
+  } catch {
+    // Malformed or tampered login cookies cannot complete the exchange.
   }
+  deleteCookie(c, LOGIN_COOKIE, cookieOptions(c));
+  if (!login || !state || state !== login.state ||
+      typeof login.codeVerifier !== 'string' ||
+      typeof login.expiresAt !== 'number' || login.expiresAt <= Date.now()) {
+    return c.text('Sign-in expired or could not be verified. Please start again at /login.', 400);
+  }
+  if (c.req.query('error')) return c.redirect('/?authError=cancelled', 303);
+  const code = c.req.query('code');
+  if (!code) return c.text('No authorization code provided.', 400);
 
   try {
-    const workos = getWorkOS(env);
     const result = await workos.userManagement.authenticateWithCode({
-      clientId: env.WORKOS_CLIENT_ID,
+      clientId: c.env.WORKOS_CLIENT_ID,
       code,
-      session: {
-        sealSession: true,
-        cookiePassword: env.WORKOS_COOKIE_PASSWORD,
-      },
+      codeVerifier: login.codeVerifier,
+      session: { sealSession: true, cookiePassword: c.env.WORKOS_COOKIE_PASSWORD },
     });
-
-    const headers = new Headers();
-    headers.set('Location', '/');
-    headers.set(
-      'Set-Cookie',
-      `${SESSION_COOKIE}=${result.sealedSession}; Path=/; HttpOnly; SameSite=Lax`
-    );
-
-    return new Response(null, { status: 302, headers });
-  } catch (error) {
-    console.error('[WorkOS callback error]', error);
-    return new Response(null, {
-      status: 302,
-      headers: { Location: '/login' },
-    });
+    if (!result.sealedSession) throw new Error('Missing sealed session');
+    await provisionUser(c.env, result.user);
+    setSession(c, result.sealedSession);
+    return c.redirect('/', 303);
+  } catch {
+    // Never log the code, tokens, or provider error payloads.
+    console.error('[AuthKit] Callback failed. Check WorkOS configuration and local user provisioning.');
+    return c.redirect('/?authError=callback', 303);
   }
 }
 
-export async function getSession(
-  request: Request,
-  env: Env
-): Promise<AuthSession> {
-  const cookieHeader = request.headers.get('Cookie') ?? '';
-  const cookies = Object.fromEntries(
-    cookieHeader.split(';').map((c) => {
-      const [key, ...rest] = c.trim().split('=');
-      return [key, rest.join('=')];
-    })
-  );
-
-  const sessionData = cookies[SESSION_COOKIE];
-  if (!sessionData) {
-    return { user: null };
+async function authenticate(c: AuthContext) {
+  const sessionData = getCookie(c, SESSION_COOKIE);
+  if (!sessionData) return null;
+  const workos = getWorkOS(c.env);
+  const session = workos.userManagement.loadSealedSession({
+    sessionData, cookiePassword: c.env.WORKOS_COOKIE_PASSWORD,
+  });
+  const result = await session.authenticate();
+  if (result.authenticated) return { result, workos };
+  if (result.reason !== 'invalid_jwt') {
+    clearSession(c);
+    return null;
   }
 
-  try {
-    const workos = getWorkOS(env);
-    const session = workos.userManagement.loadSealedSession({
-      sessionData,
-      cookiePassword: env.WORKOS_COOKIE_PASSWORD,
-    });
-
-    const authResult = await session.authenticate();
-
-    if (authResult.authenticated) {
-      const user = authResult.user;
-      return {
-        user: {
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-        },
-      };
+  const refreshed = await session.refresh();
+  if (!refreshed.authenticated) {
+    if (refreshed.retryable) {
+      // A provider outage must not destroy an otherwise recoverable session.
+      throw new HTTPException(503, { message: 'Sign-in is temporarily unavailable. Please try again.' });
     }
-
-    // Authentication failed
-    return { user: null };
-  } catch (error) {
-    console.error('[WorkOS session error]', error);
-    return { user: null };
+    clearSession(c);
+    return null;
   }
+  if (!refreshed.sealedSession) throw new HTTPException(503);
+  setSession(c, refreshed.sealedSession);
+  return { result: refreshed, workos };
 }
 
-export async function handleLogout(
-  request: Request,
-  env: Env
-): Promise<Response> {
-  const cookieHeader = request.headers.get('Cookie') ?? '';
-  const cookies = Object.fromEntries(
-    cookieHeader.split(';').map((c) => {
-      const [key, ...rest] = c.trim().split('=');
-      return [key, rest.join('=')];
-    })
-  );
+export async function getSession(c: AuthContext): Promise<AuthSession> {
+  const authenticated = await authenticate(c);
+  if (!authenticated) return { user: null };
+  const identity = authenticated.result.user;
+  const user = await findUser(c.env, identity.id) ?? await provisionUser(c.env, identity);
+  return { user };
+}
 
-  const sessionData = cookies[SESSION_COOKIE];
-
-  // Clear the session cookie regardless
-  const clearCookie = `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
-
-  if (!sessionData) {
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: '/',
-        'Set-Cookie': clearCookie,
-      },
-    });
-  }
-
-  try {
-    const workos = getWorkOS(env);
-    const session = workos.userManagement.loadSealedSession({
-      sessionData,
-      cookiePassword: env.WORKOS_COOKIE_PASSWORD,
-    });
-
-    // Get the WorkOS logout URL which will end the AuthKit session
-    const logoutUrl = await session.getLogoutUrl();
-
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: logoutUrl,
-        'Set-Cookie': clearCookie,
-      },
-    });
-  } catch (error) {
-    console.error('[WorkOS logout error]', error);
-    // On error, just clear cookie and redirect home
-    return new Response(null, {
-      status: 302,
-      headers: {
-        Location: '/',
-        'Set-Cookie': clearCookie,
-      },
-    });
-  }
+export async function handleLogout(c: AuthContext) {
+  const authenticated = await authenticate(c);
+  clearSession(c);
+  if (!authenticated) return c.redirect('/', 303);
+  const url = authenticated.workos.userManagement.getLogoutUrl({
+    sessionId: authenticated.result.sessionId,
+    returnTo: `${getAppOrigin(c.env)}/`,
+  });
+  return c.redirect(url, 303);
 }
