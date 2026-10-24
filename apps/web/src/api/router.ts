@@ -17,7 +17,8 @@ import type { Env } from '../env';
 export interface RPCContext {
   env: Env;
   request: Request;
-  session: AuthSession;
+  /** Loads the browser session on first call. Requests with a Machine token never call it. */
+  session: () => Promise<AuthSession>;
 }
 
 const os = implement(contract).$context<RPCContext>();
@@ -35,11 +36,15 @@ interface Caller {
 const auth = os.middleware(async ({ context, procedure, next }) => {
   const accepts = (procedure['~orpc'].meta as ProcedureMeta).auth;
   const bearer = context.request.headers.get('Authorization')?.match(/^Bearer (\S+)$/i)?.[1];
-  const user = context.session.user;
-  // A request with a token acts as that Machine only, even if a session cookie came too.
-  const caller: Caller | null = bearer
-    ? accepts.includes('machine') ? await authenticateMachine(context.env, bearer) : null
-    : accepts.includes('session') && user ? { userId: user.id, machine: null } : null;
+  // A request with a token acts as that Machine only, even if a session cookie came too,
+  // so a stale cookie (and a WorkOS refresh) never stands in the Machine's way.
+  let caller: Caller | null = null;
+  if (bearer) {
+    if (accepts.includes('machine')) caller = await authenticateMachine(context.env, bearer);
+  } else if (accepts.includes('session')) {
+    const { user } = await context.session();
+    if (user) caller = { userId: user.id, machine: null };
+  }
   if (!caller) throw new ORPCError('UNAUTHORIZED');
   return next({ context: caller });
 });
@@ -70,7 +75,7 @@ function templateIssues(text: string, { resolving = false } = {}): TemplateIssue
 
 export const router = os.router({
   health: os.health.handler(() => ({ ok: true as const })),
-  session: os.session.handler(({ context }) => context.session.user),
+  session: os.session.handler(async ({ context }) => (await context.session()).user),
   template: {
     get: os.template.get.use(auth).handler(({ context }) => getTemplate(context.env, context.userId)),
     put: os.template.put.use(auth).handler(async ({ context, input, errors }) => {
@@ -181,6 +186,6 @@ export const router = os.router({
 
 export type AppRouter = typeof router;
 
-export function createRPCContext(request: Request, env: Env, session: AuthSession) {
+export function createRPCContext(request: Request, env: Env, session: () => Promise<AuthSession>) {
   return { env, request, session } satisfies RPCContext;
 }

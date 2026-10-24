@@ -1,5 +1,5 @@
 import type { DeviceAuthorization, DevicePollResult, MachineOs, Target } from '@agentsync/contract';
-import { eq, lte } from 'drizzle-orm';
+import { eq, lte, sql } from 'drizzle-orm';
 import { createDb } from './db';
 import { hashSecret, registerMachine } from './db/machines';
 import { deviceAuthorization } from './db/schema';
@@ -78,13 +78,19 @@ export async function pollDeviceFlow(
     const registered = await registerMachine(env, hash, user.id, input);
     return registered ? { status: 'approved', ...registered } : { status: 'invalid' };
   }
+  // Read the interval only now, and raise it in place: an overlapping poll may have raised it meanwhile.
   switch (body.error) {
-    case 'authorization_pending':
-      return { status: 'pending', interval: flow.interval };
+    case 'authorization_pending': {
+      const current = await db.select({ interval: deviceAuthorization.interval }).from(deviceAuthorization)
+        .where(eq(deviceAuthorization.deviceCodeHash, hash)).get();
+      return current ? { status: 'pending', interval: current.interval } : { status: 'invalid' };
+    }
     case 'slow_down': {
-      const interval = flow.interval + SLOW_DOWN_SECONDS;
-      await db.update(deviceAuthorization).set({ interval }).where(eq(deviceAuthorization.deviceCodeHash, hash)).run();
-      return { status: 'pending', interval };
+      const [raised] = await db.update(deviceAuthorization)
+        .set({ interval: sql`${deviceAuthorization.interval} + ${SLOW_DOWN_SECONDS}` })
+        .where(eq(deviceAuthorization.deviceCodeHash, hash))
+        .returning({ interval: deviceAuthorization.interval });
+      return raised ? { status: 'pending', interval: raised.interval } : { status: 'invalid' };
     }
     case 'access_denied':
       await forget();

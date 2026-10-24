@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { api } from '../src/api';
 import { provisionUser } from '../src/db/users';
 import type { Env } from '../src/env';
-import { createTestEnv, origin, resetDb, rpcClient } from './helpers';
+import { createTestEnv, fakeWorkOSDevice, origin, resetDb, rpcClient } from './helpers';
 
 const sdk = vi.hoisted(() => ({
   exchange: vi.fn(), authenticate: vi.fn(), refresh: vi.fn(), logout: vi.fn(),
@@ -146,6 +146,39 @@ describe('AuthKit routes', () => {
     expect(res.status).toBe(303);
     expect(res.headers.get('Set-Cookie')).toContain('Max-Age=0');
     expect(sdk.logout).toHaveBeenCalledWith({ sessionId: 'session_fixture', returnTo: `${origin}/` });
+  });
+});
+
+describe('Machine tokens and browser sessions', () => {
+  async function machineToken() {
+    const workos = fakeWorkOSDevice();
+    try {
+      const cli = rpcClient(env);
+      const { deviceCode } = await cli.machines.deviceStart();
+      workos.approve(deviceCode, identity);
+      const result = await cli.machines.devicePoll({ deviceCode, name: 'laptop', os: 'linux', targets: [] });
+      if (result.status !== 'approved') throw new Error(result.status);
+      return result.token;
+    } finally {
+      workos.restore();
+    }
+  }
+
+  it('authenticates a Machine token without refreshing a stale session cookie that came along', async () => {
+    const token = await machineToken();
+    sdk.authenticate.mockResolvedValue({ authenticated: false, reason: 'invalid_jwt' });
+    sdk.refresh.mockResolvedValue({ authenticated: false, retryable: true, reason: 'server_error' });
+    const both = rpcClient(env, { token, cookie: 'wos-session=expired' });
+    expect(await both.template.get()).toMatchObject({ revision: 0 });
+    expect(sdk.refresh).not.toHaveBeenCalled();
+    // `session` still reports the browser session, so its refresh failure still shows.
+    await expect(both.session()).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('still answers `session` from the cookie when a Machine token is sent too', async () => {
+    const token = await machineToken();
+    expect(await rpcClient(env, { token, cookie: 'wos-session=sealed-fixture' }).session())
+      .toMatchObject({ email: identity.email });
   });
 });
 
