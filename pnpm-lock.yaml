@@ -84,6 +84,19 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/contract:
+    dependencies:
+      '@orpc/contract':
+        specifier: ^1.15.0
+        version: 1.15.0
+      zod:
+        specifier: ^4.5.4
+        version: 4.5.4
+    devDependencies:
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/template:
     devDependencies:
       '@types/node':

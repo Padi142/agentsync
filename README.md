@@ -12,6 +12,7 @@ are not implemented yet.
 
 - `apps/web` — React SSR app, Hono API, WorkOS authentication, and D1 schema/migrations.
 - `packages/cli` — skeleton for the future `agentsync` command.
+- `packages/contract` — the oRPC API contract. See its README for the auth kind of each procedure.
 - `packages/template` — the Template Expression grammar: Render, validate, and inspect Templates.
 
 ## Local setup
