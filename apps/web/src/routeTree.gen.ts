@@ -9,50 +9,204 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as SigninRouteImport } from './routes/signin'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppHistoryRouteImport } from './routes/_app/history'
+import { Route as AppConflictsIndexRouteImport } from './routes/_app/conflicts.index'
+import { Route as AppConflictsConflictIdRouteImport } from './routes/_app/conflicts.$conflictId'
+import { Route as AppMachinesIndexRouteImport } from './routes/_app/machines.index'
+import { Route as AppMachinesMachineIdRouteImport } from './routes/_app/machines.$machineId'
 
-const IndexRoute = IndexRouteImport.update({
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SigninRoute = SigninRouteImport.update({
+  id: '/signin',
+  path: '/signin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
+} as any)
+const AppHistoryRoute = AppHistoryRouteImport.update({
+  id: '/history',
+  path: '/history',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppConflictsIndexRoute = AppConflictsIndexRouteImport.update({
+  id: '/conflicts/',
+  path: '/conflicts/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppConflictsConflictIdRoute = AppConflictsConflictIdRouteImport.update({
+  id: '/conflicts/$conflictId',
+  path: '/conflicts/$conflictId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMachinesIndexRoute = AppMachinesIndexRouteImport.update({
+  id: '/machines/',
+  path: '/machines/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMachinesMachineIdRoute = AppMachinesMachineIdRouteImport.update({
+  id: '/machines/$machineId',
+  path: '/machines/$machineId',
+  getParentRoute: () => AppRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
+  '/signin': typeof SigninRoute
+  '/history': typeof AppHistoryRoute
+  '/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
+  '/machines/$machineId': typeof AppMachinesMachineIdRoute
+  '/conflicts/': typeof AppConflictsIndexRoute
+  '/machines/': typeof AppMachinesIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/signin': typeof SigninRoute
+  '/history': typeof AppHistoryRoute
+  '/': typeof AppIndexRoute
+  '/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
+  '/machines/$machineId': typeof AppMachinesMachineIdRoute
+  '/conflicts': typeof AppConflictsIndexRoute
+  '/machines': typeof AppMachinesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
+  '/signin': typeof SigninRoute
+  '/_app/history': typeof AppHistoryRoute
+  '/_app/': typeof AppIndexRoute
+  '/_app/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
+  '/_app/machines/$machineId': typeof AppMachinesMachineIdRoute
+  '/_app/conflicts/': typeof AppConflictsIndexRoute
+  '/_app/machines/': typeof AppMachinesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/signin'
+    | '/history'
+    | '/conflicts/$conflictId'
+    | '/machines/$machineId'
+    | '/conflicts/'
+    | '/machines/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/signin'
+    | '/history'
+    | '/'
+    | '/conflicts/$conflictId'
+    | '/machines/$machineId'
+    | '/conflicts'
+    | '/machines'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/signin'
+    | '/_app/history'
+    | '/_app/'
+    | '/_app/conflicts/$conflictId'
+    | '/_app/machines/$machineId'
+    | '/_app/conflicts/'
+    | '/_app/machines/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
+  SigninRoute: typeof SigninRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/signin': {
+      id: '/signin'
+      path: '/signin'
+      fullPath: '/signin'
+      preLoaderRoute: typeof SigninRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/history': {
+      id: '/_app/history'
+      path: '/history'
+      fullPath: '/history'
+      preLoaderRoute: typeof AppHistoryRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/conflicts/': {
+      id: '/_app/conflicts/'
+      path: '/conflicts'
+      fullPath: '/conflicts/'
+      preLoaderRoute: typeof AppConflictsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/conflicts/$conflictId': {
+      id: '/_app/conflicts/$conflictId'
+      path: '/conflicts/$conflictId'
+      fullPath: '/conflicts/$conflictId'
+      preLoaderRoute: typeof AppConflictsConflictIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/machines/': {
+      id: '/_app/machines/'
+      path: '/machines'
+      fullPath: '/machines/'
+      preLoaderRoute: typeof AppMachinesIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/machines/$machineId': {
+      id: '/_app/machines/$machineId'
+      path: '/machines/$machineId'
+      fullPath: '/machines/$machineId'
+      preLoaderRoute: typeof AppMachinesMachineIdRouteImport
+      parentRoute: typeof AppRoute
     }
   }
 }
 
+interface AppRouteChildren {
+  AppHistoryRoute: typeof AppHistoryRoute
+  AppIndexRoute: typeof AppIndexRoute
+  AppConflictsConflictIdRoute: typeof AppConflictsConflictIdRoute
+  AppMachinesMachineIdRoute: typeof AppMachinesMachineIdRoute
+  AppConflictsIndexRoute: typeof AppConflictsIndexRoute
+  AppMachinesIndexRoute: typeof AppMachinesIndexRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppHistoryRoute: AppHistoryRoute,
+  AppIndexRoute: AppIndexRoute,
+  AppConflictsConflictIdRoute: AppConflictsConflictIdRoute,
+  AppMachinesMachineIdRoute: AppMachinesMachineIdRoute,
+  AppConflictsIndexRoute: AppConflictsIndexRoute,
+  AppMachinesIndexRoute: AppMachinesIndexRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
+  SigninRoute: SigninRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

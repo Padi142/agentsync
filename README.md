@@ -6,12 +6,19 @@ AgentSync is an open source starting point for keeping `AGENTS.md`,
 The web app uses TanStack Start, WorkOS AuthKit, Cloudflare Workers + D1,
 Drizzle, and a typed oRPC API that implements `@agentsync/contract`: the
 Template, Machines and their Variables (with revision history), Conflicts, and
-Machine registration through the WorkOS device flow. The CLI, hook installers,
-and the full web UI are not implemented yet.
+Machine registration through the WorkOS device flow. The CLI and hook installers
+are not implemented yet.
+
+The web UI edits the Template with live syntax errors and a per-Machine,
+per-agent preview, manages Machines and their Variables, shows Template and
+Variable history with rollback, and resolves Conflicts (`/conflicts`). Pages load
+their data in the browser through the oRPC client (the root route sets
+`ssr: false`); the server renders only the document shell. Device approval
+needs no page here: WorkOS AuthKit hosts the `verification_uri`.
 
 ## Layout
 
-- `apps/web` — React SSR app, Hono API, WorkOS authentication, and D1 schema/migrations.
+- `apps/web` — React web UI, Hono API, WorkOS authentication, and D1 schema/migrations.
 - `packages/cli` — skeleton for the future `agentsync` command.
 - `packages/contract` — the oRPC API contract. See its README for the auth kind of each procedure.
 - `packages/template` — the Template Expression grammar: Render, validate, and inspect Templates.
