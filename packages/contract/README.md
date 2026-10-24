@@ -33,7 +33,7 @@ Each procedure lists the auth kinds it accepts in its meta
 | `variables.get` | ✓ | own | `NOT_FOUND` |
 | `variables.put` | ✓ | own | `NOT_FOUND`, `CONFLICT`, `INVALID_VARIABLE_NAME` |
 | `variables.history` | ✓ | | `NOT_FOUND` |
-| `conflicts.create` | ✓ | ✓ | |
+| `conflicts.create` | ✓ | ✓ | `NOT_FOUND` |
 | `conflicts.list` | ✓ | ✓ | |
 | `conflicts.get` | ✓ | ✓ | `NOT_FOUND` |
 | `conflicts.resolve` | ✓ | ✓ | `NOT_FOUND`, `CONFLICT`, `INVALID_TEMPLATE` |
@@ -41,15 +41,28 @@ Each procedure lists the auth kinds it accepts in its meta
 
 Every procedure that needs auth can also fail with `UNAUTHORIZED`.
 
+The meta only says which credentials a procedure accepts. The server enforces
+the rest in its handlers: every query is scoped to the caller's user, and "own"
+procedures check that a Machine token's Machine matches `machineId`.
+
 ## Conventions
 
-- Revisions start at 1. A head revision of `0` means nothing has been saved yet,
-  so the first `template.put` or `variables.put` sends `expectedRevision: 0`.
+- Revisions start at 1. Revision `0` is the empty initial Template (or Variable
+  map), so the first `template.put` or `variables.put` sends `expectedRevision: 0`,
+  and a Conflict whose edit started from nothing has `baseRevision: 0`.
 - `CONFLICT` carries `{ currentRevision }`. After a failed `template.put`, call
   `conflicts.create` with the edit's base revision and text.
 - `INVALID_TEMPLATE` carries `{ issues: [{ message, line, column }] }`. For
   `conflicts.resolve`, a leftover Conflict marker is reported as an issue too.
-- `conflicts.resolve` fails with `CONFLICT` once the Template has moved past the
-  Conflict's `serverRevision`.
+- `conflicts.resolve` takes the `expectedRevision` the resolution was merged
+  against. On `CONFLICT`, re-fetch the Template, merge again and retry. The
+  Conflict's `serverRevision` is history only.
+- `machines.devicePoll`: each `pending` result carries the interval to wait before
+  the next poll, including WorkOS `slow_down` increases. Registration is
+  single-use, so a retried poll after a lost `approved` response gets `invalid`
+  and never a second token or Machine. The CLI maps `invalid`, `expired` and
+  `denied` to exit code 5.
+- `os` is normalised to `macos`, `linux` or `windows` (Node's `darwin` is `macos`,
+  `win32` is `windows`).
 - Variable names and Template syntax are checked by the server with
   `@agentsync/template`. This package does not depend on the grammar.

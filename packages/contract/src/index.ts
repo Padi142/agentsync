@@ -23,7 +23,7 @@ export interface ProcedureMeta {
 
 const id = z.string().min(1);
 
-/** A head revision. `0` means nothing has been saved yet. */
+/** A head revision. `0` is the empty initial Template (or Variable map) before anything is saved. */
 const revision = z.number().int().min(0);
 const savedRevision = z.number().int().min(1);
 
@@ -46,6 +46,7 @@ export const revisionSummarySchema = z.object({
   createdAt: z.date(),
 });
 
+/** The CLI normalises its platform to one of these, e.g. Node's `darwin` becomes `macos`. */
 export const machineOsSchema = z.enum(['macos', 'linux', 'windows']);
 
 /** `agent` is the value of the `agent` Built-in Variable when Rendering this Target. */
@@ -82,12 +83,16 @@ export const variablesRevisionSchema = z.object({
 
 export const conflictStatusSchema = z.enum(['open', 'resolved', 'discarded']);
 
-/** `text` is the Template with git-style `<<<<<<<`/`=======`/`>>>>>>>` markers. */
+/**
+ * `text` is the Template with git-style `<<<<<<<`/`=======`/`>>>>>>>` markers.
+ * It holds both sides plus markers, so it is not capped like a Template.
+ * `serverRevision` records the head when the Conflict was created.
+ */
 export const conflictSchema = z.object({
   id,
   baseRevision: revision,
   serverRevision: savedRevision,
-  text: z.string().max(1_000_000),
+  text: z.string(),
   status: conflictStatusSchema,
   url: z.url(),
   createdAt: z.date(),
@@ -111,12 +116,20 @@ export const deviceAuthorizationSchema = z.object({
   interval: z.number().int().positive(),
 });
 
+/**
+ * Registration is single-use: the first `approved` response creates the Machine
+ * and returns its token, and the server keeps only the token's hash. Any later
+ * poll with the same code, including a retry after that response was lost,
+ * gets `invalid` and never a second token or Machine.
+ */
 export const devicePollResultSchema = z.discriminatedUnion('status', [
+  /** Wait `interval` seconds before the next poll. It already includes any WorkOS `slow_down` increase. */
   z.object({ status: z.literal('pending'), interval: z.number().int().positive() }),
-  /** `token` is returned exactly once; the server keeps only its hash. */
   z.object({ status: z.literal('approved'), token: z.string().min(1), machine: machineSchema }),
   z.object({ status: z.literal('expired') }),
   z.object({ status: z.literal('denied') }),
+  /** The code is unknown or was already used. */
+  z.object({ status: z.literal('invalid') }),
 ]);
 
 export const syncPayloadSchema = z.object({
@@ -209,7 +222,7 @@ const machines = {
   revoke: anyAuthProcedure.input(machineIdInput).output(z.void()).errors(notFoundError),
   /** Start the WorkOS AuthKit CLI Auth device flow. */
   deviceStart: publicProcedure.output(deviceAuthorizationSchema),
-  /** Poll the device flow. On approval, registers the Machine and returns its token once. */
+  /** Poll the device flow. On approval, registers the Machine and returns its token once (see `devicePollResultSchema`). */
   devicePoll: publicProcedure
     .input(
       z.object({
@@ -242,20 +255,26 @@ const variables = {
 const conflictIdInput = z.object({ conflictId: id });
 
 const conflicts = {
-  /** Keep an edit that failed with `CONFLICT`. The server builds the marked text. */
+  /**
+   * Keep an edit that failed with `CONFLICT`. The server builds the marked text.
+   * `baseRevision` is the revision the edit started from; `0` means the empty
+   * initial Template. A revision missing from the user's history is `NOT_FOUND`.
+   */
   create: anyAuthProcedure
     .input(z.object({ baseRevision: revision, text: templateText }))
-    .output(conflictSchema),
+    .output(conflictSchema)
+    .errors(notFoundError),
   /** Open Conflicts, oldest first. */
   list: anyAuthProcedure.output(z.array(conflictSchema)),
   get: anyAuthProcedure.input(conflictIdInput).output(conflictSchema).errors(notFoundError),
   /**
    * Save `text` as a new Template revision and close the Conflict.
-   * Fails with `CONFLICT` if the Template moved past `serverRevision`, and
-   * `NOT_FOUND` if the Conflict is not open.
+   * `expectedRevision` is the Template head the resolution was merged against;
+   * the server compares it to the current head atomically. On `CONFLICT`,
+   * re-fetch the Template, merge again and retry. `NOT_FOUND` if the Conflict is not open.
    */
   resolve: anyAuthProcedure
-    .input(conflictIdInput.extend({ text: templateText }))
+    .input(conflictIdInput.extend({ text: templateText, expectedRevision: revision }))
     .output(z.object({ conflict: conflictSchema, template: templateSchema }))
     .errors({ ...notFoundError, ...conflictError, ...invalidTemplateError }),
   discard: sessionProcedure.input(conflictIdInput).output(conflictSchema).errors(notFoundError),
