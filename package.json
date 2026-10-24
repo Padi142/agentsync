@@ -5,12 +5,12 @@
   "license": "MIT",
   "packageManager": "pnpm@9.1.1",
   "scripts": {
-    "build": "pnpm --filter @agentsync/web build && pnpm --filter @agentsync/cli build",
+    "build": "pnpm --filter @agentsync/template build && pnpm --filter @agentsync/web build && pnpm --filter @agentsync/cli build",
     "dev": "pnpm --filter @agentsync/web dev",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @agentsync/web db:generate",
     "db:migrate:local": "pnpm --filter @agentsync/web db:migrate:local",
     "cf-typegen": "pnpm --filter @agentsync/web cf-typegen",
-    "test": "pnpm --filter @agentsync/web test"
+    "test": "pnpm --filter @agentsync/template test && pnpm --filter @agentsync/web test"
   }
 }
