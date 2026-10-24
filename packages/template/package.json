@@ -1,0 +1,29 @@
+{
+  "name": "@agentsync/template",
+  "version": "0.1.0",
+  "description": "The AgentSync Template grammar: parse, validate, and Render Templates",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
