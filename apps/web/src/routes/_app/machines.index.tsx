@@ -18,7 +18,7 @@ function Machines() {
         </div>
       </div>
       {machines.length === 0 ? (
-        <p className="muted">No Machines yet. Register one with the AgentSync CLI.</p>
+        <p className="muted">No Machines yet. <Link to="/setup">Set one up</Link>.</p>
       ) : (
         <table className="table">
           <thead>

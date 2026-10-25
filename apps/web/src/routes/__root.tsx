@@ -64,6 +64,7 @@ function Layout() {
               Conflicts
               {openConflicts ? <span className="badge">{openConflicts}</span> : null}
             </Link>
+            <Link to="/setup">Setup</Link>
             <form action="/logout" method="post">
               <button className="link-button" type="submit" title={user.email}>Sign out</button>
             </form>
