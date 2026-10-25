@@ -1,6 +1,6 @@
 export interface RenderContext {
   variables: Record<string, string>;
-  builtins: { machine: { name: string; os: string }; agent: string };
+  builtins: { machine: { hostname: string; nickname: string; os: string }; agent: string };
 }
 
 /** A 1-based line and column in the Template source. */
@@ -127,17 +127,20 @@ const RESERVED = ['agent', 'machine'];
 export interface BuiltinVariable {
   name: string;
   description: string;
-  /** The preferred spelling, when this one is a compatible alias. */
-  aliasOf?: string;
   read(builtins: RenderContext['builtins']): string;
 }
 
-/** Every Built-in Variable, preferred spellings first. Editors suggest these; the engine accepts exactly these. */
+/** Every Built-in Variable. Editors suggest these; the engine accepts exactly these. */
 export const BUILTIN_VARIABLES: readonly BuiltinVariable[] = [
   {
     name: 'machine.nickname',
-    description: 'Editable Machine nickname',
-    read: (builtins) => builtins.machine.name,
+    description: 'The Machine nickname, editable on the web or with agentsync rename',
+    read: (builtins) => builtins.machine.nickname,
+  },
+  {
+    name: 'machine.hostname',
+    description: "The computer's hostname, as AgentSync last saw it",
+    read: (builtins) => builtins.machine.hostname,
   },
   {
     name: 'machine.os',
@@ -148,12 +151,6 @@ export const BUILTIN_VARIABLES: readonly BuiltinVariable[] = [
     name: 'agent',
     description: 'The agent a Target belongs to, such as claude or codex',
     read: (builtins) => builtins.agent,
-  },
-  {
-    name: 'machine.name',
-    description: 'Alias of machine.nickname',
-    aliasOf: 'machine.nickname',
-    read: (builtins) => builtins.machine.name,
   },
 ];
 

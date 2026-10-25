@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The real router, routes and useBlocker; only the API is faked.
 const { rpc } = vi.hoisted(() => {
-  const machine = { id: 'b', name: 'server-b', os: 'linux', targets: [], createdAt: new Date(0), lastSeenAt: null };
+  const machine = { id: 'b', nickname: 'server-b', hostname: 'server-b', os: 'linux', targets: [], createdAt: new Date(0), lastSeenAt: null };
   const conflict = (id: string, text: string) => ({
     id, text, baseRevision: 1, serverRevision: 1, status: 'open', url: `http://x/conflicts/${id}`,
     createdAt: new Date(0), closedAt: null,

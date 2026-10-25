@@ -12,7 +12,7 @@ import {
 
 const laptop: RenderContext = {
   variables: { editor: 'helix', shell: 'fish' },
-  builtins: { machine: { name: 'laptop', os: 'darwin' }, agent: 'claude' },
+  builtins: { machine: { hostname: 'laptop', nickname: 'Work laptop', os: 'darwin' }, agent: 'claude' },
 };
 
 describe('render', () => {
@@ -25,20 +25,19 @@ describe('render', () => {
 
   it('substitutes Built-in Variables from the Machine and the agent', () => {
     expect(
-      render('{{agent}} on {{machine.name}} ({{ machine.os }})', laptop).text,
+      render('{{agent}} on {{machine.hostname}} ({{ machine.os }})', laptop).text,
     ).toBe('claude on laptop (darwin)');
   });
 
-  it('reads machine.nickname and its alias machine.name as the same value', () => {
+  it('keeps the nickname and the hostname apart', () => {
     expect(
       render(
-        '{{machine.nickname}}={{machine.name}}{{if machine.nickname == "laptop"}} yes{{end}}{{if machine.name != "laptop"}} no{{end}}',
+        '{{machine.nickname}} / {{machine.hostname}}{{if machine.nickname == "Work laptop"}} yes{{end}}{{if machine.hostname != "laptop"}} no{{end}}',
         laptop,
       ).text,
-    ).toBe('laptop=laptop yes');
-    expect(validate('{{machine.nickname}}')).toBeNull();
-    expect(validate('{{machine.nick}}')).not.toBeNull();
-    expect(referencedVariables('{{machine.nickname}}')).toEqual([]);
+    ).toBe('Work laptop / laptop yes');
+    expect(validate('{{machine.name}}')).not.toBeNull();
+    expect(referencedVariables('{{machine.nickname}} {{machine.hostname}}')).toEqual([]);
   });
 
   it('prefers a Built-in Variable over a same-named Machine Variable', () => {
@@ -74,7 +73,7 @@ describe('render', () => {
     expect(render(template, laptop).text).toBe('mac:claude');
     const codexOnLinux = {
       ...laptop,
-      builtins: { machine: { name: 'box', os: 'linux' }, agent: 'codex' },
+      builtins: { machine: { hostname: 'box', nickname: 'Box', os: 'linux' }, agent: 'codex' },
     };
     expect(render(template, codexOnLinux).text).toBe('linux');
   });
@@ -117,10 +116,10 @@ describe('render', () => {
   });
 
   it('treats a backslash as an escape only directly before {{', () => {
-    expect(render('C:\\Users\\{{machine.name}}', laptop).text).toBe(
-      'C:\\Users{{machine.name}}',
+    expect(render('C:\\Users\\{{machine.hostname}}', laptop).text).toBe(
+      'C:\\Users{{machine.hostname}}',
     );
-    expect(render('C:\\Users\\ {{machine.name}} }} \\n', laptop).text).toBe(
+    expect(render('C:\\Users\\ {{machine.hostname}} }} \\n', laptop).text).toBe(
       'C:\\Users\\ laptop }} \\n',
     );
   });
@@ -140,7 +139,7 @@ describe('render', () => {
     );
     const linux = {
       ...laptop,
-      builtins: { ...laptop.builtins, machine: { name: 'box', os: 'linux' } },
+      builtins: { ...laptop.builtins, machine: { hostname: 'box', nickname: 'Box', os: 'linux' } },
     };
     expect(render(template, linux).text).toBe('# Rules\nUse apt.\nBe concise.');
   });
@@ -371,7 +370,7 @@ describe('referencedVariables', () => {
 
   it('excludes Built-in Variables and escaped Expressions', () => {
     expect(
-      referencedVariables('{{agent}} {{machine.name}} \\{{literal}}'),
+      referencedVariables('{{agent}} {{machine.hostname}} \\{{literal}}'),
     ).toEqual([]);
   });
 

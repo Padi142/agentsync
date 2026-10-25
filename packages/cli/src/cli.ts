@@ -43,14 +43,14 @@ Run agentsync help <command> for its flags and examples.
 Exit codes: 0 ok, 1 error, 2 usage, 3 Drift, 4 Conflict, 5 auth, 130 cancelled.`;
 
 const COMMAND_HELP: Record<string, string> = {
-  init: `Usage: agentsync init [--server <url>] [--name <name>] [--agent <id>]... [--target <agent>=<path>]...
+  init: `Usage: agentsync init [--server <url>] [--nickname <nickname>] [--agent <id>]... [--target <agent>=<path>]...
                       [--var KEY=VALUE]... [--import <path>] [--no-hooks] [--no-skill] [--no-wait]
 
 Register this Machine with the browser, then set up its Targets, Variables, hooks and skill,
 and sync. Safe to run again. Alias: login.
 
   --server <url>             The AgentSync server
-  --name <nickname>          The Machine nickname (default: asked, or the hostname);
+  --nickname <nickname>      The Machine nickname (default: asked, or the hostname);
                              on a registered Machine, renames it
   --agent <id>               Sync this agent: claude or codex (default: those found here)
   --target <agent>=<path>    Sync another agent's file, e.g. gemini=~/.gemini/GEMINI.md
@@ -120,7 +120,8 @@ Save a merged file as the resolution. It must have no markers left and must pars
 Change this Machine's nickname: 1 to 100 characters; quote one with spaces. It keeps its
 identity, token, Variables and Targets, and no Target is written.
 
-Use {{machine.nickname}} in your Template. {{machine.name}} is a supported alias.
+Use {{machine.nickname}} in your Template for this name; {{machine.hostname}} is the
+computer's own hostname, which AgentSync updates on init.
 Changes apply to Targets on the next sync.
 
 Examples:
@@ -167,7 +168,7 @@ function parse(argv: string[]): { flags: Flags; positionals: string[]; help: boo
       progress: { type: 'boolean', default: true },
       plain: { type: 'boolean', default: false },
       server: { type: 'string' },
-      name: { type: 'string' },
+      nickname: { type: 'string' },
       agent: { type: 'string', multiple: true, default: [] },
       target: { type: 'string', multiple: true, default: [] },
       var: { type: 'string', multiple: true, default: [] },

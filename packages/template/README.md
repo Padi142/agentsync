@@ -10,7 +10,7 @@ runtime dependencies and runs in Node, Workers, and the browser.
 | Syntax | Meaning |
 |---|---|
 | `{{editor}}` | A Machine Variable. Missing renders as empty, with a warning. |
-| `{{machine.nickname}}`, `{{machine.os}}`, `{{agent}}` | Built-in Variables. `{{machine.name}}` is a supported alias of `machine.nickname`; older CLIs reject the new spelling, so update AgentSync on every Machine first. `BUILTIN_VARIABLES` lists them with descriptions for editors. |
+| `{{machine.nickname}}`, `{{machine.hostname}}`, `{{machine.os}}`, `{{agent}}` | Built-in Variables. The nickname is the editable name a person gives the Machine; the hostname is the computer's own. `BUILTIN_VARIABLES` lists them with descriptions for editors. |
 | `{{if name == "value"}} … {{else}} … {{end}}` | A conditional. `!=` also works, blocks nest, `else` is optional. |
 | `\{{` | A literal `{{`. |
 
@@ -21,8 +21,8 @@ runtime dependencies and runs in Node, Workers, and the browser.
 - `{{if}}` blocks can be nested up to 64 deep. A deeper `{{if}}` is a syntax
   error.
 - `\{{` disables substitution: the backslash is dropped and the Expression is
-  kept as literal text. In `C:\Users\{{machine.name}}` the output is
-  `C:\Users{{machine.name}}`, not the Machine's name.
+  kept as literal text. In `C:\Users\{{machine.hostname}}` the output is
+  `C:\Users{{machine.hostname}}`, not the hostname.
 - Expressions are evaluated everywhere, including inside Markdown code fences.
   Escaping is the only way to keep `{{` literal.
 - Malformed syntax is a hard error with a line and column. An unknown
@@ -37,7 +37,7 @@ runtime dependencies and runs in Node, Workers, and the browser.
 ## Interface
 
 ```ts
-render(template, { variables, builtins: { machine: { name, os }, agent } });
+render(template, { variables, builtins: { machine: { hostname, nickname, os }, agent } });
 // → { text, warnings }; throws TemplateSyntaxError if malformed
 validate(template); // → { line, column, message } | null
 referencedVariables(template); // → Machine Variable names used in any branch

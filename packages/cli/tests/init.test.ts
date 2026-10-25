@@ -15,7 +15,8 @@ describe('init', () => {
     expect(result.stdout).toContain(`${t.server.url}/device?code=ABCD-EFGH`);
     const [machine] = t.server.state.machines.values();
     expect(machine).toMatchObject({
-      name: 'laptop',
+      nickname: 'laptop',
+      hostname: 'laptop',
       os: 'linux',
       targets: [{ path: '~/.claude/CLAUDE.md', agent: 'claude' }],
     });

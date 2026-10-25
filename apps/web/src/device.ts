@@ -55,7 +55,7 @@ export async function startDeviceFlow(env: Env): Promise<DeviceAuthorization> {
  */
 export async function pollDeviceFlow(
   env: Env,
-  input: { deviceCode: string; name: string; os: MachineOs; targets: Target[] },
+  input: { deviceCode: string; nickname: string; hostname: string; os: MachineOs; targets: Target[] },
 ): Promise<DevicePollResult> {
   const db = createDb(env);
   const hash = await hashSecret(input.deviceCode);

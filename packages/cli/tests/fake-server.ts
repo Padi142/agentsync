@@ -75,7 +75,8 @@ export function fakeServer() {
       get: os.machines.get.handler(sessionOnly),
       update: os.machines.update.handler(({ context, input }) => {
         const machine = own(context.token, input.machineId);
-        if (input.name) machine.name = input.name;
+        if (input.nickname) machine.nickname = input.nickname;
+        if (input.hostname) machine.hostname = input.hostname;
         if (input.targets) machine.targets = input.targets;
         return machine;
       }),
@@ -107,7 +108,8 @@ export function fakeServer() {
         state.devices.set(input.deviceCode, 'used');
         const machine: Machine = {
           id: `machine-${nextId++}`,
-          name: input.name,
+          nickname: input.nickname,
+          hostname: input.hostname,
           os: input.os,
           targets: input.targets,
           createdAt: new Date(),
@@ -203,7 +205,7 @@ export function fakeServer() {
 
   /** Register a Machine directly, as if `init` had already run on it. */
   const register = (name: string, targets: Target[]) => {
-    const machine: Machine = { id: `machine-${nextId++}`, name, os: 'linux', targets, createdAt: new Date(), lastSeenAt: null };
+    const machine: Machine = { id: `machine-${nextId++}`, nickname: name, hostname: name, os: 'linux', targets, createdAt: new Date(), lastSeenAt: null };
     const token = `token-${nextId++}`;
     state.machines.set(machine.id, machine);
     state.tokens.set(token, machine.id);

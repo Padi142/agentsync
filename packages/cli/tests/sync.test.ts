@@ -12,7 +12,7 @@ describe('sync', () => {
   it('Renders the Template into each Target with its Variables and Built-in Variables', async () => {
     const t = setup();
     const machine = t.registered(both);
-    t.server.putTemplate('{{agent}} on {{machine.name}} ({{machine.os}}) uses {{editor}}\n');
+    t.server.putTemplate('{{agent}} on {{machine.hostname}} ({{machine.os}}) uses {{editor}}\n');
     t.server.state.variables.set(machine.id, { variables: { editor: 'vim' }, revision: 1 });
 
     const result = await t.cli('sync');

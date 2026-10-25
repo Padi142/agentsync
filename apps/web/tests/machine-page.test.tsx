@@ -13,7 +13,7 @@ const MachineRoute = (Route as unknown as { options: { component: ComponentType 
 
 /** A Machine at Variables revision 1, as the route's loader returns it. */
 const machine = (id: string, name: string, editor: string) => ({
-  machine: { id, name, os: 'linux', targets: [], createdAt: new Date(0), lastSeenAt: null },
+  machine: { id, nickname: name, hostname: `${id}-host`, os: 'linux', targets: [], createdAt: new Date(0), lastSeenAt: null },
   variables: { machineId: id, variables: { editor }, revision: 1 },
   history: [],
   template: { revision: 0, text: '', updatedAt: null },
@@ -67,11 +67,11 @@ describe('Machine page', () => {
     update.mockRejectedValueOnce(new Error('offline'));
     fireEvent.change(input, { target: { value: '  Work laptop ' } });
     await act(async () => fireEvent.click(save));
-    expect(update).toHaveBeenCalledWith({ machineId: 'a', name: 'Work laptop' });
+    expect(update).toHaveBeenCalledWith({ machineId: 'a', nickname: 'Work laptop' });
     expect(input.value).toBe('  Work laptop ');
     expect(screen.getByText(/Saving the nickname failed/)).toBeTruthy();
 
-    update.mockResolvedValueOnce({ ...routeMocks.loaderData.machine, name: 'Work laptop' });
+    update.mockResolvedValueOnce({ ...routeMocks.loaderData.machine, nickname: 'Work laptop' });
     await act(async () => fireEvent.click(save));
     expect(input.value).toBe('Work laptop');
     expect(screen.getByText('Nickname saved.')).toBeTruthy();

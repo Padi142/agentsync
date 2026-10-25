@@ -82,8 +82,8 @@ const pendingFor = (ctx: Context, server: string) => {
  * else asked at a terminal with the hostname prefilled, else the hostname.
  */
 async function chooseNickname(ctx: Context, server: string): Promise<string> {
-  if (ctx.flags.name !== undefined) return checkedNickname(ctx.flags.name);
-  const saved = pendingFor(ctx, server)?.name;
+  if (ctx.flags.nickname !== undefined) return checkedNickname(ctx.flags.nickname);
+  const saved = pendingFor(ctx, server)?.nickname;
   if (saved) return saved;
   const check = await nicknameCheck();
   const hostname = ctx.io.hostname.trim();
@@ -106,12 +106,12 @@ async function register(ctx: Context, server: string, targets: Target[], name: s
       verificationUriComplete: started.verificationUriComplete,
       interval: started.interval,
       expiresAt: Date.now() + started.expiresIn * 1000,
-      name,
+      nickname: name,
     } satisfies PendingLogin;
     config.pending = pending;
     ctx.save();
-  } else if (pending.name !== name) {
-    pending.name = name;
+  } else if (pending.nickname !== name) {
+    pending.nickname = name;
     ctx.save();
   }
   ctx.say(`To register this Machine, approve it in the browser.\n\nOpen: ${pending.verificationUriComplete}\nCode: ${pending.userCode}\n`);
@@ -137,7 +137,8 @@ async function poll(
     await io.sleep(interval * 1000);
     const result = await client.machines.devicePoll({
       deviceCode: pending.deviceCode,
-      name,
+      nickname: name,
+      hostname: io.hostname.trim(),
       os: machineOs(io.platform),
       targets,
     });
@@ -151,7 +152,7 @@ async function poll(
       config.token = result.token;
       config.machineId = result.machine.id;
       ctx.save();
-      ctx.success(`Registered Machine ${result.machine.name}`);
+      ctx.success(`Registered Machine ${result.machine.nickname}`);
       return null;
     }
     ctx.save();
@@ -212,7 +213,7 @@ export async function init(ctx: Context): Promise<Outcome> {
   }
   const alreadyRegistered = !!ctx.config.token;
   // An explicit --name renames a registered Machine; an ordinary init keeps the server's nickname.
-  const rename = alreadyRegistered && ctx.flags.name !== undefined ? await checkedNickname(ctx.flags.name) : undefined;
+  const rename = alreadyRegistered && ctx.flags.nickname !== undefined ? await checkedNickname(ctx.flags.nickname) : undefined;
   const nickname = alreadyRegistered ? undefined : await chooseNickname(ctx, server);
   const chosen = await chooseTargets(ctx);
   const set = parseAssignments(ctx.flags.var);
@@ -227,10 +228,12 @@ export async function init(ctx: Context): Promise<Outcome> {
   const added = chosen.filter((target) => !machine.targets.some((known) => known.path === target.path));
   const changes = {
     ...(alreadyRegistered && added.length ? { targets: [...machine.targets, ...added] } : {}),
-    ...(rename !== undefined && rename !== machine.name ? { name: rename } : {}),
+    ...(rename !== undefined && rename !== machine.nickname ? { nickname: rename } : {}),
+    // The hostname follows the computer: report it when it changed since registering.
+    ...(ctx.io.hostname.trim() && ctx.io.hostname.trim() !== machine.hostname ? { hostname: ctx.io.hostname.trim() } : {}),
   };
   if (Object.keys(changes).length) machine = await client.machines.update({ machineId, ...changes });
-  if (changes.name) ctx.success(`Machine nickname saved: ${machine.name}`);
+  if (changes.nickname) ctx.success(`Machine nickname saved: ${machine.nickname}`);
   if (Object.keys(set).length) await changeVariables(client, machineId, set);
   const { revision } = await client.template.get();
   const imported = revision === 0 ? await importExisting(ctx, client, machine.targets) : undefined;
@@ -265,5 +268,5 @@ export async function init(ctx: Context): Promise<Outcome> {
   }
 
   const { code, data } = await applySync(ctx, await client.machines.sync());
-  return { code: code ?? EXIT.ok, data: { machineId, name: machine.name, imported, hooks, skills, skillsLeftAlone, ...data } };
+  return { code: code ?? EXIT.ok, data: { machineId, nickname: machine.nickname, hostname: machine.hostname, imported, hooks, skills, skillsLeftAlone, ...data } };
 }

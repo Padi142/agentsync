@@ -55,13 +55,15 @@ export const targetSchema = z.object({
   agent: z.string().regex(/^[a-z][a-z0-9-]*$/).max(32),
 });
 
-/** A Machine nickname: trimmed, 1–100 characters. Spaces, Unicode and duplicates are fine. */
-export const machineNameSchema = z.string().trim().min(1).max(100);
-const machineName = machineNameSchema;
+/** A Machine nickname, the name a person gives it: trimmed, 1–100 characters. Spaces, Unicode and duplicates are fine. */
+export const machineNicknameSchema = z.string().trim().min(1).max(100);
+/** The computer's own hostname, as the CLI reports it. Only the Machine itself can change it. */
+export const machineHostnameSchema = z.string().trim().min(1).max(255);
 
 export const machineSchema = z.object({
   id,
-  name: machineName,
+  nickname: machineNicknameSchema,
+  hostname: machineHostnameSchema,
   os: machineOsSchema,
   targets: z.array(targetSchema).max(20),
   createdAt: z.date(),
@@ -214,7 +216,9 @@ const machines = {
   update: anyAuthProcedure
     .input(
       machineIdInput.extend({
-        name: machineName.optional(),
+        nickname: machineNicknameSchema.optional(),
+        /** Only a Machine token may change its own hostname; a browser session gets FORBIDDEN. */
+        hostname: machineHostnameSchema.optional(),
         targets: z.array(targetSchema).max(20).optional(),
       }),
     )
@@ -229,7 +233,8 @@ const machines = {
     .input(
       z.object({
         deviceCode: z.string().min(1),
-        name: machineName,
+        nickname: machineNicknameSchema,
+        hostname: machineHostnameSchema,
         os: machineOsSchema,
         targets: z.array(targetSchema).max(20),
       }),

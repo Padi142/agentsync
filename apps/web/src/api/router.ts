@@ -109,6 +109,10 @@ export const router = os.router({
     }),
     update: os.machines.update.use(auth).handler(async ({ context, input, errors }) => {
       if (!await reachableMachine(context, input.machineId)) throw errors.NOT_FOUND();
+      // The hostname is the computer's own: only the Machine reports it, a person cannot edit it.
+      if (input.hostname !== undefined && !context.machine) {
+        throw new ORPCError('FORBIDDEN', { message: 'Only the Machine itself can change its hostname.' });
+      }
       const updated = await updateMachine(context.env, context.userId, input.machineId, input);
       if (!updated) throw errors.NOT_FOUND();
       return updated;

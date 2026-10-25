@@ -211,7 +211,7 @@ describe('Machine tokens and browser sessions', () => {
       const cli = rpcClient(env);
       const { deviceCode } = await cli.machines.deviceStart();
       workos.approve(deviceCode, identity);
-      const result = await cli.machines.devicePoll({ deviceCode, name: 'laptop', os: 'linux', targets: [] });
+      const result = await cli.machines.devicePoll({ deviceCode, nickname: 'laptop', hostname: 'laptop', os: 'linux', targets: [] });
       if (result.status !== 'approved') throw new Error(result.status);
       return result.token;
     } finally {

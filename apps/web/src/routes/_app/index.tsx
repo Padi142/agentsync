@@ -40,7 +40,7 @@ function TemplateEditor() {
   const preview = machine && !error
     ? render(text, {
         variables: variables[machineIndex],
-        builtins: { machine: { name: machine.name, os: machine.os }, agent },
+        builtins: { machine: { hostname: machine.hostname, nickname: machine.nickname, os: machine.os }, agent },
       })
     : null;
 
@@ -108,9 +108,9 @@ function TemplateEditor() {
           <ul>
             <li><code>{'{{editor}}'}</code> a Machine Variable</li>
             <li>
-              <code>{'{{machine.nickname}}'}</code>, <code>{'{{machine.os}}'}</code>, <code>{'{{agent}}'}</code> Built-in
-              Variables. <code>{'{{machine.name}}'}</code> is a supported alias of <code>machine.nickname</code>; update
-              AgentSync on every Machine before using the new spelling. Type <code>{'{{'}</code> for suggestions.
+              <code>{'{{machine.nickname}}'}</code> (the name you give a Machine), <code>{'{{machine.hostname}}'}</code>,{' '}
+              <code>{'{{machine.os}}'}</code>, <code>{'{{agent}}'}</code> Built-in Variables. Type <code>{'{{'}</code> for
+              suggestions.
             </li>
             <li><code>{'{{if agent == "codex"}} … {{else}} … {{end}}'}</code> a conditional (<code>!=</code> works too)</li>
             <li><code>{'\\{{'}</code> a literal <code>{'{{'}</code></li>
@@ -135,7 +135,7 @@ function TemplateEditor() {
               <label>
                 Machine
                 <select value={machineIndex} onChange={(e) => setMachineIndex(Number(e.target.value))}>
-                  {machines.map((m, i) => <option key={m.id} value={i}>{m.name}</option>)}
+                  {machines.map((m, i) => <option key={m.id} value={i}>{m.nickname}</option>)}
                 </select>
               </label>
               <label>

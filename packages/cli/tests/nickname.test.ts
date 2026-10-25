@@ -13,7 +13,7 @@ describe('Machine nicknames', () => {
     const result = await t.cli('init', '--server', t.server.url);
 
     expect(result.code).toBe(0);
-    expect(only(t).name).toBe('Work laptop');
+    expect(only(t).nickname).toBe('Work laptop');
     expect(t.questions[0]).toBe('Machine nickname');
   });
 
@@ -21,19 +21,19 @@ describe('Machine nicknames', () => {
     const t = setup();
     mkdirSync(t.path('.codex'));
 
-    await t.cli('init', '--yes', '--no-wait', '--name', '  Home server ', '--server', t.server.url);
+    await t.cli('init', '--yes', '--no-wait', '--nickname', '  Home server ', '--server', t.server.url);
     const finished = await t.cli('init', '--yes');
 
     expect(finished.code).toBe(0);
-    expect(only(t).name).toBe('Home server');
+    expect(only(t).nickname).toBe('Home server');
   });
 
   it('refuses an empty or overlong --name before registering', async () => {
     const t = setup();
     mkdirSync(t.path('.codex'));
 
-    expect((await t.cli('init', '--yes', '--name', ' ', '--server', t.server.url)).code).toBe(2);
-    expect((await t.cli('init', '--yes', '--name', 'x'.repeat(101), '--server', t.server.url)).code).toBe(2);
+    expect((await t.cli('init', '--yes', '--nickname', ' ', '--server', t.server.url)).code).toBe(2);
+    expect((await t.cli('init', '--yes', '--nickname', 'x'.repeat(101), '--server', t.server.url)).code).toBe(2);
     expect(t.server.state.machines.size).toBe(0);
   });
 
@@ -44,8 +44,8 @@ describe('Machine nicknames', () => {
     const result = await t.cli('rename', 'Home server', '--json');
 
     expect(result.code).toBe(0);
-    expect(result.json()).toEqual({ ok: true, machine: { id: machine.id, name: 'Home server' } });
-    expect(only(t)).toMatchObject({ id: machine.id, name: 'Home server', targets: machine.targets });
+    expect(result.json()).toEqual({ ok: true, machine: { id: machine.id, nickname: 'Home server', hostname: 'laptop' } });
+    expect(only(t)).toMatchObject({ id: machine.id, nickname: 'Home server', hostname: 'laptop', targets: machine.targets });
     expect((await t.cli('rename')).code).toBe(2);
     expect((await t.cli('rename', '')).code).toBe(2);
   });
@@ -55,20 +55,31 @@ describe('Machine nicknames', () => {
     t.registered();
     mkdirSync(t.path('.claude'));
 
-    await t.cli('init', '--yes', '--name', 'Desk', '--server', t.server.url);
-    expect(only(t).name).toBe('Desk');
+    await t.cli('init', '--yes', '--nickname', 'Desk', '--server', t.server.url);
+    expect(only(t).nickname).toBe('Desk');
 
     await t.cli('init', '--yes', '--server', t.server.url);
-    expect(only(t).name).toBe('Desk');
+    expect(only(t).nickname).toBe('Desk');
   });
 
-  it('renders {{machine.nickname}} like {{machine.name}}', async () => {
+  it('renders {{machine.nickname}} and {{machine.hostname}} as separate values', async () => {
     const t = setup();
     t.registered();
-    t.server.putTemplate('{{machine.nickname}} / {{machine.name}}\n');
+    t.server.putTemplate('{{machine.nickname}} / {{machine.hostname}}\n');
     await t.cli('rename', 'Desk');
 
     expect((await t.cli('sync')).code).toBe(0);
-    expect((await import('node:fs')).readFileSync(t.path('.claude/CLAUDE.md'), 'utf8')).toBe('Desk / Desk\n');
+    expect((await import('node:fs')).readFileSync(t.path('.claude/CLAUDE.md'), 'utf8')).toBe('Desk / laptop\n');
+  });
+
+  it('reports a changed hostname on init, without touching the nickname', async () => {
+    const t = setup();
+    t.registered();
+    only(t).hostname = 'old-host';
+    mkdirSync(t.path('.claude'));
+
+    await t.cli('init', '--yes', '--server', t.server.url);
+
+    expect(only(t)).toMatchObject({ nickname: 'laptop', hostname: 'laptop' });
   });
 });

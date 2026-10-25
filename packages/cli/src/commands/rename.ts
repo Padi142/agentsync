@@ -8,9 +8,9 @@ export async function rename(ctx: Context): Promise<Outcome> {
   if (ctx.args.length !== 1) throw usage('Usage: agentsync rename <nickname>. Quote a nickname with spaces.');
   const name = await checkedNickname(ctx.args[0]!);
   const client = machineClient(ctx);
-  // Only the name: sending Targets too could overwrite a newer list with a stale one.
-  const machine = await ctx.during('Saving…', () => client.machines.update({ machineId: ctx.config.machineId!, name }));
-  ctx.success(`Machine nickname saved: ${machine.name}`);
+  // Only the nickname: sending Targets too could overwrite a newer list with a stale one.
+  const machine = await ctx.during('Saving…', () => client.machines.update({ machineId: ctx.config.machineId!, nickname: name }));
+  ctx.success(`Machine nickname saved: ${machine.nickname}`);
   ctx.say('Run `agentsync sync` to apply name-dependent Template changes.');
-  return { data: { machine: { id: machine.id, name: machine.name } } };
+  return { data: { machine: { id: machine.id, nickname: machine.nickname, hostname: machine.hostname } } };
 }

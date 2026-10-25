@@ -6,7 +6,8 @@ import type { Env } from '../env';
 
 const machineFields = {
   id: machine.id,
-  name: machine.name,
+  nickname: machine.nickname,
+  hostname: machine.hostname,
   os: machine.os,
   targets: machine.targets,
   createdAt: machine.createdAt,
@@ -34,16 +35,16 @@ export async function registerMachine(
   env: Pick<Env, 'DB'>,
   deviceCodeHash: string,
   userId: string,
-  details: { name: string; os: MachineOs; targets: Target[] },
+  details: { nickname: string; hostname: string; os: MachineOs; targets: Target[] },
 ): Promise<{ token: string; machine: Machine } | null> {
   const id = crypto.randomUUID();
   const token = newToken();
   const now = Date.now();
   const [inserted] = await env.DB.batch([
     env.DB.prepare(
-      `INSERT INTO machine (id, user_id, name, os, targets, created_at, last_seen_at)
-       SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM device_authorization WHERE device_code_hash = ?)`,
-    ).bind(id, userId, details.name, details.os, JSON.stringify(details.targets), now, now, deviceCodeHash),
+      `INSERT INTO machine (id, user_id, nickname, hostname, os, targets, created_at, last_seen_at)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM device_authorization WHERE device_code_hash = ?)`,
+    ).bind(id, userId, details.nickname, details.hostname, details.os, JSON.stringify(details.targets), now, now, deviceCodeHash),
     env.DB.prepare(
       'INSERT INTO machine_credential (token_hash, machine_id, created_at) SELECT ?, id, ? FROM machine WHERE id = ?',
     ).bind(await hashSecret(token), now, id),
@@ -64,15 +65,16 @@ export async function authenticateMachine(env: Pick<Env, 'DB'>, token: string) {
   const row = await env.DB.prepare(
     `UPDATE machine SET last_seen_at = ?
      WHERE id = (SELECT machine_id FROM machine_credential WHERE token_hash = ?)
-     RETURNING id, user_id, name, os, targets, created_at, last_seen_at`,
+     RETURNING id, user_id, nickname, hostname, os, targets, created_at, last_seen_at`,
   ).bind(Date.now(), await hashSecret(token)).first<{
-    id: string; user_id: string; name: string; os: MachineOs; targets: string;
+    id: string; user_id: string; nickname: string; hostname: string; os: MachineOs; targets: string;
     created_at: number; last_seen_at: number;
   }>();
   if (!row) return null;
   const found: Machine = {
     id: row.id,
-    name: row.name,
+    nickname: row.nickname,
+    hostname: row.hostname,
     os: row.os,
     targets: JSON.parse(row.targets),
     createdAt: new Date(row.created_at),
@@ -95,11 +97,12 @@ export async function updateMachine(
   env: Pick<Env, 'DB'>,
   userId: string,
   machineId: string,
-  changes: { name?: string; targets?: Target[] },
+  changes: { nickname?: string; hostname?: string; targets?: Target[] },
 ): Promise<Machine | undefined> {
-  if (changes.name === undefined && changes.targets === undefined) return getMachine(env, userId, machineId);
+  const { nickname, hostname, targets } = changes;
+  if (nickname === undefined && hostname === undefined && targets === undefined) return getMachine(env, userId, machineId);
   const [updated] = await createDb(env).update(machine)
-    .set({ name: changes.name, targets: changes.targets })
+    .set({ nickname, hostname, targets })
     .where(and(eq(machine.id, machineId), eq(machine.userId, userId)))
     .returning(machineFields);
   return updated;

@@ -15,7 +15,7 @@ export interface PendingLogin {
   /** Milliseconds since the epoch. */
   expiresAt: number;
   /** The Machine nickname chosen when the registration started. Older configs lack it. */
-  name?: string;
+  nickname?: string;
 }
 
 /**

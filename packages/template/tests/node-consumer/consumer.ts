@@ -3,6 +3,6 @@ import { render } from '@agentsync/template';
 
 const context = {
   variables: {},
-  builtins: { machine: { name: 'laptop', os: 'darwin' }, agent: 'claude' },
+  builtins: { machine: { hostname: 'laptop', nickname: 'Work laptop', os: 'darwin' }, agent: 'claude' },
 };
-console.log(render('{{agent}} on {{machine.name}}', context).text);
+console.log(render('{{agent}} on {{machine.hostname}}', context).text);

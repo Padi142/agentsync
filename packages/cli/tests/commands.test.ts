@@ -44,7 +44,7 @@ describe('status', () => {
 
     expect(result.code).toBe(0);
     expect(result.json()).toMatchObject({
-      machine: { name: 'laptop' },
+      machine: { nickname: 'laptop', hostname: 'laptop' },
       templateRevision: 1,
       openConflicts: { count: 0 },
       targets: [

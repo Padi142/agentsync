@@ -14,7 +14,7 @@ export interface Flags {
   progress: boolean;
   plain: boolean;
   server?: string;
-  name?: string;
+  nickname?: string;
   agent: string[];
   target: string[];
   var: string[];

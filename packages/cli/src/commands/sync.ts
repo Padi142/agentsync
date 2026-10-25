@@ -33,7 +33,7 @@ ${diff.trimEnd()}
 
 1. Run \`agentsync template --json\` to get the Template and its revision.
 2. Put shared changes into the Template. For a change only this Machine needs, use an
-   Expression such as \`{{if machine.name == "…"}}\` or a Variable (\`agentsync vars --var KEY=VALUE\`).
+   Expression such as \`{{if machine.nickname == "…"}}\` or a Variable (\`agentsync vars --var KEY=VALUE\`).
 3. Save it with \`agentsync edit --file <file> --base <revision>\`.
 4. Run \`agentsync sync --overwrite\` and check that ${path} now holds the change.`;
 }
@@ -91,7 +91,10 @@ export function renderTargets(ctx: Context, { template, machine, variables }: Sy
   return usable.map((target) => {
     const { text, warnings } = render(template.text, {
       variables: variables.variables,
-      builtins: { machine: { name: machine.name, os: machine.os }, agent: target.agent },
+      builtins: {
+        machine: { hostname: machine.hostname, nickname: machine.nickname, os: machine.os },
+        agent: target.agent,
+      },
     });
     return { target, path: expandHome(target.path, ctx.io), rendered: text, warnings };
   });

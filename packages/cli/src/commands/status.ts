@@ -28,7 +28,7 @@ export async function status(ctx: Context): Promise<Outcome> {
   });
 
   const paint = ctx.paint.out;
-  ctx.say(`Machine ${paint.bold(machine.name)} · ${template.revision ? `Template revision ${template.revision}` : 'no Template yet'}`);
+  ctx.say(`Machine ${paint.bold(machine.nickname)} (${machine.hostname}) · ${template.revision ? `Template revision ${template.revision}` : 'no Template yet'}`);
   ctx.detail(`Server ${ctx.config.server} · ${machine.os}`);
   const narrow = (ctx.io.columns ?? 80) < NARROW_COLUMNS;
   const agentWidth = Math.max(0, ...targets.map((target) => target.agent.length));
@@ -44,7 +44,7 @@ export async function status(ctx: Context): Promise<Outcome> {
   return {
     data: {
       server: ctx.config.server,
-      machine: { id: machine.id, name: machine.name, os: machine.os },
+      machine: { id: machine.id, nickname: machine.nickname, hostname: machine.hostname, os: machine.os },
       templateRevision: template.revision,
       targets,
       openConflicts,

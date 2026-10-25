@@ -89,7 +89,10 @@ export const machine = sqliteTable(
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
-    name: text('name').notNull(),
+    /** The name a person gives the Machine. */
+    nickname: text('nickname').notNull(),
+    /** The computer's own hostname, reported by the CLI. */
+    hostname: text('hostname').notNull(),
     os: text('os', { enum: ['macos', 'linux', 'windows'] }).notNull(),
     targets: text('targets', { mode: 'json' }).$type<Target[]>().notNull(),
     createdAt: timestamp('created_at'),

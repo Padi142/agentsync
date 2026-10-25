@@ -42,13 +42,13 @@ beforeEach(async () => {
 const browser = (who: keyof typeof identities = 'alice') =>
   rpcClient(env, { cookie: `wos-session=${identities[who].id}` });
 const cli = () => rpcClient(env);
-const registration = { name: 'laptop', os: 'linux' as const, targets: [{ path: '~/.claude/CLAUDE.md', agent: 'claude' }] };
+const registration = { nickname: 'laptop', hostname: 'laptop-host', os: 'linux' as const, targets: [{ path: '~/.claude/CLAUDE.md', agent: 'claude' }] };
 
 /** Register a Machine through the device flow and return a client that uses its token. */
-async function registerMachine(who: keyof typeof identities = 'alice', name = 'laptop') {
+async function registerMachine(who: keyof typeof identities = 'alice', nickname = 'laptop') {
   const { deviceCode } = await cli().machines.deviceStart();
   workos.approve(deviceCode, identities[who]);
-  const result = await cli().machines.devicePoll({ ...registration, deviceCode, name });
+  const result = await cli().machines.devicePoll({ ...registration, deviceCode, nickname });
   if (result.status !== 'approved') throw new Error(`Registration ended as ${result.status}`);
   return { ...result, client: rpcClient(env, { token: result.token }) };
 }
@@ -189,7 +189,7 @@ describe('Machine registration', () => {
     workos.approve(deviceCode, identities.alice);
     const approved = await browser('bob').machines.devicePoll({ ...registration, deviceCode });
     expect(approved.status).toBe('approved');
-    expect((await browser('alice').machines.list()).map((m) => m.name)).toEqual(['laptop']);
+    expect((await browser('alice').machines.list()).map((m) => m.nickname)).toEqual(['laptop']);
     expect(await browser('bob').machines.list()).toEqual([]);
   });
 
@@ -200,10 +200,10 @@ describe('Machine registration', () => {
     expect(approved).toMatchObject({
       status: 'approved',
       token: expect.any(String),
-      machine: { name: 'laptop', os: 'linux', targets: registration.targets },
+      machine: { nickname: 'laptop', hostname: 'laptop-host', os: 'linux', targets: registration.targets },
     });
     const machines = await browser().machines.list();
-    expect(machines.map((m) => m.name)).toEqual(['laptop']);
+    expect(machines.map((m) => m.nickname)).toEqual(['laptop']);
     expect(await browser().session()).toMatchObject({ email: 'alice@example.com' });
   });
 
@@ -297,7 +297,7 @@ describe('Variables and the Machine-token boundary', () => {
     const other = { machineId: desktop.machine.id };
     await expect(laptop.client.variables.get(other)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(laptop.client.variables.put({ ...other, variables: {}, expectedRevision: 1 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    await expect(laptop.client.machines.update({ ...other, name: 'renamed' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(laptop.client.machines.update({ ...other, nickname: 'renamed' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(laptop.client.machines.revoke(other)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(await desktop.client.variables.get(other)).toMatchObject({ variables: { secret: 'x' } });
   });
@@ -309,10 +309,10 @@ describe('Variables and the Machine-token boundary', () => {
     await expect(browser('bob').variables.get(input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(browser('bob').variables.history(input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(browser('bob').variables.put({ ...input, variables: {}, expectedRevision: 0 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    await expect(browser('bob').machines.update({ ...input, name: 'mine' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(browser('bob').machines.update({ ...input, nickname: 'mine' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(browser('bob').machines.revoke(input)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(await browser('bob').machines.list()).toEqual([]);
-    expect(await browser('alice').machines.get(input)).toMatchObject({ name: 'laptop' });
+    expect(await browser('alice').machines.get(input)).toMatchObject({ nickname: 'laptop' });
   });
 
   it('shares the Template between a Machine and the browser', async () => {
@@ -341,7 +341,7 @@ describe('Machine sync and revocation', () => {
     try {
       const payload = await client.machines.sync();
       expect(payload).toMatchObject({
-        machine: { id: machine.id, name: 'laptop' },
+        machine: { id: machine.id, nickname: 'laptop', hostname: 'laptop-host' },
         template: { text: 'Hi {{editor}}', revision: 1 },
         variables: { variables: { editor: 'vim' }, revision: 1 },
         openConflicts: { count: 0, url: 'http://app.test/conflicts' },
@@ -356,10 +356,13 @@ describe('Machine sync and revocation', () => {
   it('lets a Machine rename itself and change its Targets', async () => {
     const { machine, client } = await registerMachine();
     const targets = [{ path: '~/.codex/AGENTS.md', agent: 'codex' }];
-    expect(await client.machines.update({ machineId: machine.id, name: 'work laptop', targets }))
-      .toMatchObject({ name: 'work laptop', targets });
-    expect(await browser().machines.update({ machineId: machine.id, name: 'renamed' }))
-      .toMatchObject({ name: 'renamed', targets });
+    expect(await client.machines.update({ machineId: machine.id, nickname: 'work laptop', hostname: 'new-host', targets }))
+      .toMatchObject({ nickname: 'work laptop', hostname: 'new-host', targets });
+    expect(await browser().machines.update({ machineId: machine.id, nickname: 'renamed' }))
+      .toMatchObject({ nickname: 'renamed', hostname: 'new-host', targets });
+    // The hostname is the computer's own: a person cannot change it from the browser.
+    await expect(browser().machines.update({ machineId: machine.id, hostname: 'spoofed' }))
+      .rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
   it('stops accepting a token once its Machine is revoked from the browser', async () => {
@@ -372,7 +375,7 @@ describe('Machine sync and revocation', () => {
     await browser().machines.revoke({ machineId: laptop.machine.id });
     await expect(laptop.client.machines.sync()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     await expect(browser().machines.get({ machineId: laptop.machine.id })).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    expect((await desktop.client.machines.sync()).machine.name).toBe('desktop');
+    expect((await desktop.client.machines.sync()).machine.nickname).toBe('desktop');
     const left = await env.DB.prepare(
       `SELECT (SELECT count(*) FROM machine) AS machines,
               (SELECT count(*) FROM machine_credential) AS credentials,

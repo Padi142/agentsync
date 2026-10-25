@@ -36,7 +36,8 @@ function Machines() {
             {machines.map((machine) => (
               <tr key={machine.id}>
                 <td>
-                  <Link to="/machines/$machineId" params={{ machineId: machine.id }}>{machine.name}</Link>
+                  <Link to="/machines/$machineId" params={{ machineId: machine.id }}>{machine.nickname}</Link>
+                  <div className="muted"><code>{machine.hostname}</code></div>
                 </td>
                 <td>{machine.os}</td>
                 <td>

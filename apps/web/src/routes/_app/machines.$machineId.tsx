@@ -40,13 +40,13 @@ function MachinePage() {
   const [pending, setPending] = useState<'rename' | 'delete' | null>(null);
   const [variablesDirty, setVariablesDirty] = useState(false);
   // The nickname the input last took from the server: a newer one replaces a clean input only.
-  const [base, setBase] = useState(machine.name);
-  const [name, setName] = useState(machine.name);
+  const [base, setBase] = useState(machine.nickname);
+  const [name, setName] = useState(machine.nickname);
   const [changedElsewhere, setChangedElsewhere] = useState(false);
-  if (machine.name !== base) {
-    if (name === base) setName(machine.name);
-    else if (name.trim() !== machine.name) setChangedElsewhere(true);
-    setBase(machine.name);
+  if (machine.nickname !== base) {
+    if (name === base) setName(machine.nickname);
+    else if (name.trim() !== machine.nickname) setChangedElsewhere(true);
+    setBase(machine.nickname);
   }
   const trimmed = name.trim();
   const nameProblem = !trimmed ? 'Give this Machine a nickname.' : trimmed.length > 100 ? 'Use at most 100 characters.' : null;
@@ -55,11 +55,11 @@ function MachinePage() {
     event.preventDefault();
     if (pending || nameProblem) return;
     setPending('rename');
-    const [error, saved] = await safe(rpc.machines.update({ machineId: machine.id, name: trimmed }));
+    const [error, saved] = await safe(rpc.machines.update({ machineId: machine.id, nickname: trimmed }));
     setPending(null);
     if (error) return setMachineNotice('Saving the nickname failed. Please try again.');
     // The loader still holds the old nickname until it refreshes; the input already shows the new one.
-    setName(saved.name);
+    setName(saved.nickname);
     setChangedElsewhere(false);
     setMachineNotice('Nickname saved.');
     await router.invalidate();
@@ -68,7 +68,7 @@ function MachinePage() {
     if (pending) return;
     const discard = variablesDirty ? '\n\nYour unsaved Variable changes on this page will be discarded.' : '';
     const confirmed = window.confirm(
-      `Delete ${machine.name}?\n\nIt stops syncing, and its registration, token, Variables and Variable history are permanently removed. ` +
+      `Delete ${machine.nickname}?\n\nIt stops syncing, and its registration, token, Variables and Variable history are permanently removed. ` +
         `Its local instruction files and the shared Template stay. To use it again, run \`agentsync logout\` and then \`agentsync init\` on it.${discard}`,
     );
     if (!confirmed) return;
@@ -87,9 +87,9 @@ function MachinePage() {
       <section className="panel">
         <div className="panel-heading">
           <div>
-            <h1>{machine.name}</h1>
+            <h1>{machine.nickname}</h1>
             <p className="muted">
-              {machine.os} · registered {formatTime(machine.createdAt)} · last seen{' '}
+              <code>{machine.hostname}</code> · {machine.os} · registered {formatTime(machine.createdAt)} · last seen{' '}
               {machine.lastSeenAt ? formatTime(machine.lastSeenAt) : 'never'}
             </p>
           </div>
@@ -101,16 +101,16 @@ function MachinePage() {
               aria-invalid={!!nameProblem} disabled={pending !== null} />
           </label>
           <button className="button secondary" type="submit"
-            disabled={pending !== null || !!nameProblem || trimmed === machine.name}>
+            disabled={pending !== null || !!nameProblem || trimmed === machine.nickname}>
             {pending === 'rename' ? 'Saving…' : 'Save nickname'}
           </button>
         </form>
         {nameProblem && name ? <p className="field-issue">{nameProblem}</p> : null}
-        {changedElsewhere && trimmed !== machine.name ? (
-          <p className="issue warning">The saved nickname changed to “{machine.name}” while you were editing.</p>
+        {changedElsewhere && trimmed !== machine.nickname ? (
+          <p className="issue warning">The saved nickname changed to “{machine.nickname}” while you were editing.</p>
         ) : null}
         <p className="muted">
-          Use <code>{'{{machine.nickname}}'}</code> in your Template. <code>{'{{machine.name}}'}</code> is a supported
+          Use <code>{'{{machine.nickname}}'}</code> in your Template. <code>{'{{machine.nickname}}'}</code> is a supported
           alias. Changes apply to Targets on the next sync.
         </p>
         <h3>Targets</h3>
