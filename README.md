@@ -8,12 +8,18 @@ Drizzle, and a typed oRPC API that implements `@agentsync/contract`: the
 Template, Machines and their Variables (with revision history), Conflicts, and
 Machine registration through the WorkOS device flow. The `agentsync` CLI
 (`packages/cli`) Renders the Template into each agent's Global Instructions and keeps
-them current from Claude Code and Codex `SessionStart` hooks. The full web UI is not
-implemented yet.
+them current from Claude Code and Codex `SessionStart` hooks.
+
+The web UI edits the Template with live syntax errors and a per-Machine,
+per-agent preview, manages Machines and their Variables, shows Template and
+Variable history with rollback, and resolves Conflicts (`/conflicts`). Pages load
+their data in the browser through the oRPC client (the root route sets
+`ssr: false`); the server renders only the document shell. Device approval
+needs no page here: WorkOS AuthKit hosts the `verification_uri`.
 
 ## Layout
 
-- `apps/web` — React SSR app, Hono API, WorkOS authentication, and D1 schema/migrations.
+- `apps/web` — React web UI, Hono API, WorkOS authentication, and D1 schema/migrations.
 - `packages/cli` — the `agentsync` CLI, its hooks and agent skill. See its README.
 - `packages/contract` — the oRPC API contract. See its README for the auth kind of each procedure.
 - `packages/template` — the Template Expression grammar: Render, validate, and inspect Templates.
