@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { z } from 'zod';
 import { Diff } from '../../components/Diff';
 import { formatTime } from '../../format';
+import { useOwnNavigate } from '../../navigation';
 import { rpc } from '../../rpc';
 
 export const Route = createFileRoute('/_app/history')({
@@ -27,6 +28,7 @@ export const Route = createFileRoute('/_app/history')({
 function History() {
   const { template, history, revision, previous } = Route.useLoaderData();
   const router = useRouter();
+  const navigate = useOwnNavigate();
   const [compare, setCompare] = useState<'previous' | 'current'>('previous');
   const [notice, setNotice] = useState('');
 
@@ -42,7 +44,7 @@ function History() {
       await router.invalidate();
       return;
     }
-    await router.navigate({ to: '/history', search: { revision: saved.revision } });
+    await navigate({ to: '/history', search: { revision: saved.revision } });
     setNotice(`Restored revision ${revision.revision} as revision ${saved.revision}.`);
   };
 

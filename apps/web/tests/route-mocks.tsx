@@ -16,6 +16,7 @@ export const routeMocks = {
       useNavigate: () => (options: unknown) => routeMocks.navigate(options),
     }),
     useBlocker: () => {},
+    useNavigate: () => (options: unknown) => routeMocks.navigate(options),
     useRouter: () => ({ invalidate: async () => {} }),
     Link: ({ children }: { children: ReactNode }) => <a href="#">{children}</a>,
   },

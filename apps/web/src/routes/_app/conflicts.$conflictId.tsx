@@ -8,6 +8,7 @@ import { conflictHunks, pickSide, remerge, type ConflictHunk, type Side } from '
 import { copyText } from '../../copy';
 import { useDraft } from '../../draft';
 import { formatTime } from '../../format';
+import { useOwnNavigate } from '../../navigation';
 import { rpc } from '../../rpc';
 
 export const Route = createFileRoute('/_app/conflicts/$conflictId')({
@@ -37,7 +38,7 @@ function ConflictPage() {
 
 function Resolver() {
   const { conflict, template } = Route.useLoaderData();
-  const navigate = Route.useNavigate();
+  const navigate = useOwnNavigate();
   // The draft's revision is the Template revision this text is merged against. It moves on
   // when someone saves meanwhile. Unsaved means "differs from the Conflict's own text".
   const draft = useDraft({ revision: conflict.serverRevision, value: conflict.text });

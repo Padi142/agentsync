@@ -6,6 +6,7 @@ import { useState, type FormEvent } from 'react';
 import { Diff } from '../../components/Diff';
 import { useDraft } from '../../draft';
 import { formatTime } from '../../format';
+import { useOwnNavigate } from '../../navigation';
 import { rpc } from '../../rpc';
 
 export const Route = createFileRoute('/_app/machines/$machineId')({
@@ -33,7 +34,7 @@ function MachineRoute() {
 function MachinePage() {
   const { machine, variables } = Route.useLoaderData();
   const router = useRouter();
-  const navigate = Route.useNavigate();
+  const navigate = useOwnNavigate();
   const [name, setName] = useState(machine.name);
   const [notice, setNotice] = useState('');
   const [machineNotice, setMachineNotice] = useState('');

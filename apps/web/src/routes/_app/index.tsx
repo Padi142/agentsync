@@ -5,6 +5,7 @@ import { createFileRoute, Link, useBlocker, useRouter } from '@tanstack/react-ro
 import { useState } from 'react';
 import { CodeEditor, type LineMark } from '../../components/CodeEditor';
 import { useDraft } from '../../draft';
+import { useOwnNavigate } from '../../navigation';
 import { rpc } from '../../rpc';
 
 export const Route = createFileRoute('/_app/')({
@@ -19,7 +20,7 @@ export const Route = createFileRoute('/_app/')({
 function TemplateEditor() {
   const { template, machines, variables } = Route.useLoaderData();
   const router = useRouter();
-  const navigate = Route.useNavigate();
+  const navigate = useOwnNavigate();
   // The draft saves against its own base revision, never the loader's, so a revision saved
   // elsewhere can't be overwritten by text that was never merged with it.
   const draft = useDraft({ revision: template.revision, value: template.text });
