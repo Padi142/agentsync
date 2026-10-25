@@ -10,6 +10,7 @@ import {
 import type { ReactNode } from 'react';
 import { BrandMark } from '../components/Icon';
 import { loginHref } from '../login';
+import { ErrorPage } from '../components/ErrorPage';
 import { rpc } from '../rpc';
 import appCss from '../styles.css?url';
 
@@ -44,8 +45,31 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   }),
   shellComponent: DocumentShell,
   component: Layout,
-  pendingComponent: () => <p className="page-loading">Loading…</p>,
+  // The session is not known yet, or could not be fetched: keep the frame, without its nav.
+  pendingComponent: () => (
+    <Frame>
+      <div className="loading-bar delayed" aria-hidden="true" />
+      <p className="visually-hidden" role="status">Loading</p>
+    </Frame>
+  ),
+  errorComponent: (props) => <Frame><ErrorPage {...props} /></Frame>,
 });
+
+function Frame({ children }: { children: ReactNode }) {
+  return (
+    <>
+      <header className="topbar"><Brand /></header>
+      <main>{children}</main>
+    </>
+  );
+}
+
+const Brand = () => (
+  <Link className="brand" to="/" aria-label="AgentSync">
+    <BrandMark />
+    <span>AgentSync</span>
+  </Link>
+);
 
 function Layout() {
   const { user, openConflicts } = Route.useRouteContext();
@@ -55,10 +79,7 @@ function Layout() {
     <>
       {loading ? <div className="loading-bar" aria-hidden="true" /> : null}
       <header className="topbar">
-        <Link className="brand" to="/" aria-label="AgentSync">
-          <BrandMark />
-          <span>AgentSync</span>
-        </Link>
+        <Brand />
         <nav className="nav" aria-label="Main">
           {user ? (
             <>

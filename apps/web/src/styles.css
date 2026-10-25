@@ -263,6 +263,12 @@ p {
   animation: loading 1.2s var(--ease-out) infinite;
 }
 
+.loading-bar.delayed {
+  /* A quick load should not flash a bar. */
+  animation-delay: 400ms;
+  animation-fill-mode: backwards;
+}
+
 @keyframes loading {
   from { transform: scaleX(0); }
   to { transform: scaleX(1); opacity: 0; }
@@ -306,11 +312,6 @@ p {
 
 .back-link:hover {
   color: var(--ink);
-}
-
-.page-loading {
-  padding: 48px 24px;
-  color: var(--graphite);
 }
 
 /* ---------- Controls ---------- */
