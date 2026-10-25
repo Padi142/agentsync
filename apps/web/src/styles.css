@@ -2173,6 +2173,7 @@ fieldset.variables-table {
 }
 
 .demo {
+  margin: 0;
   border: 1px solid var(--rule);
   border-radius: 12px;
   background: var(--sheet);
@@ -2458,6 +2459,11 @@ fieldset.variables-table {
 
   .landing {
     padding-top: 40px;
+  }
+
+  .demo-template,
+  .demo-output {
+    padding: 14px;
   }
 }
 
