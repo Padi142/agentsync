@@ -35,6 +35,8 @@ describe('init', () => {
 
     expect(result.code).toBe(5);
     expect(result.json()).toMatchObject({ ok: false, error: { status } });
+    // The code is dead, so it is not offered again.
+    expect(result.json().error.userCode).toBeUndefined();
     expect(t.server.state.machines.size).toBe(0);
   });
 

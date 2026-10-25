@@ -104,7 +104,7 @@ async function register(ctx: Context, server: string, targets: Target[]): Promis
       expired: 'The registration code expired.',
       invalid: 'The registration code is no longer valid.',
     }[result.status];
-    throw new CliError(`${reason} Run \`agentsync init\` to start again.`, EXIT.auth, { status: result.status, ...shown });
+    throw new CliError(`${reason} Run \`agentsync init\` to start again.`, EXIT.auth, { status: result.status });
   }
 }
 
