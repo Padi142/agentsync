@@ -14,6 +14,7 @@ export function setup() {
   const edits: ((file: string) => void)[] = [];
   const launched: { agent: string; prompt: string }[] = [];
   const sleeps: number[] = [];
+  const questions: string[] = [];
   let interactive = false;
 
   async function cli(...args: string[]) {
@@ -29,6 +30,7 @@ export function setup() {
       out: (text) => (stdout += `${text}\n`),
       err: (text) => (stderr += `${text}\n`),
       ask: async (question) => {
+        questions.push(question);
         const answer = answers.shift();
         if (answer === undefined) throw new Error(`Unexpected question: ${question}`);
         return answer;
@@ -82,5 +84,6 @@ export function setup() {
     },
     launched,
     sleeps,
+    questions,
   };
 }

@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
@@ -186,5 +186,52 @@ describe('sync', () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toContain('AGENTS.md');
     expect(result.json().targets).toMatchObject([{ path: '~/.claude/CLAUDE.md', status: 'written' }]);
+  });
+
+  describe('when one Target cannot be written', () => {
+    /** Two Targets, the second blocked by a file where its directory should be. */
+    const blocked = () => {
+      const t = setup();
+      t.registered([
+        { path: '~/.claude/CLAUDE.md', agent: 'claude' },
+        { path: '~/blocked/AGENTS.md', agent: 'codex' },
+      ]);
+      t.write('blocked', 'a file, not a directory');
+      t.server.putTemplate('v1\n');
+      return t;
+    };
+
+    it('still writes and remembers the others, so the next sync sees no false Drift', async () => {
+      const t = blocked();
+
+      const failed = await t.cli('sync', '--json');
+
+      expect(failed.code).toBe(1);
+      expect(failed.json().targets).toMatchObject([
+        { path: '~/.claude/CLAUDE.md', status: 'written' },
+        { path: '~/blocked/AGENTS.md', status: 'error' },
+      ]);
+      expect(read(t.path('.claude/CLAUDE.md'))).toBe('v1\n');
+
+      rmSync(t.path('blocked'));
+      t.server.putTemplate('v2\n');
+      const next = await t.cli('sync');
+
+      expect(next.code).toBe(0);
+      expect(read(t.path('.claude/CLAUDE.md'))).toBe('v2\n');
+      expect(read(t.path('blocked/AGENTS.md'))).toBe('v2\n');
+    });
+
+    it('in a hook, reports both the update and the failure', async () => {
+      const t = blocked();
+
+      const result = await t.cli('sync', '--hook', 'claude');
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('updated ~/.claude/CLAUDE.md');
+      expect(result.stdout).toContain('could not write ~/blocked/AGENTS.md');
+      expect(result.stdout).not.toContain('kept the existing instructions');
+      expect(result.stdout.trim().split('\n')).toHaveLength(1);
+    });
   });
 });

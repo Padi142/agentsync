@@ -71,7 +71,7 @@ describe('logout', () => {
     expect(JSON.parse(readFileSync(t.path('.claude/settings.json'), 'utf8'))).toEqual({
       hooks: { Stop: [{ hooks: [{ type: 'command', command: 'bell' }] }] },
     });
-    expect(existsSync(t.path('.claude/skills/agentsync/SKILL.md'))).toBe(false);
+    expect(existsSync(t.path('.claude/skills/agentsync'))).toBe(false);
   });
 
   it('leaves a hook of the person’s own that mentions the AgentSync command', async () => {

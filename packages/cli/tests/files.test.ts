@@ -27,6 +27,19 @@ describe('writeText', () => {
     expect(mode(path)).toBe(0o600);
   });
 
+  it('lets the umask narrow the mode of a new file', () => {
+    const previous = process.umask(0o077);
+    try {
+      const path = join(dir(), 'AGENTS.md');
+
+      writeText(path, 'rendered');
+
+      expect(mode(path)).toBe(0o600);
+    } finally {
+      process.umask(previous);
+    }
+  });
+
   it('can force a mode on an existing file', () => {
     const path = join(dir(), 'config.json');
     writeFileSync(path, '{}');

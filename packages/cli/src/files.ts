@@ -42,7 +42,7 @@ function existingMode(path: string): number | undefined {
 export interface WriteOptions {
   /** The mode to set, even on an existing file (e.g. 0600 for the file that holds the Machine token). */
   mode?: number;
-  /** The mode for a file that does not exist yet. An existing file keeps its own mode. */
+  /** The mode for a file that does not exist yet, narrowed by the umask. An existing file keeps its own mode. */
   createMode?: number;
   /** The mode for directories that have to be created. */
   dirMode?: number;
@@ -50,17 +50,19 @@ export interface WriteOptions {
 
 /**
  * Write through a temporary file and a rename, so a reader never sees half a file. The file
- * keeps its mode (unless `mode` is given), and a symlink is followed rather than replaced.
- * The temporary file is created exclusively, with the final mode from the start.
+ * keeps its mode (unless `mode` is given), a new file gets `createMode` (default 0666) as
+ * narrowed by the umask, and a symlink is followed rather than replaced. The temporary file
+ * is created exclusively.
  */
 export function writeText(path: string, text: string, options: WriteOptions = {}): void {
   const target = writablePath(path);
   mkdirSync(dirname(target), { recursive: true, ...(options.dirMode ? { mode: options.dirMode } : {}) });
-  const mode = options.mode ?? existingMode(target) ?? options.createMode ?? 0o644;
+  // An exact mode (forced, or the replaced file's) is set after the umask narrowed it; a new file's is left to the umask.
+  const exact = options.mode ?? existingMode(target);
   const temporary = `${target}.agentsync-${randomBytes(6).toString('hex')}.tmp`;
   try {
-    writeFileSync(temporary, text, { flag: 'wx', mode });
-    chmodSync(temporary, mode); // The umask may have narrowed it.
+    writeFileSync(temporary, text, { flag: 'wx', mode: exact ?? options.createMode ?? 0o666 });
+    if (exact !== undefined) chmodSync(temporary, exact);
     renameSync(temporary, target);
   } catch (error) {
     rmSync(temporary, { force: true });

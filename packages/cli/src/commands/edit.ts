@@ -30,7 +30,7 @@ async function editUntil(ctx: Context, file: string, problem: (text: string) => 
     const found = problem(text);
     if (!found) return text;
     ctx.say(found);
-    if ((await choose(ctx, '[e]dit again or [q]uit? ', ['edit', 'quit'])) === 'quit') return null;
+    if ((await choose(ctx, '[e]dit again, or [q]uit and discard this edit? ', ['edit', 'quit'])) === 'quit') return null;
   }
 }
 
@@ -67,10 +67,8 @@ async function offerResolution(ctx: Context, client: ContractClient, conflict: C
     const after = await client.conflicts.get({ conflictId: conflict.id });
     return after.status === 'open' ? kept : { data: { conflict: { id: conflict.id, status: after.status } } };
   }
-  const recovery = {
-    hint: (file: string) => `Resolve it with \`agentsync conflict resolve ${conflict.id} ${file}\`.`,
-    details: { conflictId: conflict.id },
-  };
+  const recovery = (file: string) =>
+    `Resolve it with \`agentsync conflict resolve ${conflict.id} ${file} --base ${conflict.serverRevision}\`.`;
   return withDraft(ctx, `conflict-${conflict.id}.md`, conflict.text, recovery, async (file) => {
     const text = await editUntil(ctx, file, resolutionProblem);
     if (text === null) {
@@ -104,10 +102,7 @@ export async function edit(ctx: Context): Promise<Outcome> {
   if (!ctx.canAsk) throw usage('edit opens an editor. Without a terminal, use --file <path> --base <revision>.');
   const current = await client.template.get();
   const base = current.revision;
-  const recovery = {
-    hint: (file: string) => `Save it with \`agentsync edit --file ${file} --base ${base}\`.`,
-    details: { base },
-  };
+  const recovery = (file: string) => `Save it with \`agentsync edit --file ${file} --base ${base}\`.`;
   // Once saved, as a revision or as a Conflict, the edit is safe on the server and the draft goes.
   const saved = await withDraft(ctx, 'AGENTS.md', current.text, recovery, async (file) => {
     const text = await editUntil(ctx, file, syntaxProblem);
