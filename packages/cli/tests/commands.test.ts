@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
@@ -72,6 +72,33 @@ describe('logout', () => {
       hooks: { Stop: [{ hooks: [{ type: 'command', command: 'bell' }] }] },
     });
     expect(existsSync(t.path('.claude/skills/agentsync/SKILL.md'))).toBe(false);
+  });
+
+  it('leaves a hook of the person’s own that mentions the AgentSync command', async () => {
+    const t = setup();
+    const wrapper = { type: 'command', command: 'audit-wrapper agentsync sync --hook claude; run-other-setup' };
+    t.write('.claude/settings.json', JSON.stringify({ hooks: { SessionStart: [{ hooks: [wrapper] }] } }));
+    await t.cli('init', '--yes', '--server', t.server.url);
+
+    await t.cli('logout');
+
+    expect(JSON.parse(readFileSync(t.path('.claude/settings.json'), 'utf8'))).toEqual({
+      hooks: { SessionStart: [{ hooks: [wrapper] }] },
+    });
+  });
+
+  it('keeps a skill file the person changed since AgentSync wrote it', async () => {
+    const t = setup();
+    mkdirSync(t.path('.claude'));
+    await t.cli('init', '--yes', '--server', t.server.url);
+    const skill = t.path('.claude/skills/agentsync/SKILL.md');
+    writeFileSync(skill, `${readFileSync(skill, 'utf8')}\nMy addition.\n`);
+
+    const result = await t.cli('logout');
+
+    expect(result.code).toBe(0);
+    expect(readFileSync(skill, 'utf8')).toContain('My addition.');
+    expect(result.stderr).toContain('~/.claude/skills/agentsync/SKILL.md');
   });
 
   it('still cleans up when the server already revoked the Machine', async () => {

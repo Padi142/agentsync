@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
@@ -130,5 +130,91 @@ describe('edit', () => {
 
       expect((await t.cli('edit', '--file', t.path('draft.md'))).code).toBe(2);
     });
+  });
+
+  describe('keeps the edited file when saving it fails', () => {
+    it('when the Template cannot be saved, printing its path and base revision', async () => {
+      const t = setup();
+      t.registered();
+      t.server.putTemplate('one\n');
+      let draft = '';
+      t.onEdit((file) => {
+        draft = file;
+        append('my edit\n')(file);
+        t.server.state.down.add('/template/put');
+      });
+
+      const result = await t.cli('edit');
+
+      expect(result.code).toBe(1);
+      expect(readFileSync(draft, 'utf8')).toBe('one\nmy edit\n');
+      expect(result.stderr).toContain(draft);
+      expect(result.stderr).toContain(`agentsync edit --file ${draft} --base 1`);
+    });
+
+    it('when the Conflict cannot be created', async () => {
+      const t = setup();
+      t.registered();
+      t.server.putTemplate('one\n');
+      let draft = '';
+      t.onEdit((file) => {
+        draft = file;
+        append('mine\n')(file);
+        t.server.putTemplate('one\ntheirs\n');
+        t.server.state.down.add('/conflicts/create');
+      });
+
+      const result = await t.cli('edit');
+
+      expect(result.code).toBe(1);
+      expect(readFileSync(draft, 'utf8')).toBe('one\nmine\n');
+      expect(result.stderr).toContain(draft);
+    });
+
+    it('when fixing a Conflict here cannot be saved', async () => {
+      const t = setup();
+      t.registered();
+      t.server.putTemplate('one\n');
+      t.onEdit((file) => {
+        append('mine\n')(file);
+        t.server.putTemplate('one\ntheirs\n');
+      });
+      t.answer('f');
+      let draft = '';
+      t.onEdit((file) => {
+        draft = file;
+        writeFileSync(file, 'one\ntheirs\nmine\n');
+        t.server.state.down.add('/conflicts/resolve');
+      });
+
+      const result = await t.cli('edit');
+
+      expect(result.code).toBe(1);
+      expect(readFileSync(draft, 'utf8')).toBe('one\ntheirs\nmine\n');
+      const [conflict] = t.server.state.conflicts;
+      expect(result.stderr).toContain(`agentsync conflict resolve ${conflict!.id} ${draft}`);
+    });
+  });
+
+  it('deletes the edited file after saving it, or when the edit is given up', async () => {
+    const t = setup();
+    t.registered();
+    t.server.putTemplate('one\n');
+    const drafts: string[] = [];
+    t.onEdit((file) => {
+      drafts.push(file);
+      append('two\n')(file);
+    });
+    await t.cli('edit');
+    t.onEdit((file) => {
+      drafts.push(file);
+      append('{{if x}}\n')(file);
+    });
+    t.answer('q');
+
+    const cancelled = await t.cli('edit');
+
+    expect(cancelled.code).toBe(0);
+    expect(drafts.map((file) => existsSync(file))).toEqual([false, false]);
   });
 });

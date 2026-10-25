@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
@@ -71,6 +72,16 @@ describe('init', () => {
 
     expect(result.code).toBe(0);
     expect(t.sleeps).toEqual([1000, 7000]);
+  });
+
+  it('refuses a relative --target path, which would point somewhere else in every project', async () => {
+    const t = setup();
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url, '--target', 'codex=AGENTS.md');
+
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('absolute');
+    expect(t.server.state.machines.size).toBe(0);
   });
 
   it('refuses to run without a server', async () => {
@@ -195,5 +206,54 @@ describe('init', () => {
     expect(t.server.state.machines.size).toBe(1);
     const [machine] = t.server.state.machines.values();
     expect(machine!.targets.map((target) => target.agent)).toEqual(['claude', 'codex']);
+  });
+
+  it('keeps settings files private: an existing mode is kept, new files and the config directory are owner-only', async () => {
+    const t = setup();
+    mkdirSync(t.path('.codex'));
+    t.write('.claude/settings.json', JSON.stringify({ env: { SECRET: 'x' } }));
+    chmodSync(t.path('.claude/settings.json'), 0o600);
+    mkdirSync(t.path('.config/agentsync'), { recursive: true, mode: 0o755 });
+    chmodSync(t.path('.config/agentsync'), 0o755);
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const mode = (path: string) => statSync(t.path(path)).mode & 0o777;
+    expect(mode('.claude/settings.json')).toBe(0o600);
+    expect(mode('.codex/hooks.json')).toBe(0o600);
+    expect(mode('.config/agentsync')).toBe(0o700);
+    expect(mode('.config/agentsync/config.json')).toBe(0o600);
+  });
+
+  describe('the agent skill', () => {
+    it('leaves a skill file AgentSync did not write alone, and says so', async () => {
+      const t = setup();
+      t.write('.claude/skills/agentsync/SKILL.md', '---\nname: agentsync\n---\nmy own notes\n');
+
+      const result = await t.cli('init', '--yes', '--json', '--server', t.server.url);
+
+      expect(result.code).toBe(0);
+      expect(readFileSync(t.path('.claude/skills/agentsync/SKILL.md'), 'utf8')).toContain('my own notes');
+      expect(result.json()).toMatchObject({ skills: [], skillsLeftAlone: ['~/.claude/skills/agentsync/SKILL.md'] });
+      expect(result.stderr).toContain('~/.claude/skills/agentsync/SKILL.md');
+    });
+
+    it('updates a skill file that is unchanged since AgentSync wrote it', async () => {
+      const t = setup();
+      mkdirSync(t.path('.claude'));
+      await t.cli('init', '--yes', '--server', t.server.url);
+      const config = JSON.parse(readFileSync(t.path('.config/agentsync/config.json'), 'utf8'));
+      const file = t.path('.claude/skills/agentsync/SKILL.md');
+      // As if an older AgentSync had written an older skill.
+      t.write('.claude/skills/agentsync/SKILL.md', 'old skill\n');
+      config.skills[file] = createHash('sha256').update('old skill\n').digest('hex');
+      t.write('.config/agentsync/config.json', JSON.stringify(config));
+
+      const result = await t.cli('init', '--yes');
+
+      expect(result.code).toBe(0);
+      expect(readFileSync(file, 'utf8')).toContain('name: agentsync');
+    });
   });
 });

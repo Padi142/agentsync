@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, symlinkSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
@@ -158,5 +158,33 @@ describe('sync', () => {
     expect(headers!.get('Authorization')).toMatch(/^Bearer token-/);
     expect(headers!.get('Origin')).toBeNull();
     expect(headers!.get('Cookie')).toBeNull();
+  });
+
+  it('updates the file a symlinked Target points to, keeping the link', async () => {
+    const t = setup();
+    t.registered();
+    t.server.putTemplate('one\n');
+    t.write('dotfiles/CLAUDE.md', '');
+    mkdirSync(t.path('.claude'));
+    symlinkSync(t.path('dotfiles/CLAUDE.md'), t.path('.claude/CLAUDE.md'));
+
+    expect((await t.cli('sync', '--overwrite')).code).toBe(0);
+    t.server.putTemplate('two\n');
+    expect((await t.cli('sync')).code).toBe(0);
+
+    expect(lstatSync(t.path('.claude/CLAUDE.md')).isSymbolicLink()).toBe(true);
+    expect(read(t.path('dotfiles/CLAUDE.md'))).toBe('two\n');
+  });
+
+  it('skips a relative Target path stored on the server, with a warning', async () => {
+    const t = setup();
+    t.registered([{ path: 'AGENTS.md', agent: 'codex' }, { path: '~/.claude/CLAUDE.md', agent: 'claude' }]);
+    t.server.putTemplate('one\n');
+
+    const result = await t.cli('sync', '--json');
+
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('AGENTS.md');
+    expect(result.json().targets).toMatchObject([{ path: '~/.claude/CLAUDE.md', status: 'written' }]);
   });
 });

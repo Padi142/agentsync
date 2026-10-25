@@ -6,7 +6,7 @@ import { CliError, EXIT, usage } from '../exit.js';
 import { readText } from '../files.js';
 import { choose, handOff } from '../handoff.js';
 import { expandHome } from '../paths.js';
-import { readScratch, withScratchFile } from '../scratch.js';
+import { readDraft, withDraft } from '../drafts.js';
 import { machineClient } from '../session.js';
 import { parseRevision, resolutionProblem, resolveConflict } from './conflict.js';
 
@@ -26,7 +26,7 @@ The person can also resolve it in the browser: ${conflict.url}`;
 async function editUntil(ctx: Context, file: string, problem: (text: string) => string | null): Promise<string | null> {
   for (;;) {
     await ctx.io.edit(file);
-    const text = readScratch(file);
+    const text = readDraft(file);
     const found = problem(text);
     if (!found) return text;
     ctx.say(found);
@@ -67,7 +67,11 @@ async function offerResolution(ctx: Context, client: ContractClient, conflict: C
     const after = await client.conflicts.get({ conflictId: conflict.id });
     return after.status === 'open' ? kept : { data: { conflict: { id: conflict.id, status: after.status } } };
   }
-  return withScratchFile(`conflict-${conflict.id}.md`, conflict.text, async (file) => {
+  const recovery = {
+    hint: (file: string) => `Resolve it with \`agentsync conflict resolve ${conflict.id} ${file}\`.`,
+    details: { conflictId: conflict.id },
+  };
+  return withDraft(ctx, `conflict-${conflict.id}.md`, conflict.text, recovery, async (file) => {
     const text = await editUntil(ctx, file, resolutionProblem);
     if (text === null) {
       ctx.say(`Conflict ${conflict.id} is still open: ${conflict.url}`);
@@ -99,15 +103,21 @@ export async function edit(ctx: Context): Promise<Outcome> {
 
   if (!ctx.canAsk) throw usage('edit opens an editor. Without a terminal, use --file <path> --base <revision>.');
   const current = await client.template.get();
-  return withScratchFile('AGENTS.md', current.text, async (file) => {
+  const base = current.revision;
+  const recovery = {
+    hint: (file: string) => `Save it with \`agentsync edit --file ${file} --base ${base}\`.`,
+    details: { base },
+  };
+  // Once saved, as a revision or as a Conflict, the edit is safe on the server and the draft goes.
+  const saved = await withDraft(ctx, 'AGENTS.md', current.text, recovery, async (file) => {
     const text = await editUntil(ctx, file, syntaxProblem);
-    if (text === null || text === current.text) {
-      ctx.say('No changes saved.');
-      return { data: { revision: current.revision } };
-    }
-    const saved = await save(client, text, current.revision);
-    if (saved.conflict) return offerResolution(ctx, client, saved.conflict);
-    ctx.say(`Saved Template revision ${saved.template.revision}. Run \`agentsync sync\` to apply it here.`);
-    return { data: { revision: saved.template.revision } };
+    return text === null || text === current.text ? null : save(client, text, base);
   });
+  if (!saved) {
+    ctx.say('No changes saved.');
+    return { data: { revision: base } };
+  }
+  if (saved.conflict) return offerResolution(ctx, client, saved.conflict);
+  ctx.say(`Saved Template revision ${saved.template.revision}. Run \`agentsync sync\` to apply it here.`);
+  return { data: { revision: saved.template.revision } };
 }

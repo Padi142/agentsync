@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { withHook, withoutHook } from '../src/hooks.js';
 
-const ours = 'agentsync sync --hook claude';
-const ourGroup = { hooks: [{ type: 'command', command: ours, timeout: 10 }] };
+const ours = { type: 'command', command: 'agentsync sync --hook claude', timeout: 10 } as const;
+const ourGroup = { hooks: [ours] };
 const otherGroup = { matcher: 'startup', hooks: [{ type: 'command', command: 'echo hello' }] };
+/** A person's own handler that happens to mention the AgentSync command. */
+const wrapper = { hooks: [{ type: 'command', command: 'audit-wrapper agentsync sync --hook claude; run-other-setup' }] };
 
 describe('withHook', () => {
   it('adds a SessionStart hook to empty settings', () => {
@@ -28,10 +30,16 @@ describe('withHook', () => {
     expect(withHook(once, ours)).toEqual(once);
   });
 
-  it('replaces an older AgentSync hook instead of adding a second one', () => {
-    const old = withHook({}, '/old/node /old/agentsync/dist/index.js sync --hook claude');
+  it('replaces the hook it installed before instead of adding a second one', () => {
+    const previous = { type: 'command', command: "'/old/node' '/old/agentsync/dist/index.js' sync --hook claude", timeout: 10 } as const;
 
-    expect(withHook(old, ours)).toEqual({ hooks: { SessionStart: [ourGroup] } });
+    expect(withHook(withHook({}, previous), ours, previous)).toEqual({ hooks: { SessionStart: [ourGroup] } });
+  });
+
+  it('leaves a handler of the person’s own that mentions the AgentSync command', () => {
+    expect(withHook({ hooks: { SessionStart: [wrapper] } }, ours)).toEqual({
+      hooks: { SessionStart: [wrapper, ourGroup] },
+    });
   });
 
   it('does not change its input', () => {
@@ -44,23 +52,35 @@ describe('withHook', () => {
 });
 
 describe('withoutHook', () => {
-  it('removes only the AgentSync hook and drops what it leaves empty', () => {
+  it('removes only the hook AgentSync installed and drops what it leaves empty', () => {
     const settings = withHook({ model: 'opus', hooks: { SessionStart: [otherGroup] } }, ours);
 
-    expect(withoutHook(settings)).toEqual({ model: 'opus', hooks: { SessionStart: [otherGroup] } });
-    expect(withoutHook(withHook({ model: 'opus' }, ours))).toEqual({ model: 'opus' });
+    expect(withoutHook(settings, ours)).toEqual({ model: 'opus', hooks: { SessionStart: [otherGroup] } });
+    expect(withoutHook(withHook({ model: 'opus' }, ours), ours)).toEqual({ model: 'opus' });
   });
 
   it('keeps hooks a person put in the same group as ours', () => {
-    const shared = { hooks: { SessionStart: [{ hooks: [{ type: 'command', command: ours }, otherGroup.hooks[0]] }] } };
+    const shared = { hooks: { SessionStart: [{ hooks: [ours, otherGroup.hooks[0]] }] } };
 
-    expect(withoutHook(shared)).toEqual({ hooks: { SessionStart: [{ hooks: [otherGroup.hooks[0]] }] } });
+    expect(withoutHook(shared, ours)).toEqual({ hooks: { SessionStart: [{ hooks: [otherGroup.hooks[0]] }] } });
+  });
+
+  it('keeps a handler of the person’s own that mentions the AgentSync command', () => {
+    const settings = { hooks: { SessionStart: [wrapper] } };
+
+    expect(withoutHook(settings, ours)).toEqual(settings);
+  });
+
+  it('keeps our handler once the person has changed it', () => {
+    const changed = { hooks: { SessionStart: [{ hooks: [{ ...ours, timeout: 30 }] }] } };
+
+    expect(withoutHook(changed, ours)).toEqual(changed);
   });
 
   it('leaves settings without our hook unchanged', () => {
     const settings = { hooks: { SessionStart: [otherGroup] } };
 
-    expect(withoutHook(settings)).toEqual(settings);
-    expect(withoutHook({})).toEqual({});
+    expect(withoutHook(settings, ours)).toEqual(settings);
+    expect(withoutHook({}, ours)).toEqual({});
   });
 });

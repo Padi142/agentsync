@@ -22,6 +22,8 @@ export function fakeServer() {
     /** How the next device flow ends: `pending` answers one `pending` poll before approving. */
     nextDevice: 'approved' as 'pending' | 'approved' | 'denied' | 'expired' | 'used',
     offline: false,
+    /** Procedures (e.g. `/template/put`) whose requests fail like a dropped connection. */
+    down: new Set<string>(),
     requests: [] as Headers[],
   };
   let nextId = 1;
@@ -192,7 +194,7 @@ export function fakeServer() {
   const handler = new RPCHandler(router);
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
-    if (state.offline) throw new TypeError('fetch failed');
+    if (state.offline || [...state.down].some((path) => request.url.endsWith(path))) throw new TypeError('fetch failed');
     state.requests.push(request.headers);
     const token = request.headers.get('Authorization')?.replace(/^Bearer /, '');
     const { matched, response } = await handler.handle(request, { prefix: '/rpc', context: { token } });

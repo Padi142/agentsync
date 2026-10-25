@@ -1,11 +1,14 @@
 import type { Agent } from './agents.js';
+import type { Context } from './context.js';
 import { readJson, writeJson } from './files.js';
-import type { Io } from './io.js';
 
 type Json = Record<string, unknown>;
-interface Handler {
-  type?: string;
+
+/** One hook handler, in the shape Claude Code's settings.json and Codex's hooks.json share. */
+export interface Handler {
+  type: string;
   command?: string;
+  timeout?: number;
 }
 interface Group {
   matcher?: string;
@@ -18,15 +21,15 @@ interface Group {
  */
 const HOOK_TIMEOUT_SECONDS = 10;
 
-const isOurs = (handler: Handler) =>
-  handler.type === 'command' && /agentsync.* sync --hook /.test(handler.command ?? '');
+/** Exactly the handler AgentSync wrote: anything a person changed or wrote themselves is theirs. */
+const same = (a: Handler, b: Handler) => a.type === b.type && a.command === b.command && a.timeout === b.timeout;
 
-/** SessionStart groups with every AgentSync handler removed, dropping groups left empty. */
-function otherGroups(settings: Json): Group[] {
+/** SessionStart groups without the given handlers, dropping groups left empty. */
+function groupsWithout(settings: Json, remove: Handler[]): Group[] {
   const hooks = (settings.hooks ?? {}) as Record<string, Group[]>;
   return (hooks.SessionStart ?? []).flatMap((group) => {
     const handlers = group.hooks ?? [];
-    const kept = handlers.filter((handler) => !isOurs(handler));
+    const kept = handlers.filter((handler) => !remove.some((removed) => same(handler, removed)));
     if (kept.length === handlers.length) return [group];
     return kept.length ? [{ ...group, hooks: kept }] : [];
   });
@@ -40,37 +43,48 @@ function withGroups(settings: Json, groups: Group[]): Json {
 }
 
 /**
- * Add AgentSync's SessionStart hook to an agent's hook config (Claude Code's settings.json and
- * Codex's hooks.json share this shape). Idempotent: an existing AgentSync hook is replaced.
- * Everything else is kept as it was.
+ * Add `handler` as a SessionStart hook to an agent's hook config, replacing `previous` (the
+ * handler AgentSync installed last time) if it is still there unchanged. Idempotent, and
+ * everything else is kept as it was.
  */
-export function withHook(settings: Json, command: string): Json {
-  const ours: Group = { hooks: [{ type: 'command', command, timeout: HOOK_TIMEOUT_SECONDS } as Handler] };
-  return withGroups(settings, [...otherGroups(settings), ours]);
+export function withHook(settings: Json, handler: Handler, previous?: Handler): Json {
+  const remove = previous ? [handler, previous] : [handler];
+  return withGroups(settings, [...groupsWithout(settings, remove), { hooks: [handler] }]);
 }
 
-/** Remove AgentSync's SessionStart hook, keeping everything else. */
-export function withoutHook(settings: Json): Json {
+/** Remove `handler`, the SessionStart hook AgentSync installed, if it is there unchanged. */
+export function withoutHook(settings: Json, handler: Handler): Json {
   const before = ((settings.hooks ?? {}) as Record<string, Group[]>).SessionStart;
   if (!before) return settings;
-  return withGroups(settings, otherGroups(settings));
+  return withGroups(settings, groupsWithout(settings, [handler]));
 }
 
-export const hookCommand = (io: Io, agent: Agent) => `${io.self} sync --hook ${agent.id}`;
+export const hookHandler = (ctx: Context, agent: Agent): Handler => ({
+  type: 'command',
+  command: `${ctx.io.self} sync --hook ${agent.id}`,
+  timeout: HOOK_TIMEOUT_SECONDS,
+});
 
-/** Install the hook into `agent`'s config file. */
-export function installHook(io: Io, agent: Agent): void {
-  const file = agent.hooksFile(io);
-  writeJson(file, withHook(readJson<Json>(file, {}), hookCommand(io, agent)));
+/** Install the hook into `agent`'s config file and remember exactly what was written. */
+export function installHook(ctx: Context, agent: Agent): void {
+  const file = agent.hooksFile(ctx.io);
+  const handler = hookHandler(ctx, agent);
+  const hooks = (ctx.config.hooks ??= {});
+  writeJson(file, withHook(readJson<Json>(file, {}), handler, hooks[file]), { createMode: 0o600 });
+  hooks[file] = handler;
+  ctx.save();
 }
 
-/** Remove the hook from `agent`'s config file, if it is there. */
-export function uninstallHook(io: Io, agent: Agent): boolean {
-  const file = agent.hooksFile(io);
-  const settings = readJson<Json | null>(file, null);
-  if (!settings) return false;
-  const next = withoutHook(settings);
-  if (JSON.stringify(next) === JSON.stringify(settings)) return false;
-  writeJson(file, next);
-  return true;
+/** Remove every hook AgentSync recorded installing. Returns the files it changed. */
+export function uninstallHooks(ctx: Context): string[] {
+  const changed: string[] = [];
+  for (const [file, handler] of Object.entries(ctx.config.hooks ?? {})) {
+    const settings = readJson<Json | null>(file, null);
+    if (!settings) continue;
+    const next = withoutHook(settings, handler);
+    if (JSON.stringify(next) === JSON.stringify(settings)) continue;
+    writeJson(file, next);
+    changed.push(file);
+  }
+  return changed;
 }

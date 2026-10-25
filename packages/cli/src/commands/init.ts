@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type { ContractClient, DeviceAuthorization, MachineOs, Target } from '@agentsync/contract';
 import { referencedVariables } from '@agentsync/template';
 import { ORPCError } from '@orpc/client';
@@ -32,7 +33,10 @@ function chooseTargets(ctx: Context): Target[] {
   for (const value of flags.target) {
     const match = /^([a-z][a-z0-9-]*)=(.+)$/.exec(value);
     if (!match) throw usage(`--target must look like <agent>=<path>, e.g. gemini=~/.gemini/GEMINI.md.`);
-    targets.push({ agent: match[1]!, path: tildify(expandHome(match[2]!, io), io) });
+    const path = expandHome(match[2]!, io);
+    // Hooks run in whatever project the agent opens, so a relative path would mean a different file each time.
+    if (!isAbsolute(path)) throw usage(`--target paths must be absolute or start with ~/, not "${match[2]}".`);
+    targets.push({ agent: match[1]!, path: tildify(path, io) });
   }
   if (!flags.agent.length && !flags.target.length) targets.push(...detectAgents(io).map((agent) => targetFor(agent, io)));
   if (!targets.length) {
@@ -179,20 +183,25 @@ export async function init(ctx: Context): Promise<Outcome> {
   );
   const hooks: string[] = [];
   const skills: string[] = [];
+  const skillsLeftAlone: string[] = [];
   for (const agent of agents) {
     if (ctx.flags.hooks) {
-      installHook(ctx.io, agent);
+      installHook(ctx, agent);
       hooks.push(tildify(agent.hooksFile(ctx.io), ctx.io));
       ctx.say(`Installed the ${agent.name} SessionStart hook in ${tildify(agent.hooksFile(ctx.io), ctx.io)}.`);
       if (agent.id === 'codex') ctx.say('Codex runs it only once you trust it: open Codex and run /hooks.');
     }
     if (ctx.flags.skill) {
-      const file = tildify(installSkill(ctx.io, agent), ctx.io);
-      if (!skills.includes(file)) skills.push(file);
+      const { file, written } = installSkill(ctx, agent);
+      const list = written ? skills : skillsLeftAlone;
+      if (!list.includes(tildify(file, ctx.io))) list.push(tildify(file, ctx.io));
     }
   }
   if (skills.length) ctx.say(`Installed the agentsync skill in ${skills.join(', ')}.`);
+  for (const file of skillsLeftAlone) {
+    ctx.warn(`Left ${file} alone: AgentSync did not write it, or it was changed since. Remove it to get the agentsync skill.`);
+  }
 
   const { code, data } = await applySync(ctx, await client.machines.sync());
-  return { code: code ?? EXIT.ok, data: { machineId, name: machine.name, imported, hooks, skills, ...data } };
+  return { code: code ?? EXIT.ok, data: { machineId, name: machine.name, imported, hooks, skills, skillsLeftAlone, ...data } };
 }

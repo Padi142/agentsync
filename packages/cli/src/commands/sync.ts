@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type { SyncPayload } from '@agentsync/contract';
 import { render, validate } from '@agentsync/template';
 import type { Context, Outcome } from '../context.js';
@@ -36,9 +37,18 @@ ${diff.trimEnd()}
 4. Run \`agentsync sync --overwrite\` and check that ${path} now holds the change.`;
 }
 
-/** Render the Template once per Target: the `agent` Built-in Variable differs from one to the next. */
+/**
+ * Render the Template once per Target: the `agent` Built-in Variable differs from one to the
+ * next. A Target whose path is not absolute (or `~/…`) is skipped with a warning, because it
+ * would resolve against whichever directory the hook happens to run in.
+ */
 export function renderTargets(ctx: Context, { template, machine, variables }: SyncPayload) {
-  return machine.targets.map((target) => {
+  const usable = machine.targets.filter((target) => {
+    if (isAbsolute(expandHome(target.path, ctx.io))) return true;
+    ctx.warn(`Skipped the Target "${target.path}": its path must be absolute or start with ~/.`);
+    return false;
+  });
+  return usable.map((target) => {
     const { text, warnings } = render(template.text, {
       variables: variables.variables,
       builtins: { machine: { name: machine.name, os: machine.os }, agent: target.agent },

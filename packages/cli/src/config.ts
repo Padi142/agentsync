@@ -1,5 +1,7 @@
-import { join } from 'node:path';
+import { chmodSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { readJson, removeFile, writeJson } from './files.js';
+import type { Handler } from './hooks.js';
 import type { Io } from './io.js';
 import { configDir } from './paths.js';
 
@@ -27,6 +29,10 @@ export interface Config {
   pending?: PendingLogin;
   /** The agent that `edit` and `sync` hand Conflicts and Drift to. */
   handoffAgent?: string;
+  /** The exact hook handler installed in each agent's hook file, so only that is ever removed. */
+  hooks?: Record<string, Handler>;
+  /** A SHA-256 of each skill file AgentSync wrote, so a file someone changed is left alone. */
+  skills?: Record<string, string>;
   written: Record<string, string>;
 }
 
@@ -37,8 +43,11 @@ export function loadConfig(io: Io): Config {
   return { ...config, written: config.written ?? {} };
 }
 
+/** The config holds the Machine token: the file is 0600 and its directory 0700, even if they were looser. */
 export function saveConfig(io: Io, config: Config): void {
-  writeJson(configFile(io), config, 0o600);
+  const file = configFile(io);
+  writeJson(file, config, { mode: 0o600, dirMode: 0o700 });
+  chmodSync(dirname(file), 0o700);
 }
 
 export function deleteConfig(io: Io): void {
