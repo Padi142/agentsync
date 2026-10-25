@@ -115,7 +115,7 @@ function MachinePage() {
         {changedElsewhere && trimmed !== machine.nickname ? (
           <p className="callout warning">The saved nickname changed to “{machine.nickname}” while you were editing.</p>
         ) : null}
-        {machineNotice ? <p className="status-line" data-tone={/failed/.test(machineNotice) ? 'error' : 'success'} role="status">{machineNotice}</p> : null}
+        {machineNotice ? <p className="status-line appear" data-tone={/failed/.test(machineNotice) ? 'error' : 'success'} role="status">{machineNotice}</p> : null}
       </div>
 
       <div className="machine-layout">
@@ -305,7 +305,7 @@ function VariablesEditor({ notice, setNotice, setDirty }: {
               <Icon name="plus" size={14} />Add Variable
             </button>
             <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {notice ? <span className="status-line" data-tone={/fail|changed elsewhere|Invalid/.test(notice) ? 'error' : 'success'} role="status">{notice}</span> : null}
+              {notice ? <span className="status-line appear" data-tone={/fail|changed elsewhere|Invalid/.test(notice) ? 'error' : 'success'} role="status">{notice}</span> : null}
               <button className="button small" type="submit" disabled={!draft.dirty || invalid}>
                 {draft.busy ? 'Saving…' : 'Save Variables'}
               </button>

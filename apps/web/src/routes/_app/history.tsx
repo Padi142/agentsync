@@ -117,7 +117,7 @@ function History() {
             </div>
           </div>
           {notice ? (
-            <p className={/failed|nothing was rolled back/.test(notice) ? 'callout error' : 'callout success'} role="status">{notice}</p>
+            <p className={`callout appear ${/failed|nothing was rolled back/.test(notice) ? 'error' : 'success'}`} role="status">{notice}</p>
           ) : null}
           {compare === 'current' && !isCurrent ? (
             <>

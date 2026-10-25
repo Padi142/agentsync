@@ -29,7 +29,7 @@ function Machines() {
         {machines.length ? <Link className="button" to="/setup"><Icon name="plus" />Add a Machine</Link> : null}
       </header>
       {notice ? (
-        <p className="callout success" role="status" style={{ marginBottom: 20 }}>
+        <p className="callout success appear" role="status" style={{ marginBottom: 20 }}>
           {notice === 'deleted' ? 'Machine deleted.' : 'That Machine was already deleted.'}
         </p>
       ) : null}

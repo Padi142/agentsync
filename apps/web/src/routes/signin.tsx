@@ -1,5 +1,5 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { AgentLogo } from '../components/AgentLogo';
 import { highlight } from '../components/CodeEditor';
@@ -94,13 +94,23 @@ function SignIn() {
 /** The real renderer, on example Machines: the violet text is what changes from one to the next. */
 function Demo() {
   const [index, setIndex] = useState(0);
+  // It shows each Machine in turn until you pick one, and holds still while you're on it.
+  const [auto, setAuto] = useState(true);
+  const [hold, setHold] = useState(false);
+  useEffect(() => {
+    if (!auto || hold || !window.matchMedia || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const timer = setInterval(() => setIndex((i) => (i + 1) % MACHINES.length), 2800);
+    return () => clearInterval(timer);
+  }, [auto, hold]);
   const machine = MACHINES[index]!;
   const result = renderMarked(TEMPLATE, {
     variables: { editor: machine.editor },
     builtins: { machine: { nickname: machine.nickname, hostname: machine.nickname, os: machine.os }, agent: machine.agent },
   });
   return (
-    <figure className="demo" aria-label="Example: one Template rendered for three Machines">
+    <figure className="demo" aria-label="Example: one Template rendered for three Machines"
+      onPointerEnter={() => setHold(true)} onPointerLeave={() => setHold(false)}
+      onFocus={() => setHold(true)} onBlur={() => setHold(false)}>
       <div className="demo-template">
         <div className="demo-caption"><span>Your Template</span></div>
         <pre>{TEMPLATE.split('\n').map((line, i) => <div key={i}>{highlight(line)}{line ? null : ' '}</div>)}</pre>
@@ -109,7 +119,7 @@ function Demo() {
         <div className="demo-caption">
           <div className="demo-machines" role="group" aria-label="Machine">
             {MACHINES.map((m, i) => (
-              <button key={m.nickname} type="button" aria-pressed={i === index} onClick={() => setIndex(i)}>{m.nickname}</button>
+              <button key={m.nickname} type="button" aria-pressed={i === index} onClick={() => { setIndex(i); setAuto(false); }}>{m.nickname}</button>
             ))}
           </div>
           <code>{machine.path}</code>

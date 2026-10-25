@@ -135,7 +135,7 @@ function Resolver() {
             </div>
           </div>
           {closedElsewhere ? (
-            <div className="callout error" role="alert">
+            <div className="callout error appear" role="alert">
               <Icon name="warning" />
               <div>
                 <p>

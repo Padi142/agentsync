@@ -140,7 +140,7 @@ function TemplateEditor() {
                   </div>
                 </div>
               ) : null}
-              {notice ? <p className="callout error" role="alert">{notice}</p> : null}
+              {notice ? <p className="callout error appear" role="alert">{notice}</p> : null}
             </div>
           ) : null}
           <CodeEditor label="Template" value={text} onChange={draft.set} marks={marks} readOnly={draft.busy}
