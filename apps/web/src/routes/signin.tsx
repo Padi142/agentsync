@@ -1,6 +1,7 @@
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { useState } from 'react';
 import { z } from 'zod';
+import { AgentLogo } from '../components/AgentLogo';
 import { highlight } from '../components/CodeEditor';
 import { MarkedText } from '../components/Markdown';
 import { loginHref } from '../login';
@@ -29,6 +30,12 @@ const MACHINES = [
   { nickname: 'gaming-pc', os: 'windows', agent: 'claude', path: '~/.claude/CLAUDE.md', editor: 'VS Code' },
 ];
 
+/** Every agent the CLI sets up, and the file it keeps current for each. */
+const HARNESSES = [
+  { agent: 'claude', name: 'Claude Code', file: '~/.claude/CLAUDE.md' },
+  { agent: 'codex', name: 'Codex', file: '~/.codex/AGENTS.md' },
+] as const;
+
 function SignIn() {
   const { authError, returnTo } = Route.useSearch();
   return (
@@ -51,6 +58,17 @@ function SignIn() {
                 : 'Sign-in could not be completed. Try again, and if it keeps failing, check the server logs.'}
             </p>
           ) : null}
+          <ul className="harnesses" aria-label="Works with">
+            {HARNESSES.map((harness) => (
+              <li key={harness.agent}>
+                <AgentLogo agent={harness.agent} size={28} />
+                <span>
+                  <strong>{harness.name}</strong>
+                  <code>{harness.file}</code>
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
         <Demo />
       </section>

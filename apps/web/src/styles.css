@@ -2141,6 +2141,37 @@ fieldset.variables-table {
   font-size: 15px;
 }
 
+.harnesses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  margin: 6px 0 0;
+  padding: 18px 0 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+  align-self: stretch;
+}
+
+.harnesses li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.harnesses span {
+  display: grid;
+  line-height: 1.3;
+}
+
+.harnesses strong {
+  font-size: 15px;
+}
+
+.harnesses code {
+  color: var(--graphite);
+  font-size: 12px;
+}
+
 .demo {
   border: 1px solid var(--rule);
   border-radius: 12px;
