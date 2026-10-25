@@ -1,6 +1,7 @@
 import type { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api';
+import { returnPath } from '../src/auth';
 import { provisionUser } from '../src/db/users';
 import type { Env } from '../src/env';
 import { createTestEnv, fakeWorkOSDevice, origin, resetDb, rpcClient } from './helpers';
@@ -110,6 +111,7 @@ describe('AuthKit routes', () => {
     const hostile = [
       '//evil.example/x', '/\\evil.example', '/\t/evil.example', '/\n/evil.example', 'https://evil.example/',
       'javascript:alert(1)', 'conflicts/abc', '', '/%0a/evil.example\\x',
+      '/a/..//evil.example', '/./..//evil.example/x', '/a/%2e%2e//evil.example',
     ];
     for (const returnTo of hostile) {
       const { cookie, state } = await login(returnTo);
@@ -127,6 +129,26 @@ describe('AuthKit routes', () => {
     const path = `/${'a'.repeat(511)}`; // 512 characters
     const { cookie, state } = await login(path);
     expect((await callback(cookie, `code=code&state=${state}`)).headers.get('Location')).toBe(path);
+  });
+  it('caps a non-ASCII return path by its encoded size, at the boundary', async () => {
+    // "界" is 9 characters percent-encoded (%E7%95%8C): 1 + 56 × 9 = 505 fits in 512, 57 do not.
+    const fits = await login(`/${'界'.repeat(56)}`);
+    expect((await callback(fits.cookie, `code=code&state=${fits.state}`)).headers.get('Location'))
+      .toBe(`/${'%E7%95%8C'.repeat(56)}`);
+    const over = await login(`/${'界'.repeat(57)}`);
+    expect((await callback(over.cookie, `code=code&state=${over.state}`)).headers.get('Location')).toBe('/');
+  });
+  it('keeps the login cookie well under 4 KB for any return path', async () => {
+    for (const returnTo of [`/${'界'.repeat(511)}`, `/${'界'.repeat(56)}`, `/${'a'.repeat(511)}`]) {
+      const { res } = await login(returnTo);
+      const setCookie = res.headers.getSetCookie().find((c) => c.startsWith('wos-login='))!;
+      expect(setCookie.length, returnTo.slice(0, 8)).toBeLessThan(2048);
+    }
+  });
+  it('never hands out a protocol-relative path, even after dot segments are resolved', () => {
+    for (const value of ['/a/..//evil.example', '/./..//evil.example/x', '/a/%2e%2e//evil.example']) {
+      expect(returnPath(value, origin), value).toBe('/');
+    }
   });
   it('keeps the return path when sending a login on another origin to the app origin', async () => {
     const res = await api.request(`http://elsewhere.test/login?returnTo=${encodeURIComponent('/conflicts/abc')}`, {}, env);

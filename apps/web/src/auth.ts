@@ -45,17 +45,23 @@ function clearSession(c: AuthContext) {
 }
 
 const MAX_RETURN_PATH = 512;
+const SAFE_PATH = /^\/(?![/\\])[^\s\\\x00-\x1f\x7f]*$/;
 
 /**
  * `value` if it is a path on this app to return to after sign-in, otherwise `/`. Only a single
  * leading `/` is allowed: `//host` and `/\host` are other origins to a browser, and browsers drop
  * tabs and newlines from URLs, so whitespace, control characters and backslashes are rejected too.
- * A path longer than 512 characters is dropped: it rides in the login cookie, and a browser that
- * refuses an oversized cookie would lose the OAuth state with it.
+ * The path is returned as a browser sends it, percent-encoded, and dropped if that form is longer
+ * than 512 characters: it rides in the login cookie, and a browser that refuses an oversized cookie
+ * would lose the OAuth state with it. Counting the encoded form keeps `界` (9 characters encoded)
+ * from slipping under a limit meant for ASCII. The resolved path is checked again, because
+ * resolving dot segments can turn `/a/..//host` into `//host`.
  */
 export function returnPath(value: string | undefined, origin: string): string {
-  if (!value || value.length > MAX_RETURN_PATH || !/^\/(?![/\\])[^\s\\\x00-\x1f\x7f]*$/.test(value)) return '/';
-  return new URL(value, origin).origin === origin ? value : '/';
+  if (!value || !SAFE_PATH.test(value)) return '/';
+  const url = new URL(value, origin);
+  const path = url.pathname + url.search + url.hash;
+  return url.origin === origin && SAFE_PATH.test(path) && path.length <= MAX_RETURN_PATH ? path : '/';
 }
 
 export async function handleLogin(c: AuthContext) {
