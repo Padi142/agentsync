@@ -72,8 +72,10 @@ export function CodeEditor({ value, onChange, marks = [], label, rows = 20, read
 
   const accept = (suggestion: Suggestion) => {
     if (!completion || !textarea.current || caret === null) return;
-    const closed = /^\s*\}\}/.test(value.slice(caret));
-    insert(textarea.current, completion.from, caret, suggestion.name + (completion.condition || closed ? '' : '}}'), onChange);
+    // Replace the whole name, including any part after the caret, so no old suffix is left behind.
+    const to = caret + (/^[\w.]*/.exec(value.slice(caret))?.[0].length ?? 0);
+    const closed = /^\s*\}\}/.test(value.slice(to));
+    insert(textarea.current, completion.from, to, suggestion.name + (completion.condition || closed ? '' : '}}'), onChange);
     setActive(0);
     // The caret may still sit right after the inserted name; don't offer it again there.
     setDismissed(`${completion.from}:${suggestion.name}`);
