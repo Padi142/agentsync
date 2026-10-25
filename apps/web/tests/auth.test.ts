@@ -41,8 +41,9 @@ beforeEach(async () => {
   sdk.logout.mockReturnValue('https://api.workos.com/user_management/sessions/logout');
 });
 
-async function login() {
-  const res = await api.request(`${origin}/login`, {}, env);
+async function login(returnTo?: string) {
+  const query = returnTo === undefined ? '' : `?returnTo=${encodeURIComponent(returnTo)}`;
+  const res = await api.request(`${origin}/login${query}`, {}, env);
   const cookie = res.headers.getSetCookie().find((c) => c.startsWith('wos-login='))!;
   const url = new URL(res.headers.get('Location')!);
   return { res, cookie: cookie.split(';')[0], url, state: url.searchParams.get('state')! };
@@ -98,6 +99,27 @@ describe('AuthKit routes', () => {
     const row = await env.DB.prepare('SELECT * FROM user WHERE workos_id = ?').bind(identity.id).first();
     expect(row?.email).toBe(identity.email);
     expect(row?.id).not.toBe(identity.id);
+  });
+  it('returns to the page the user was sent to sign in from', async () => {
+    const { cookie, state } = await login('/conflicts/abc?x=1');
+    const res = await callback(cookie, `code=code&state=${state}`);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('Location')).toBe('/conflicts/abc?x=1');
+  });
+  it('never redirects off the app after sign-in, whatever returnTo says', async () => {
+    const hostile = [
+      '//evil.example/x', '/\\evil.example', '/\t/evil.example', '/\n/evil.example', 'https://evil.example/',
+      'javascript:alert(1)', 'conflicts/abc', '', '/%0a/evil.example\\x',
+    ];
+    for (const returnTo of hostile) {
+      const { cookie, state } = await login(returnTo);
+      const res = await callback(cookie, `code=code&state=${state}`);
+      expect(res.headers.get('Location'), returnTo).toBe('/');
+    }
+  });
+  it('keeps the return path when sending a login on another origin to the app origin', async () => {
+    const res = await api.request(`http://elsewhere.test/login?returnTo=${encodeURIComponent('/conflicts/abc')}`, {}, env);
+    expect(res.headers.get('Location')).toBe(`${origin}/login?returnTo=%2Fconflicts%2Fabc`);
   });
   it('shows a recoverable error instead of looping on rejected consent or exchange failure', async () => {
     const { cookie, state } = await login();

@@ -44,11 +44,25 @@ function clearSession(c: AuthContext) {
   deleteCookie(c, SESSION_COOKIE, cookieOptions(c));
 }
 
+/**
+ * `value` if it is a path on this app to return to after sign-in, otherwise `/`. Only a single
+ * leading `/` is allowed: `//host` and `/\host` are other origins to a browser, and browsers drop
+ * tabs and newlines from URLs, so whitespace, control characters and backslashes are rejected too.
+ */
+export function returnPath(value: string | undefined, origin: string): string {
+  if (!value || !/^\/(?![/\\])[^\s\\\x00-\x1f\x7f]*$/.test(value)) return '/';
+  return new URL(value, origin).origin === origin ? value : '/';
+}
+
 export async function handleLogin(c: AuthContext) {
   const workos = getWorkOS(c.env);
   const origin = getAppOrigin(c.env);
+  const returnTo = returnPath(c.req.query('returnTo'), origin);
   // The login cookie and callback must live on the same origin.
-  if (new URL(c.req.url).origin !== origin) return c.redirect(`${origin}/login`);
+  if (new URL(c.req.url).origin !== origin) {
+    const query = returnTo === '/' ? '' : `?returnTo=${encodeURIComponent(returnTo)}`;
+    return c.redirect(`${origin}/login${query}`);
+  }
 
   const { url, state, codeVerifier } = await workos.userManagement.getAuthorizationUrlWithPKCE({
     provider: 'authkit',
@@ -56,7 +70,7 @@ export async function handleLogin(c: AuthContext) {
     redirectUri: c.env.WORKOS_REDIRECT_URI,
   });
   await setSignedCookie(c, LOGIN_COOKIE, JSON.stringify({
-    state, codeVerifier, expiresAt: Date.now() + LOGIN_TTL * 1000,
+    state, codeVerifier, returnTo, expiresAt: Date.now() + LOGIN_TTL * 1000,
   }), c.env.WORKOS_COOKIE_PASSWORD, { ...cookieOptions(c), maxAge: LOGIN_TTL });
   return c.redirect(url);
 }
@@ -64,7 +78,7 @@ export async function handleLogin(c: AuthContext) {
 export async function handleCallback(c: AuthContext) {
   const workos = getWorkOS(c.env);
   const state = c.req.query('state');
-  let login: { state?: unknown; codeVerifier?: unknown; expiresAt?: unknown } | null = null;
+  let login: { state?: unknown; codeVerifier?: unknown; returnTo?: unknown; expiresAt?: unknown } | null = null;
   try {
     const value = await getSignedCookie(c, c.env.WORKOS_COOKIE_PASSWORD, LOGIN_COOKIE);
     if (value) login = JSON.parse(value);
@@ -91,7 +105,9 @@ export async function handleCallback(c: AuthContext) {
     if (!result.sealedSession) throw new Error('Missing sealed session');
     await provisionUser(c.env, result.user);
     setSession(c, result.sealedSession);
-    return c.redirect('/', 303);
+    // Checked again on the way out, so the redirect never leaves the app.
+    const returnTo = typeof login.returnTo === 'string' ? login.returnTo : undefined;
+    return c.redirect(returnPath(returnTo, getAppOrigin(c.env)), 303);
   } catch {
     // Never log the code, tokens, or provider error payloads.
     console.error('[AuthKit] Callback failed. Check WorkOS configuration and local user provisioning.');
