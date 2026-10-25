@@ -16,14 +16,17 @@ Run `agentsync --help` for the commands, and `agentsync help <command>` for one 
 
 | Command | What it does |
 |---|---|
-| `init` (alias `login`) | Registers the Machine with the WorkOS device flow, detects agents, saves Variables (`--var`), imports an existing file on the account's first Machine, installs hooks and the skill, then syncs. Safe to run again. |
+| `init` (alias `login`) | Registers the Machine with the WorkOS device flow, asks for a Machine nickname (hostname prefilled; `--name` skips it), detects agents, saves Variables (`--var`), imports an existing file on the account's first Machine, installs hooks and the skill, then syncs. Safe to run again. |
 | `sync` | Renders the Template into each Target. Drift stops it with exit 3, unless `--overwrite` (keeps `<target>.agentsync-backup`) or `--keep` is passed, or you choose at the prompt. |
 | `edit` | Opens the Template in `$EDITOR` and saves it. `--file <path> --base <revision>` does the same without an editor. When the Template changed meanwhile, the edit is kept as a Conflict (exit 4). |
 | `template` | Prints the Template, or writes it with `--out`. |
 | `vars` | Shows the Machine's Variables, or changes them with `--var KEY=VALUE` and `--unset KEY`. |
 | `conflict list \| get <id> \| resolve <id> <file>` | Works with open Conflicts. `resolve` refuses leftover markers and warns about lone `=======` lines. |
 | `status` | Shows each Target's state and open Conflicts, without writing. |
+| `rename <nickname>` | Changes the Machine's nickname (also `init --name` on a registered Machine). Writes no Target; name-dependent Template output changes on the next `sync`. |
 | `logout` | Revokes the Machine and removes its token, plus the hooks and skill files AgentSync installed that nobody changed. Targets stay. |
+
+A Machine deleted on the web stops syncing at once: ordinary commands exit 5 and hooks keep the existing files. The web cannot remove local config, hooks or files, so run `agentsync logout` and then `agentsync init` on it to register it again (it gets a new ID).
 
 Every command takes `--json` (one JSON document on stdout, progress on stderr),
 `--yes` (never prompt) and `--server`, plus display flags:

@@ -366,15 +366,23 @@ describe('Machine sync and revocation', () => {
     const laptop = await registerMachine('alice', 'laptop');
     const desktop = await registerMachine('alice', 'desktop');
     await laptop.client.variables.put({ machineId: laptop.machine.id, variables: { a: '1' }, expectedRevision: 0 });
+    await desktop.client.variables.put({ machineId: desktop.machine.id, variables: { b: '2' }, expectedRevision: 0 });
+    await browser().template.put({ text: 'shared\n', expectedRevision: 0 });
+    await browser().conflicts.create({ baseRevision: 0, text: 'lost edit\n' });
     await browser().machines.revoke({ machineId: laptop.machine.id });
     await expect(laptop.client.machines.sync()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     await expect(browser().machines.get({ machineId: laptop.machine.id })).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect((await desktop.client.machines.sync()).machine.name).toBe('desktop');
     const left = await env.DB.prepare(
-      `SELECT (SELECT count(*) FROM machine_credential) AS credentials,
-              (SELECT count(*) FROM machine_variables_revision) AS variables`,
+      `SELECT (SELECT count(*) FROM machine) AS machines,
+              (SELECT count(*) FROM machine_credential) AS credentials,
+              (SELECT count(*) FROM machine_variables) AS variables,
+              (SELECT count(*) FROM machine_variables_revision) AS variableHistory`,
     ).first();
-    expect(left).toEqual({ credentials: 1, variables: 0 });
+    // Only the deleted Machine's rows go; the desktop's, the Template and the Conflict stay.
+    expect(left).toEqual({ machines: 1, credentials: 1, variables: 1, variableHistory: 1 });
+    expect((await browser().template.get()).text).toBe('shared\n');
+    expect(await browser().conflicts.list()).toHaveLength(1);
   });
 
   it('lets a Machine revoke itself', async () => {

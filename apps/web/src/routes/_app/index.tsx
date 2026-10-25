@@ -1,5 +1,5 @@
 import type { Machine } from '@agentsync/contract';
-import { render, validate } from '@agentsync/template';
+import { BUILTIN_VARIABLES, render, validate } from '@agentsync/template';
 import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, Link, useBlocker, useRouter } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -97,7 +97,8 @@ function TemplateEditor() {
             </button>
           </p>
         ) : null}
-        <CodeEditor label="Template" value={text} onChange={draft.set} marks={marks} rows={24} readOnly={draft.busy} />
+        <CodeEditor label="Template" value={text} onChange={draft.set} marks={marks} rows={24} readOnly={draft.busy}
+          suggestions={BUILTIN_VARIABLES} />
         {error ? (
           <p className="issue error" role="alert">Line {error.line}, column {error.column}: {error.message}</p>
         ) : null}
@@ -106,7 +107,11 @@ function TemplateEditor() {
           <summary>Expression syntax</summary>
           <ul>
             <li><code>{'{{editor}}'}</code> a Machine Variable</li>
-            <li><code>{'{{machine.name}}'}</code>, <code>{'{{machine.os}}'}</code>, <code>{'{{agent}}'}</code> Built-in Variables</li>
+            <li>
+              <code>{'{{machine.nickname}}'}</code>, <code>{'{{machine.os}}'}</code>, <code>{'{{agent}}'}</code> Built-in
+              Variables. <code>{'{{machine.name}}'}</code> is a supported alias of <code>machine.nickname</code>; update
+              AgentSync on every Machine before using the new spelling. Type <code>{'{{'}</code> for suggestions.
+            </li>
             <li><code>{'{{if agent == "codex"}} … {{else}} … {{end}}'}</code> a conditional (<code>!=</code> works too)</li>
             <li><code>{'\\{{'}</code> a literal <code>{'{{'}</code></li>
           </ul>

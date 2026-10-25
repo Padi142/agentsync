@@ -46,7 +46,12 @@ export function setup() {
         const answer = next(`${message} ${choices.map((choice) => choice.label).join(' / ')}`);
         return answer.split(',').filter(Boolean) as never;
       },
-      text: async (message) => next(message),
+      text: async (message, _style, options) => {
+        const answer = next(message) || options?.initial || '';
+        const problem = options?.validate?.(answer);
+        if (problem) throw new Error(`Rejected "${answer}" for ${message}: ${problem}`);
+        return answer;
+      },
       progress: () => ({ stop() {} }),
       edit: async (file) => {
         const edit = edits.shift();

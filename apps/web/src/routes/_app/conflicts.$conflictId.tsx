@@ -1,5 +1,5 @@
 import type { Template } from '@agentsync/contract';
-import { hasConflictMarkers, suspectedConflictMarkers, validate } from '@agentsync/template';
+import { hasConflictMarkers, suspectedConflictMarkers, validate, BUILTIN_VARIABLES } from '@agentsync/template';
 import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, Link, useBlocker } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -172,7 +172,8 @@ function Resolver() {
             {draft.busy ? 'Saving…' : 'Save and resolve'}
           </button>
         </div>
-        <CodeEditor label="Merged Template" value={text} onChange={draft.set} marks={marks} rows={24} readOnly={draft.busy} />
+        <CodeEditor label="Merged Template" value={text} onChange={draft.set} marks={marks} rows={24} readOnly={draft.busy}
+          suggestions={BUILTIN_VARIABLES} />
         <ul className="issues">
           {markers ? <li className="issue error">Remove every Conflict marker (<code>{'<<<<<<<'}</code>, <code>=======</code>, <code>{'>>>>>>>'}</code>) before saving.</li> : null}
           {error ? <li className="issue error">Line {error.line}, column {error.column}: {error.message}</li> : null}

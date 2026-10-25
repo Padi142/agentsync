@@ -55,7 +55,9 @@ export const targetSchema = z.object({
   agent: z.string().regex(/^[a-z][a-z0-9-]*$/).max(32),
 });
 
-const machineName = z.string().trim().min(1).max(100);
+/** A Machine nickname: trimmed, 1–100 characters. Spaces, Unicode and duplicates are fine. */
+export const machineNameSchema = z.string().trim().min(1).max(100);
+const machineName = machineNameSchema;
 
 export const machineSchema = z.object({
   id,

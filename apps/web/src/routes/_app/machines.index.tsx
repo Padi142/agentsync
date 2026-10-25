@@ -1,16 +1,24 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { z } from 'zod';
 import { formatTime } from '../../format';
 import { rpc } from '../../rpc';
 
 export const Route = createFileRoute('/_app/machines/')({
+  validateSearch: z.object({ notice: z.enum(['deleted', 'already-deleted']).optional() }),
   loader: () => rpc.machines.list(),
   component: Machines,
 });
 
 function Machines() {
   const machines = Route.useLoaderData();
+  const { notice } = Route.useSearch();
   return (
     <section className="panel">
+      {notice ? (
+        <p className="notice" role="status">
+          {notice === 'deleted' ? 'Machine deleted.' : 'That Machine was already deleted.'}
+        </p>
+      ) : null}
       <div className="panel-heading">
         <div>
           <h1>Machines</h1>
@@ -22,7 +30,7 @@ function Machines() {
       ) : (
         <table className="table">
           <thead>
-            <tr><th>Name</th><th>OS</th><th>Targets</th><th>Last seen</th></tr>
+            <tr><th>Nickname</th><th>OS</th><th>Targets</th><th>Last seen</th></tr>
           </thead>
           <tbody>
             {machines.map((machine) => (

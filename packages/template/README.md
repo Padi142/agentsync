@@ -10,7 +10,7 @@ runtime dependencies and runs in Node, Workers, and the browser.
 | Syntax | Meaning |
 |---|---|
 | `{{editor}}` | A Machine Variable. Missing renders as empty, with a warning. |
-| `{{machine.name}}`, `{{machine.os}}`, `{{agent}}` | Built-in Variables. |
+| `{{machine.nickname}}`, `{{machine.os}}`, `{{agent}}` | Built-in Variables. `{{machine.name}}` is a supported alias of `machine.nickname`; older CLIs reject the new spelling, so update AgentSync on every Machine first. `BUILTIN_VARIABLES` lists them with descriptions for editors. |
 | `{{if name == "value"}} … {{else}} … {{end}}` | A conditional. `!=` also works, blocks nest, `else` is optional. |
 | `\{{` | A literal `{{`. |
 

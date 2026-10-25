@@ -11,6 +11,12 @@ export interface PromptStyle {
   color: boolean;
 }
 
+/** Options for a text question: a prefilled answer, and a check that returns why an answer is not accepted. */
+export interface TextOptions {
+  initial?: string;
+  validate?: (value: string) => string | undefined;
+}
+
 /** A spinner that is running until `stop()`. */
 export interface Progress {
   stop(): void;
@@ -36,8 +42,8 @@ export interface Io {
   select<T extends string>(message: string, choices: Choice<T>[], initial: T, style: PromptStyle): Promise<T>;
   /** Ask a person to pick any of `choices`, starting with `initial` selected. */
   multiselect<T extends string>(message: string, choices: Choice<T>[], initial: T[], style: PromptStyle): Promise<T[]>;
-  /** Ask a person for a line of text and return it trimmed. */
-  text(message: string, style: PromptStyle): Promise<string>;
+  /** Ask a person for a line of text and return it trimmed. Enter with nothing typed accepts `initial`. */
+  text(message: string, style: PromptStyle, options?: TextOptions): Promise<string>;
   /** Start a spinner on stderr. Only called when the Context allows animation. */
   progress(text: string, style: PromptStyle): Progress;
   /** Open `file` in the person's editor and wait until it closes. */

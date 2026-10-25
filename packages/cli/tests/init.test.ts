@@ -157,7 +157,7 @@ describe('init', () => {
     const t = setup();
     mkdirSync(t.path('.claude'));
     t.server.putTemplate('editor: {{editor}}{{if os == "x"}}{{shell}}{{end}}\n');
-    t.answer('claude', 'vim', '', '');
+    t.answer('', 'claude', 'vim', '', '');
 
     const result = await t.cli('init', '--server', t.server.url);
 

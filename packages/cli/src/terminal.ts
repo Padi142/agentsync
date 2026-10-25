@@ -71,11 +71,23 @@ export const terminal: Pick<Io, 'select' | 'multiselect' | 'text' | 'progress'> 
     if (clack.isCancel(answer)) throw cancelled();
     return answer as typeof initial;
   },
-  async text(message, style) {
-    if (style.plain) return line(`${message} `);
+  async text(message, style, { initial, validate } = {}) {
+    if (style.plain) {
+      for (;;) {
+        const answer = (await line(initial ? `${message} [${initial}]: ` : `${message} `)) || initial || '';
+        const problem = validate?.(answer);
+        if (!problem) return answer;
+        process.stderr.write(`${problem}\n`);
+      }
+    }
     monochrome(style);
     const clack = await import('@clack/prompts');
-    const answer = await clack.text({ message, output: process.stderr });
+    const answer = await clack.text({
+      message,
+      ...(initial ? { initialValue: initial } : {}),
+      ...(validate ? { validate: (value) => validate((value ?? '').trim()) } : {}),
+      output: process.stderr,
+    });
     if (clack.isCancel(answer)) throw cancelled();
     return (answer ?? '').trim();
   },

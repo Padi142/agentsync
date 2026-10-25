@@ -2,7 +2,7 @@ import type { VariableMap } from '@agentsync/contract';
 import { isSettableVariableName, referencedVariables, validate } from '@agentsync/template';
 import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, useBlocker, useRouter } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Diff } from '../../components/Diff';
 import { useDraft } from '../../draft';
 import { formatTime } from '../../format';
@@ -32,24 +32,54 @@ function MachineRoute() {
 }
 
 function MachinePage() {
-  const { machine, variables } = Route.useLoaderData();
+  const { machine } = Route.useLoaderData();
   const router = useRouter();
   const navigate = useOwnNavigate();
-  const [name, setName] = useState(machine.name);
   const [notice, setNotice] = useState('');
   const [machineNotice, setMachineNotice] = useState('');
+  const [pending, setPending] = useState<'rename' | 'delete' | null>(null);
+  const [variablesDirty, setVariablesDirty] = useState(false);
+  // The nickname the input last took from the server: a newer one replaces a clean input only.
+  const [base, setBase] = useState(machine.name);
+  const [name, setName] = useState(machine.name);
+  const [changedElsewhere, setChangedElsewhere] = useState(false);
+  if (machine.name !== base) {
+    if (name === base) setName(machine.name);
+    else if (name.trim() !== machine.name) setChangedElsewhere(true);
+    setBase(machine.name);
+  }
+  const trimmed = name.trim();
+  const nameProblem = !trimmed ? 'Give this Machine a nickname.' : trimmed.length > 100 ? 'Use at most 100 characters.' : null;
 
   const rename = async (event: FormEvent) => {
     event.preventDefault();
-    const [error] = await safe(rpc.machines.update({ machineId: machine.id, name: name.trim() }));
-    if (error) return setMachineNotice('Renaming failed. Please try again.');
+    if (pending || nameProblem) return;
+    setPending('rename');
+    const [error, saved] = await safe(rpc.machines.update({ machineId: machine.id, name: trimmed }));
+    setPending(null);
+    if (error) return setMachineNotice('Saving the nickname failed. Please try again.');
+    // The loader still holds the old nickname until it refreshes; the input already shows the new one.
+    setName(saved.name);
+    setChangedElsewhere(false);
+    setMachineNotice('Nickname saved.');
     await router.invalidate();
   };
-  const revoke = async () => {
-    if (!window.confirm(`Revoke ${machine.name}? It stops syncing, and its Variables are deleted.`)) return;
+  const remove = async () => {
+    if (pending) return;
+    const discard = variablesDirty ? '\n\nYour unsaved Variable changes on this page will be discarded.' : '';
+    const confirmed = window.confirm(
+      `Delete ${machine.name}?\n\nIt stops syncing, and its registration, token, Variables and Variable history are permanently removed. ` +
+        `Its local instruction files and the shared Template stay. To use it again, run \`agentsync logout\` and then \`agentsync init\` on it.${discard}`,
+    );
+    if (!confirmed) return;
+    setPending('delete');
+    // The UUID, never the nickname: nicknames need not be unique.
     const [error] = await safe(rpc.machines.revoke({ machineId: machine.id }));
-    if (error) return setMachineNotice('Revoking failed. Please try again.');
-    await navigate({ to: '/machines', ignoreBlocker: true });
+    if (error && !(isDefinedError(error) && error.code === 'NOT_FOUND')) {
+      setPending(null);
+      return setMachineNotice('Deleting the Machine failed. Please try again.');
+    }
+    await navigate({ to: '/machines', search: { notice: error ? 'already-deleted' : 'deleted' }, ignoreBlocker: true });
   };
 
   return (
@@ -63,17 +93,26 @@ function MachinePage() {
               {machine.lastSeenAt ? formatTime(machine.lastSeenAt) : 'never'}
             </p>
           </div>
-          <button className="button danger" type="button" onClick={revoke}>Revoke</button>
         </div>
         <form className="inline-form" onSubmit={rename}>
           <label>
-            Name
-            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required />
+            Nickname
+            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required
+              aria-invalid={!!nameProblem} disabled={pending !== null} />
           </label>
-          <button className="button secondary" type="submit" disabled={!name.trim() || name.trim() === machine.name}>
-            Rename
+          <button className="button secondary" type="submit"
+            disabled={pending !== null || !!nameProblem || trimmed === machine.name}>
+            {pending === 'rename' ? 'Saving…' : 'Save nickname'}
           </button>
         </form>
+        {nameProblem && name ? <p className="field-issue">{nameProblem}</p> : null}
+        {changedElsewhere && trimmed !== machine.name ? (
+          <p className="issue warning">The saved nickname changed to “{machine.name}” while you were editing.</p>
+        ) : null}
+        <p className="muted">
+          Use <code>{'{{machine.nickname}}'}</code> in your Template. <code>{'{{machine.name}}'}</code> is a supported
+          alias. Changes apply to Targets on the next sync.
+        </p>
         <h3>Targets</h3>
         <ul className="plain">
           {machine.targets.map((t) => (
@@ -82,8 +121,19 @@ function MachinePage() {
         </ul>
         {machineNotice ? <p className="notice" role="status">{machineNotice}</p> : null}
       </section>
-      <VariablesEditor notice={notice} setNotice={setNotice} />
+      <VariablesEditor notice={notice} setNotice={setNotice} setDirty={setVariablesDirty} />
       <VariablesHistory setNotice={setNotice} />
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <h2>Delete Machine</h2>
+            <p className="muted">Stops syncing and permanently removes its registration, token and Variables.</p>
+          </div>
+          <button className="button danger" type="button" onClick={remove} disabled={pending !== null}>
+            {pending === 'delete' ? 'Deleting…' : 'Delete Machine'}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -93,7 +143,11 @@ const toRows = (map: VariableMap): Row[] => Object.entries(map).map(([name, valu
 const toMap = (rows: Row[]): VariableMap => Object.fromEntries(rows.map((r) => [r.name.trim(), r.value]));
 const sameRows = (a: Row[], b: Row[]) => JSON.stringify(a) === JSON.stringify(b);
 
-function VariablesEditor({ notice, setNotice }: { notice: string; setNotice: (notice: string) => void }) {
+function VariablesEditor({ notice, setNotice, setDirty }: {
+  notice: string;
+  setNotice: (notice: string) => void;
+  setDirty: (dirty: boolean) => void;
+}) {
   const { machine, variables, template } = Route.useLoaderData();
   const router = useRouter();
   // Saved here, restored from history or changed elsewhere: a newer revision replaces the
@@ -101,6 +155,7 @@ function VariablesEditor({ notice, setNotice }: { notice: string; setNotice: (no
   const draft = useDraft({ revision: variables.revision, value: toRows(variables.variables) }, sameRows);
   const rows = draft.value;
   const setRows = draft.set;
+  useEffect(() => setDirty(draft.dirty), [draft.dirty, setDirty]);
   useBlocker({
     shouldBlockFn: () => draft.dirty && !window.confirm('Leave without saving your Variable changes?'),
     enableBeforeUnload: () => draft.dirty,

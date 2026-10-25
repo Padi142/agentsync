@@ -1,7 +1,7 @@
 import type { Config } from './config.js';
 import { loadConfig, saveConfig } from './config.js';
 import type { ExitCode } from './exit.js';
-import type { Choice, Io, PromptStyle } from './io.js';
+import type { Choice, Io, PromptStyle, TextOptions } from './io.js';
 import { palette, type Palette } from './style.js';
 
 export interface Flags {
@@ -84,8 +84,8 @@ export class Context {
     return this.io.multiselect(message, choices, initial, this.style);
   }
 
-  text(message: string): Promise<string> {
-    return this.io.text(message, this.style);
+  text(message: string, options?: TextOptions): Promise<string> {
+    return this.io.text(message, this.style, options);
   }
 
   /**

@@ -8,6 +8,7 @@ import { conflict } from './commands/conflict.js';
 import { edit } from './commands/edit.js';
 import { sync } from './commands/sync.js';
 import { logout } from './commands/logout.js';
+import { rename } from './commands/rename.js';
 import { status } from './commands/status.js';
 import { template } from './commands/template.js';
 import { vars } from './commands/vars.js';
@@ -26,6 +27,7 @@ Commands:
   template    Print the Template
   vars        Show or change this Machine's Variables
   conflict    List, get, or resolve open Conflicts
+  rename      Change this Machine's nickname
   logout      Revoke this Machine and remove its hooks
 
 Common flags:
@@ -48,7 +50,8 @@ Register this Machine with the browser, then set up its Targets, Variables, hook
 and sync. Safe to run again. Alias: login.
 
   --server <url>             The AgentSync server
-  --name <name>              The Machine's name (default: the hostname)
+  --name <nickname>          The Machine nickname (default: asked, or the hostname);
+                             on a registered Machine, renames it
   --agent <id>               Sync this agent: claude or codex (default: those found here)
   --target <agent>=<path>    Sync another agent's file, e.g. gemini=~/.gemini/GEMINI.md
   --var KEY=VALUE            Set a Variable on this Machine
@@ -112,6 +115,17 @@ Print a Conflict: the Template with git-style markers around the lines both edit
 Save a merged file as the resolution. It must have no markers left and must parse.
 
   --base <revision>   The Template revision it was merged against (default: the Conflict's)`,
+  rename: `Usage: agentsync rename <nickname>
+
+Change this Machine's nickname: 1 to 100 characters; quote one with spaces. It keeps its
+identity, token, Variables and Targets, and no Target is written.
+
+Use {{machine.nickname}} in your Template. {{machine.name}} is a supported alias.
+Changes apply to Targets on the next sync.
+
+Examples:
+  agentsync rename "Home server"
+  agentsync rename "Work laptop" --json`,
   logout: `Usage: agentsync logout
 
 Revoke this Machine and remove its token, plus the hooks and skill files AgentSync installed
@@ -136,6 +150,7 @@ const COMMANDS: Record<string, Command> = {
   conflict,
   vars,
   status,
+  rename,
   logout,
 };
 

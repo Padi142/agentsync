@@ -29,6 +29,18 @@ describe('render', () => {
     ).toBe('claude on laptop (darwin)');
   });
 
+  it('reads machine.nickname and its alias machine.name as the same value', () => {
+    expect(
+      render(
+        '{{machine.nickname}}={{machine.name}}{{if machine.nickname == "laptop"}} yes{{end}}{{if machine.name != "laptop"}} no{{end}}',
+        laptop,
+      ).text,
+    ).toBe('laptop=laptop yes');
+    expect(validate('{{machine.nickname}}')).toBeNull();
+    expect(validate('{{machine.nick}}')).not.toBeNull();
+    expect(referencedVariables('{{machine.nickname}}')).toEqual([]);
+  });
+
   it('prefers a Built-in Variable over a same-named Machine Variable', () => {
     const context = { ...laptop, variables: { agent: 'spoofed' } };
     expect(render('{{agent}}', context).text).toBe('claude');

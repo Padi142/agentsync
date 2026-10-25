@@ -123,20 +123,48 @@ export function isSettableVariableName(name: string): boolean {
 
 const RESERVED = ['agent', 'machine'];
 
-const BUILTINS = ['agent', 'machine.name', 'machine.os'] as const;
+/** A Built-in Variable: what it means, for editors, and how it is read from the Render context. */
+export interface BuiltinVariable {
+  name: string;
+  description: string;
+  /** The preferred spelling, when this one is a compatible alias. */
+  aliasOf?: string;
+  read(builtins: RenderContext['builtins']): string;
+}
 
-const isBuiltin = (name: string) =>
-  (BUILTINS as readonly string[]).includes(name);
+/** Every Built-in Variable, preferred spellings first. Editors suggest these; the engine accepts exactly these. */
+export const BUILTIN_VARIABLES: readonly BuiltinVariable[] = [
+  {
+    name: 'machine.nickname',
+    description: 'Editable Machine nickname',
+    read: (builtins) => builtins.machine.name,
+  },
+  {
+    name: 'machine.os',
+    description: 'Operating system: linux, macos, or windows',
+    read: (builtins) => builtins.machine.os,
+  },
+  {
+    name: 'agent',
+    description: 'The agent a Target belongs to, such as claude or codex',
+    read: (builtins) => builtins.agent,
+  },
+  {
+    name: 'machine.name',
+    description: 'Alias of machine.nickname',
+    aliasOf: 'machine.nickname',
+    read: (builtins) => builtins.machine.name,
+  },
+];
+
+const builtin = (name: string) =>
+  BUILTIN_VARIABLES.find((variable) => variable.name === name);
+
+const isBuiltin = (name: string) => builtin(name) !== undefined;
 
 function lookup(name: string, context: RenderContext): string | undefined {
-  const { machine, agent } = context.builtins;
-  const builtins: Record<(typeof BUILTINS)[number], string> = {
-    agent,
-    'machine.name': machine.name,
-    'machine.os': machine.os,
-  };
-  if (Object.hasOwn(builtins, name))
-    return builtins[name as keyof typeof builtins];
+  const found = builtin(name);
+  if (found) return found.read(context.builtins);
   if (Object.hasOwn(context.variables, name)) return context.variables[name];
   return undefined;
 }

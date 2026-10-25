@@ -12,6 +12,7 @@ import { installHook } from '../hooks.js';
 import { expandHome, tildify } from '../paths.js';
 import { machineClient } from '../session.js';
 import { installSkill } from '../skill.js';
+import { checkedNickname, nicknameCheck } from '../nickname.js';
 import { changeVariables, parseAssignments } from '../variables.js';
 import { applySync } from './sync.js';
 
@@ -70,12 +71,33 @@ function chooseServer(ctx: Context): string {
   return server;
 }
 
+/** The pending registration for `server`, if it has not expired. */
+const pendingFor = (ctx: Context, server: string) => {
+  const { pending } = ctx.config;
+  return pending && pending.server === server && pending.expiresAt > Date.now() ? pending : undefined;
+};
+
+/**
+ * The nickname for a new registration: `--name`, else the one a pending registration saved,
+ * else asked at a terminal with the hostname prefilled, else the hostname.
+ */
+async function chooseNickname(ctx: Context, server: string): Promise<string> {
+  if (ctx.flags.name !== undefined) return checkedNickname(ctx.flags.name);
+  const saved = pendingFor(ctx, server)?.name;
+  if (saved) return saved;
+  const check = await nicknameCheck();
+  const hostname = ctx.io.hostname.trim();
+  if (ctx.canAsk) return ctx.text('Machine nickname', { initial: hostname, validate: check });
+  if (check(hostname)) throw usage(`The hostname "${hostname}" cannot be a Machine nickname. Pass --name <nickname>.`);
+  return hostname;
+}
+
 /** Register this Machine with the device flow, or resume one that `--no-wait` started. */
-async function register(ctx: Context, server: string, targets: Target[]): Promise<Outcome | null> {
+async function register(ctx: Context, server: string, targets: Target[], name: string): Promise<Outcome | null> {
   const { io, config } = ctx;
   const client = connect(io, server);
-  let pending = config.pending;
-  if (!pending || pending.server !== server || pending.expiresAt <= Date.now()) {
+  let pending = pendingFor(ctx, server);
+  if (!pending) {
     const started: DeviceAuthorization = await client.machines.deviceStart();
     pending = {
       server,
@@ -84,8 +106,12 @@ async function register(ctx: Context, server: string, targets: Target[]): Promis
       verificationUriComplete: started.verificationUriComplete,
       interval: started.interval,
       expiresAt: Date.now() + started.expiresIn * 1000,
+      name,
     } satisfies PendingLogin;
     config.pending = pending;
+    ctx.save();
+  } else if (pending.name !== name) {
+    pending.name = name;
     ctx.save();
   }
   ctx.say(`To register this Machine, approve it in the browser.\n\nOpen: ${pending.verificationUriComplete}\nCode: ${pending.userCode}\n`);
@@ -95,7 +121,6 @@ async function register(ctx: Context, server: string, targets: Target[]): Promis
     return { data: { status: 'pending', ...shown } };
   }
 
-  const name = (ctx.flags.name ?? io.hostname).trim() || 'machine';
   return ctx.during('Waiting for browser approval…', () => poll(ctx, client, pending, name, targets));
 }
 
@@ -182,14 +207,17 @@ async function askForVariables(ctx: Context, client: ContractClient, machineId: 
 /** Register this Machine (if needed), then set up its Variables, Template, hooks and skill, and sync. */
 export async function init(ctx: Context): Promise<Outcome> {
   const server = chooseServer(ctx);
-  const chosen = await chooseTargets(ctx);
-  const set = parseAssignments(ctx.flags.var);
   if (ctx.config.token && ctx.config.server !== server) {
     throw usage(`This Machine is registered with ${ctx.config.server}. Run \`agentsync logout\` first.`);
   }
   const alreadyRegistered = !!ctx.config.token;
-  if (!alreadyRegistered) {
-    const early = await register(ctx, server, chosen);
+  // An explicit --name renames a registered Machine; an ordinary init keeps the server's nickname.
+  const rename = alreadyRegistered && ctx.flags.name !== undefined ? await checkedNickname(ctx.flags.name) : undefined;
+  const nickname = alreadyRegistered ? undefined : await chooseNickname(ctx, server);
+  const chosen = await chooseTargets(ctx);
+  const set = parseAssignments(ctx.flags.var);
+  if (nickname !== undefined) {
+    const early = await register(ctx, server, chosen, nickname);
     if (early) return early;
   }
   const client = machineClient(ctx);
@@ -197,9 +225,12 @@ export async function init(ctx: Context): Promise<Outcome> {
 
   let { machine } = await client.machines.sync();
   const added = chosen.filter((target) => !machine.targets.some((known) => known.path === target.path));
-  if (alreadyRegistered && added.length) {
-    machine = await client.machines.update({ machineId, targets: [...machine.targets, ...added] });
-  }
+  const changes = {
+    ...(alreadyRegistered && added.length ? { targets: [...machine.targets, ...added] } : {}),
+    ...(rename !== undefined && rename !== machine.name ? { name: rename } : {}),
+  };
+  if (Object.keys(changes).length) machine = await client.machines.update({ machineId, ...changes });
+  if (changes.name) ctx.success(`Machine nickname saved: ${machine.name}`);
   if (Object.keys(set).length) await changeVariables(client, machineId, set);
   const { revision } = await client.template.get();
   const imported = revision === 0 ? await importExisting(ctx, client, machine.targets) : undefined;
