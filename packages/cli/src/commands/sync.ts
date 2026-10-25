@@ -14,9 +14,10 @@ const HOOK_TIMEOUT_MS = 2000;
 export type TargetResult = {
   path: string;
   agent: string;
-  /** `drift` means it is still unresolved; `kept` and `handed-off` were a choice. */
-  status: 'written' | 'unchanged' | 'overwritten' | 'kept' | 'handed-off' | 'drift';
+  /** `drift` means it is still unresolved; `kept` and `handed-off` were a choice; `error` could not be read or written. */
+  status: 'written' | 'unchanged' | 'overwritten' | 'kept' | 'handed-off' | 'drift' | 'error';
   diff?: string;
+  error?: string;
 };
 
 function driftPrompt(path: string, diff: string): string {
@@ -88,56 +89,67 @@ export async function applySync(ctx: Context, payload: SyncPayload): Promise<Out
   assertValid(template.text);
 
   const missing = new Set<string>();
-  for (const { target, path, rendered, warnings } of renderTargets(ctx, payload)) {
-    for (const warning of warnings) missing.add(warning.variable);
-    const lastWritten = ctx.config.written[target.path];
-    const check = checkTarget({ path, rendered, ...(lastWritten === undefined ? {} : { lastWritten }) });
-    const result: TargetResult = { path: target.path, agent: target.agent, status: 'unchanged' };
-    const write = (backup: boolean) => {
-      writeTarget(path, rendered, { backup });
-      ctx.config.written[target.path] = rendered;
-    };
+  try {
+    for (const { target, path, rendered, warnings } of renderTargets(ctx, payload)) {
+      for (const warning of warnings) missing.add(warning.variable);
+      const result: TargetResult = { path: target.path, agent: target.agent, status: 'unchanged' };
+      results.push(result);
+      try {
+        const lastWritten = ctx.config.written[target.path];
+        const check = checkTarget({ path, rendered, ...(lastWritten === undefined ? {} : { lastWritten }) });
+        const write = (backup: boolean) => {
+          writeTarget(path, rendered, { backup });
+          ctx.config.written[target.path] = rendered;
+        };
 
-    if (check.status === 'missing' || check.status === 'stale') {
-      write(false);
-      result.status = 'written';
-      ctx.say(`Wrote ${target.path}`);
-    } else if (check.status === 'current') {
-      ctx.config.written[target.path] = rendered;
-    } else {
-      result.diff = check.diff!;
-      let choice = ctx.flags.overwrite ? 'overwrite' : ctx.flags.keep ? 'keep' : null;
-      if (!choice && ctx.canAsk) {
-        ctx.say(`\n${target.path} has Drift: it was edited by hand since AgentSync wrote it.\n\n${check.diff}`);
-        choice = await choose(
-          ctx,
-          'Discard the hand edit and [o]verwrite, [k]eep it and skip, or hand it to an [a]gent? ',
-          ['overwrite', 'keep', 'agent'],
-        );
-      }
-      if (choice === 'overwrite') {
-        write(true);
-        result.status = 'overwritten';
-        ctx.say(`Overwrote ${target.path} (the hand edit is in ${backupPath(target.path)})`);
-      } else if (choice === 'keep') {
-        result.status = 'kept';
-        ctx.say(`Kept the hand edit in ${target.path}`);
-      } else if (choice === 'agent') {
-        await handOff(ctx, driftPrompt(target.path, check.diff!));
-        result.status = 'handed-off';
-      } else {
-        result.status = 'drift';
-        if (!ctx.flags.hook) {
-          ctx.say(`\n${target.path} has Drift: it was edited by hand since AgentSync wrote it.\n\n${check.diff}`);
-          ctx.say(
-            'Run `agentsync sync --overwrite` to discard it (a backup is kept), `agentsync sync --keep` to leave it,\nor fold the change into the Template.',
-          );
+        if (check.status === 'missing' || check.status === 'stale') {
+          write(false);
+          result.status = 'written';
+          ctx.say(`Wrote ${target.path}`);
+        } else if (check.status === 'current') {
+          ctx.config.written[target.path] = rendered;
+        } else {
+          result.diff = check.diff!;
+          let choice = ctx.flags.overwrite ? 'overwrite' : ctx.flags.keep ? 'keep' : null;
+          if (!choice && ctx.canAsk) {
+            ctx.say(`\n${target.path} has Drift: it was edited by hand since AgentSync wrote it.\n\n${check.diff}`);
+            choice = await choose(
+              ctx,
+              'Discard the hand edit and [o]verwrite, [k]eep it and skip, or hand it to an [a]gent? ',
+              ['overwrite', 'keep', 'agent'],
+            );
+          }
+          if (choice === 'overwrite') {
+            write(true);
+            result.status = 'overwritten';
+            ctx.say(`Overwrote ${target.path} (the hand edit is in ${backupPath(target.path)})`);
+          } else if (choice === 'keep') {
+            result.status = 'kept';
+            ctx.say(`Kept the hand edit in ${target.path}`);
+          } else if (choice === 'agent') {
+            await handOff(ctx, driftPrompt(target.path, check.diff!));
+            result.status = 'handed-off';
+          } else {
+            result.status = 'drift';
+            if (!ctx.flags.hook) {
+              ctx.say(`\n${target.path} has Drift: it was edited by hand since AgentSync wrote it.\n\n${check.diff}`);
+              ctx.say(
+                'Run `agentsync sync --overwrite` to discard it (a backup is kept), `agentsync sync --keep` to leave it,\nor fold the change into the Template.',
+              );
+            }
+          }
         }
+      } catch (error) {
+        // One Target that cannot be read or written must not stop the others.
+        result.status = 'error';
+        result.error = describeError(error);
+        ctx.warn(`Could not write ${target.path}: ${result.error}`);
       }
     }
-    results.push(result);
+  } finally {
+    // Remember what was written even if something later fails, or the next sync sees false Drift.
+    ctx.save();
   }
-  ctx.save();
 
   data.missingVariables = [...missing].sort();
   for (const name of data.missingVariables) {
@@ -146,8 +158,9 @@ export async function applySync(ctx: Context, payload: SyncPayload): Promise<Out
   if (payload.openConflicts.count > 0 && !ctx.flags.hook) {
     ctx.warn(`${payload.openConflicts.count} open Conflict(s). Resolve them at ${payload.openConflicts.url}`);
   }
+  const failed = results.some((result) => result.status === 'error');
   const drifted = results.some((result) => result.status === 'drift');
-  return { code: drifted ? EXIT.drift : EXIT.ok, data, results };
+  return { code: failed ? EXIT.error : drifted ? EXIT.drift : EXIT.ok, data, results };
 }
 
 /**
@@ -171,6 +184,9 @@ async function hookSync(ctx: Context): Promise<Outcome> {
       );
     }
     if (others.length) parts.push(`updated ${others.map((result) => result.path).join(', ')}`);
+    for (const result of results.filter((result) => result.status === 'error')) {
+      parts.push(`could not write ${result.path}: ${result.error}`);
+    }
     for (const result of results.filter((result) => result.status === 'drift')) {
       parts.push(`${result.path} has Drift (hand edited), so it was skipped; run \`agentsync sync\` to choose what to do`);
     }

@@ -192,7 +192,7 @@ describe('edit', () => {
       expect(result.code).toBe(1);
       expect(readFileSync(draft, 'utf8')).toBe('one\ntheirs\nmine\n');
       const [conflict] = t.server.state.conflicts;
-      expect(result.stderr).toContain(`agentsync conflict resolve ${conflict!.id} ${draft}`);
+      expect(result.stderr).toContain(`agentsync conflict resolve ${conflict!.id} ${draft} --base ${conflict!.serverRevision}`);
     });
   });
 
@@ -216,5 +216,6 @@ describe('edit', () => {
 
     expect(cancelled.code).toBe(0);
     expect(drafts.map((file) => existsSync(file))).toEqual([false, false]);
+    expect(t.questions.at(-1)).toMatch(/\[q\]uit.*discard/);
   });
 });

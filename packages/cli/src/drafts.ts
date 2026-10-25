@@ -5,13 +5,8 @@ import { CliError, describeError, exitCodeFor } from './exit.js';
 import { readText, removeFile, writeText } from './files.js';
 import { configDir } from './paths.js';
 
-/** How to pick an edit up again if saving it fails. */
-export interface Recovery {
-  /** One sentence with the command that saves the kept file, e.g. `agentsync edit --file …`. */
-  hint(file: string): string;
-  /** Added to the `--json` error next to the file's path. */
-  details: Record<string, unknown>;
-}
+/** How to pick an edit up again if saving it fails: one sentence with the command that saves the kept file. */
+export type Recovery = (file: string) => string;
 
 /**
  * Run `use` with a draft file holding `text`, in a private folder of the config directory.
@@ -32,11 +27,10 @@ export async function withDraft<T>(
   try {
     result = await use(file);
   } catch (error) {
-    const details = error instanceof CliError ? error.details : {};
     throw new CliError(
-      `${describeError(error)} Your edit is kept in ${file}. ${recovery.hint(file)}`,
+      `${describeError(error)} Your edit is kept in ${file}. ${recovery(file)}`,
       exitCodeFor(error),
-      { ...details, draft: { file, ...recovery.details } },
+      error instanceof CliError ? error.details : {},
     );
   }
   removeFile(file);

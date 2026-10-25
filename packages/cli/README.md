@@ -59,10 +59,13 @@ Every command takes `--json` (one JSON document on stdout, progress on stderr),
   shown as a removal. A Target that already holds the new Rendered output is not Drift.
   Overwriting a Drifted Target copies it to `<target>.agentsync-backup` first, replacing
   any earlier backup there.
-- **Drafts.** `edit` and fixing a Conflict here work on a draft in
+- **Drafts.** Interactive `edit`, and fixing a Conflict here, work on a draft in
   `~/.config/agentsync/drafts/`. It is deleted once the edit is saved (as a revision or a
   Conflict) or given up. If saving fails, it is kept, and the error names the file and the
-  command that saves it (`--json` puts both under `error.draft`).
+  command that saves it.
+- **Partial failure.** A Target that cannot be read or written gets `status: "error"`, and
+  `sync` still writes the others, remembers them, and exits 1. A new Target file gets the
+  usual mode for your umask.
 - **First run.** When the account has no Template yet, `init` imports `--import <path>`,
   or else the largest existing Target, as revision 1. Every `{{` in it is escaped, so it
   Renders back to exactly the same text. Any other existing file that differs is Drift.

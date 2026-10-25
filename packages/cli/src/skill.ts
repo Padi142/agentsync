@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { Agent } from './agents.js';
 import type { Context } from './context.js';
 import { readText, removeFile, writeText } from './files.js';
@@ -27,6 +28,16 @@ export function installSkill(ctx: Context, agent: Agent): { file: string; writte
   return { file, written: true };
 }
 
+/** Remove the skill's own directory (`skills/agentsync/`) once it is empty. */
+function removeEmptyDir(dir: string): void {
+  try {
+    rmdirSync(dir);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ENOTEMPTY' && code !== 'EEXIST' && code !== 'ENOENT') throw error;
+  }
+}
+
 /** Remove the skill files AgentSync wrote that nobody changed since. */
 export function uninstallSkills(ctx: Context): { removed: string[]; kept: string[] } {
   const removed: string[] = [];
@@ -36,6 +47,7 @@ export function uninstallSkills(ctx: Context): { removed: string[]; kept: string
     if (text === null) continue;
     if (hash(text) === installed) {
       removeFile(file);
+      removeEmptyDir(dirname(file));
       removed.push(file);
     } else {
       kept.push(file);
