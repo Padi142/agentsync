@@ -18,8 +18,17 @@ export const Route = createFileRoute('/_app/machines/$machineId')({
     ]);
     return { machine, variables, history, template };
   },
-  component: MachinePage,
+  component: MachineRoute,
 });
+
+/**
+ * One page per Machine: moving to another Machine (once the unsaved-changes prompt allows it)
+ * starts its forms afresh, while newer revisions of the same Machine keep the page mounted.
+ */
+function MachineRoute() {
+  const { machineId } = Route.useParams();
+  return <MachinePage key={machineId} />;
+}
 
 function MachinePage() {
   const { machine, variables } = Route.useLoaderData();
@@ -156,7 +165,7 @@ function VariablesEditor({ notice, setNotice }: { notice: string; setNotice: (no
       {draft.newer ? (
         <p className="issue warning">
           Revision {draft.newer.revision} was saved while you were editing. Saving now would fail.{' '}
-          <button className="link-button" type="button"
+          <button className="link-button" type="button" disabled={draft.busy}
             onClick={() => draft.newer && window.confirm('Discard your edits?') && draft.load(draft.newer)}>
             Discard my edits and load revision {draft.newer.revision}
           </button>
@@ -169,7 +178,7 @@ function VariablesEditor({ notice, setNotice }: { notice: string; setNotice: (no
             return (
               <div className="variable-row" key={i}>
                 <input
-                  aria-label="Name" placeholder="name" value={row.name}
+                  aria-label="Variable name" placeholder="name" value={row.name}
                   aria-invalid={!!issue} onChange={(e) => update(i, { name: e.target.value })}
                 />
                 <textarea

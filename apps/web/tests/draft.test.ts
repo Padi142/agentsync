@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { begin, edit, end, follow, isDirty, rebase, saved, start } from '../src/draft';
+import { begin, edit, end, follow, isDirty, load, rebase, saved, start } from '../src/draft';
 
 const same = (a: string, b: string) => a === b;
 
@@ -37,5 +37,16 @@ describe('draft', () => {
     const draft = rebase(edit(start({ revision: 6, value: 'marked' }), 'resolved'), 7, 'remerged');
     expect(draft).toMatchObject({ revision: 7, value: 'remerged' });
     expect(isDirty(draft, same)).toBe(true);
+  });
+
+  it('refuses to load another revision while a save is in flight', () => {
+    // "Discard and load" during a save must not unlock editing under the running request.
+    const draft = begin(edit(start({ revision: 1, value: 'base' }), 'sent'));
+    expect(load(draft, { revision: 3, value: 'theirs' })).toBe(draft);
+  });
+
+  it('loads another revision, dropping edits, when idle', () => {
+    const draft = edit(start({ revision: 1, value: 'base' }), 'mine');
+    expect(load(draft, { revision: 3, value: 'theirs' })).toEqual(start({ revision: 3, value: 'theirs' }));
   });
 });

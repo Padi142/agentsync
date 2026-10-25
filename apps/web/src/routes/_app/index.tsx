@@ -90,7 +90,8 @@ function TemplateEditor() {
           <p className="issue warning">
             Revision {draft.newer.revision} was saved while you were editing. Saving keeps your edit
             as a Conflict to merge.{' '}
-            <button className="link-button" type="button" onClick={() => draft.newer && window.confirm('Discard your edits?') && draft.load(draft.newer)}>
+            <button className="link-button" type="button" disabled={draft.busy}
+              onClick={() => draft.newer && window.confirm('Discard your edits?') && draft.load(draft.newer)}>
               Discard my edits and load revision {draft.newer.revision}
             </button>
           </p>

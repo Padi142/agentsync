@@ -40,6 +40,9 @@ export function follow<T>(draft: Draft<T>, loaded: Revisioned<T>, equal: (a: T, 
   return start(loaded);
 }
 
+/** Drop any edits and start again from `next`, but never under a save that is still running. */
+export const load = <T>(draft: Draft<T>, next: Revisioned<T>): Draft<T> => (draft.busy ? draft : start(next));
+
 /** Merged into a newer revision: move the base and replace the value, but keep it unsaved. */
 export const rebase = <T>(draft: Draft<T>, revision: number, value: T): Draft<T> => ({ ...draft, revision, value });
 
@@ -59,8 +62,8 @@ export function useDraft<T>(loaded: Revisioned<T>, equal: (a: T, b: T) => boolea
     /** A newer revision saved elsewhere that the draft didn't take because it has edits. */
     newer: loaded.revision > draft.revision ? loaded : null,
     set: (value: T) => setState((d) => edit(d, value)),
-    /** Drop any edits and start again from `next`. */
-    load: (next: Revisioned<T>) => setState(start(next)),
+    /** Drop any edits and start again from `next`. Ignored while busy. */
+    load: (next: Revisioned<T>) => setState((d) => load(d, next)),
     saved: (revision: number) => setState((d) => saved(d, revision)),
     rebase: (revision: number, value: T) => setState((d) => rebase(d, revision, value)),
     run: async <R>(task: (value: T, revision: number) => Promise<R>): Promise<R> => {
