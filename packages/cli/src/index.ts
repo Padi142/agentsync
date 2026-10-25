@@ -1,24 +1,65 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import { accessSync, constants, realpathSync } from 'node:fs';
+import { homedir, hostname } from 'node:os';
+import { delimiter, join } from 'node:path';
+import { createInterface } from 'node:readline/promises';
+import { run } from './cli.js';
+import type { Io } from './io.js';
 
-const command = process.argv[2] ?? 'help';
+const quote = (value: string) =>
+  process.platform === 'win32' ? `"${value}"` : `'${value.replaceAll("'", `'\\''`)}'`;
 
-if (command === 'help' || command === '--help' || command === '-h') {
-  console.log(`AgentSync CLI (scaffold)
-
-Usage:
-  agentsync init       Show the future setup flow
-  agentsync status     Show the future local status
-  agentsync sync       Show the future sync flow
-
-The sync engine and hook integration are not implemented yet.`);
-} else if (command === '--version' || command === '-v') {
-  console.log('0.1.0');
-} else if (command === 'init' || command === 'status' || command === 'sync') {
-  console.error(
-    `AgentSync ${command} is not implemented in this scaffold. No files were changed.`,
-  );
-  process.exitCode = 2;
-} else {
-  console.error(`Unknown command: ${command}. Run agentsync --help.`);
-  process.exitCode = 1;
+/**
+ * How hooks should start this CLI: plain `agentsync` when it is installed on PATH, else this
+ * exact Node and script. `npx` puts a temporary directory on PATH, which does not count.
+ */
+function selfCommand(): string {
+  const name = process.platform === 'win32' ? 'agentsync.cmd' : 'agentsync';
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    if (!dir || dir.includes('_npx')) continue;
+    try {
+      accessSync(join(dir, name), constants.X_OK);
+      return 'agentsync';
+    } catch {}
+  }
+  return `${quote(process.execPath)} ${quote(realpathSync(process.argv[1]!))}`;
 }
+
+function wait(command: string, args: string[], shell: boolean): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: 'inherit', shell });
+    child.on('error', reject);
+    child.on('exit', (code) =>
+      code === 0 ? resolve() : reject(new Error(`${command.split(' ')[0]} exited with code ${code}.`)),
+    );
+  });
+}
+
+const io: Io = {
+  home: homedir(),
+  env: process.env,
+  hostname: hostname().replace(/\.local$/, ''),
+  platform: process.platform,
+  fetch: globalThis.fetch,
+  interactive: !!process.stdin.isTTY && !!process.stdout.isTTY,
+  out: (text) => process.stdout.write(`${text}\n`),
+  err: (text) => process.stderr.write(`${text}\n`),
+  async ask(question) {
+    const readline = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      return (await readline.question(question)).trim();
+    } finally {
+      readline.close();
+    }
+  },
+  // $EDITOR may carry arguments, such as `code --wait`, so it runs through the shell.
+  edit: (file) => wait(`${process.env.VISUAL || process.env.EDITOR || 'vi'} ${quote(file)}`, [], true),
+  launchAgent: (agent, prompt) => wait(agent, [prompt], false),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  get self() {
+    return selfCommand();
+  },
+};
+
+process.exitCode = await run(process.argv.slice(2), io);
