@@ -117,6 +117,17 @@ describe('AuthKit routes', () => {
       expect(res.headers.get('Location'), returnTo).toBe('/');
     }
   });
+  it('drops an oversized return path, so the login cookie stays small enough for every browser', async () => {
+    const { res, cookie, state } = await login(`/${'a'.repeat(5000)}`);
+    const setCookie = res.headers.getSetCookie().find((c) => c.startsWith('wos-login='))!;
+    expect(setCookie.length).toBeLessThan(1024);
+    expect((await callback(cookie, `code=code&state=${state}`)).headers.get('Location')).toBe('/');
+  });
+  it('still returns to a long but reasonable path', async () => {
+    const path = `/${'a'.repeat(511)}`; // 512 characters
+    const { cookie, state } = await login(path);
+    expect((await callback(cookie, `code=code&state=${state}`)).headers.get('Location')).toBe(path);
+  });
   it('keeps the return path when sending a login on another origin to the app origin', async () => {
     const res = await api.request(`http://elsewhere.test/login?returnTo=${encodeURIComponent('/conflicts/abc')}`, {}, env);
     expect(res.headers.get('Location')).toBe(`${origin}/login?returnTo=%2Fconflicts%2Fabc`);

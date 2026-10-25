@@ -131,4 +131,41 @@ describe('a rollback that finishes after another revision was selected', () => {
     expect(router.state.location.search).toEqual({ revision: 2 });
     expect(screen.getByText('Restored revision 1 as revision 4.')).toBeTruthy();
   });
+
+  it('keeps a selection whose page is still loading when the rollback finishes', async () => {
+    rpc.template.get.mockResolvedValue({ revision: 3, text: 'text 3', updatedAt: null });
+    rpc.template.history.mockResolvedValue([3, 2, 1].map((revision) => ({ revision, createdAt: new Date(0) })));
+    const router = await open('/history?revision=1');
+    const rollback = deferred<unknown>();
+    rpc.template.rollback.mockReturnValue(rollback.promise);
+    fireEvent.click(await screen.findByRole('button', { name: 'Roll back to this revision' }));
+
+    // Select revision 2, whose loader is still waiting for the server when the rollback lands.
+    const revision2 = deferred<unknown>();
+    const load = rpc.template.revision.getMockImplementation()!;
+    rpc.template.revision.mockImplementation(({ revision }: { revision: number }) =>
+      revision === 2 ? revision2.promise : load({ revision }));
+    let selecting!: Promise<void>;
+    act(() => { selecting = router.navigate({ to: '/history', search: { revision: 2 } }); });
+    await act(async () => rollback.resolve({ revision: 4, text: 'text 1', updatedAt: null }));
+    await act(async () => {
+      revision2.resolve({ revision: 2, text: 'text 2', createdAt: new Date(0) });
+      await selecting;
+    });
+    rpc.template.revision.mockImplementation(load);
+
+    expect(router.state.location.search).toEqual({ revision: 2 });
+  });
+
+  it('opens the new revision when the user stayed on the rolled-back one', async () => {
+    rpc.template.get.mockResolvedValue({ revision: 3, text: 'text 3', updatedAt: null });
+    rpc.template.history.mockResolvedValue([3, 2, 1].map((revision) => ({ revision, createdAt: new Date(0) })));
+    const router = await open('/history?revision=1');
+    rpc.template.rollback.mockResolvedValue({ revision: 4, text: 'text 1', updatedAt: null });
+    await act(async () => fireEvent.click(await screen.findByRole('button', { name: 'Roll back to this revision' })));
+    await act(() => router.load());
+
+    expect(router.state.location.search).toEqual({ revision: 4 });
+  });
 });
+
