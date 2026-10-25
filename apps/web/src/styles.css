@@ -45,6 +45,9 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 *,
@@ -59,6 +62,11 @@ body {
   min-height: 100dvh;
 }
 
+/* In landscape, keep content out from under the notch. */
+main {
+  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
 button,
 input,
 select,
@@ -69,9 +77,21 @@ textarea {
   letter-spacing: inherit;
 }
 
+/* Controls react to the press at once, and a long press doesn't select their label. */
 button,
-a {
-  -webkit-tap-highlight-color: transparent;
+a,
+summary {
+  touch-action: manipulation;
+}
+
+button,
+.button,
+.nav a,
+.tabs a,
+summary {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 a {
@@ -81,8 +101,10 @@ a {
   text-underline-offset: 3px;
 }
 
-a:hover {
-  text-decoration-color: currentColor;
+@media (hover: hover) and (pointer: fine) {
+  a:hover {
+    text-decoration-color: currentColor;
+  }
 }
 
 :focus-visible {
@@ -156,7 +178,7 @@ p {
   align-items: center;
   gap: 28px;
   height: var(--topbar);
-  padding: 0 20px;
+  padding: 0 max(20px, env(safe-area-inset-right)) 0 max(20px, env(safe-area-inset-left));
   background: var(--sheet);
   border-bottom: 1px solid var(--rule);
 }
@@ -189,8 +211,10 @@ p {
   text-decoration: none;
 }
 
-.nav a:hover {
-  color: var(--ink);
+@media (hover: hover) and (pointer: fine) {
+  .nav a:hover {
+    color: var(--ink);
+  }
 }
 
 .nav a[data-status='active'],
@@ -310,8 +334,10 @@ p {
   text-decoration: none;
 }
 
-.back-link:hover {
-  color: var(--ink);
+@media (hover: hover) and (pointer: fine) {
+  .back-link:hover {
+    color: var(--ink);
+  }
 }
 
 /* ---------- Controls ---------- */
@@ -335,12 +361,26 @@ p {
   transition: transform 120ms var(--ease-out), background-color 120ms;
 }
 
-.button:hover:not(:disabled) {
-  background: #2d2f3d;
+@media (hover: hover) and (pointer: fine) {
+  .button:hover:not(:disabled) {
+    background: #2d2f3d;
+  }
 }
 
 .button:active:not(:disabled) {
   transform: scale(0.97);
+}
+
+.button.secondary:active:not(:disabled),
+.icon-button:active,
+.copy-button:active,
+.code-block .copy-button:active,
+.row-link:active,
+.revision-link:active,
+.nav a:active,
+.tabs a:active,
+.docs-nav a:active {
+  background: var(--hover);
 }
 
 .button:disabled {
@@ -354,8 +394,10 @@ p {
   color: var(--ink);
 }
 
-.button.secondary:hover:not(:disabled) {
-  background: var(--hover);
+@media (hover: hover) and (pointer: fine) {
+  .button.secondary:hover:not(:disabled) {
+    background: var(--hover);
+  }
 }
 
 .button.danger {
@@ -364,8 +406,10 @@ p {
   color: var(--red);
 }
 
-.button.danger:hover:not(:disabled) {
-  background: var(--red-wash);
+@media (hover: hover) and (pointer: fine) {
+  .button.danger:hover:not(:disabled) {
+    background: var(--red-wash);
+  }
 }
 
 .button.small {
@@ -386,8 +430,10 @@ p {
   cursor: pointer;
 }
 
-.link-button:hover:not(:disabled) {
-  text-decoration-color: currentColor;
+@media (hover: hover) and (pointer: fine) {
+  .link-button:hover:not(:disabled) {
+    text-decoration-color: currentColor;
+  }
 }
 
 .link-button:disabled {
@@ -411,10 +457,12 @@ p {
   transition: background-color 120ms, color 120ms;
 }
 
-.icon-button:hover,
-.copy-button:hover {
-  background: var(--hover);
-  color: var(--ink);
+@media (hover: hover) and (pointer: fine) {
+  .icon-button:hover,
+  .copy-button:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
 }
 
 .copy-button[data-copied],
@@ -645,6 +693,7 @@ kbd {
   margin: 0;
   padding: 14px;
   overflow: auto;
+  overscroll-behavior: contain;
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -687,8 +736,10 @@ kbd {
   text-decoration: none;
 }
 
-.tabs a:hover {
-  color: var(--ink);
+@media (hover: hover) and (pointer: fine) {
+  .tabs a:hover {
+    color: var(--ink);
+  }
 }
 
 .tabs a[data-status='active'] {
@@ -1211,6 +1262,7 @@ mark.machine-value {
   font-size: 13px;
   line-height: 1.6;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
 }
 
 .code-block .copy-button {
@@ -1220,12 +1272,15 @@ mark.machine-value {
   background: var(--code-bg, var(--paper));
 }
 
-.code-block .copy-button:hover {
-  background: var(--hover);
+@media (hover: hover) and (pointer: fine) {
+  .code-block .copy-button:hover {
+    background: var(--hover);
+  }
 }
 
 .table-scroll {
   overflow-x: auto;
+  overscroll-behavior-x: contain;
 }
 
 .prose table {
@@ -1273,8 +1328,10 @@ mark.machine-value {
   text-decoration: none;
 }
 
-.row-link:hover {
-  background: var(--hover);
+@media (hover: hover) and (pointer: fine) {
+  .row-link:hover {
+    background: var(--hover);
+  }
 }
 
 .machine-row {
@@ -1416,8 +1473,10 @@ mark.machine-value {
   letter-spacing: -0.02em;
 }
 
-.nickname-input:hover {
-  border-color: var(--rule);
+@media (hover: hover) and (pointer: fine) {
+  .nickname-input:hover {
+    border-color: var(--rule);
+  }
 }
 
 .nickname-input:focus {
@@ -1526,9 +1585,11 @@ fieldset.variables-table {
   font-size: 13px;
 }
 
-.variable-row .input:hover,
-.variable-row .textarea:hover {
-  border-color: var(--rule);
+@media (hover: hover) and (pointer: fine) {
+  .variable-row .input:hover,
+  .variable-row .textarea:hover {
+    border-color: var(--rule);
+  }
 }
 
 .variable-row .textarea {
@@ -1616,6 +1677,7 @@ fieldset.variables-table {
   top: calc(var(--topbar) + var(--toolbar));
   max-height: calc(100dvh - var(--topbar) - var(--toolbar));
   overflow: auto;
+  overscroll-behavior: contain;
   margin: 0;
   padding: 12px;
   list-style: none;
@@ -1630,8 +1692,10 @@ fieldset.variables-table {
   text-decoration: none;
 }
 
-.revision-link:hover {
-  background: var(--hover);
+@media (hover: hover) and (pointer: fine) {
+  .revision-link:hover {
+    background: var(--hover);
+  }
 }
 
 .revision-link.active {
@@ -1983,9 +2047,11 @@ fieldset.variables-table {
   text-decoration: none;
 }
 
-.docs-nav a:hover {
-  background: var(--hover);
-  color: var(--ink);
+@media (hover: hover) and (pointer: fine) {
+  .docs-nav a:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
 }
 
 .docs-nav a[data-status='active'] {
@@ -2278,7 +2344,7 @@ fieldset.variables-table {
 @media (max-width: 640px) {
   .topbar {
     gap: 12px;
-    padding: 0 12px;
+    padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
   }
 
   .brand span {
@@ -2328,11 +2394,6 @@ fieldset.variables-table {
     padding: 12px;
   }
 
-  .editor {
-    font-size: 16px;
-    --line: 24px;
-  }
-
   .editor-backdrop,
   .editor-input,
   .editor-measure {
@@ -2364,14 +2425,31 @@ fieldset.variables-table {
     display: none;
   }
 
+  .landing {
+    padding-top: 40px;
+  }
+}
+
+/* iOS zooms into a field whose text is under 16px, and stays zoomed. */
+@media (pointer: coarse) {
   .input,
   .select,
-  .textarea {
+  .select.small,
+  .textarea,
+  .variable-row .input,
+  .variable-row .textarea {
     font-size: 16px;
   }
 
-  .landing {
-    padding-top: 40px;
+  .editor {
+    font-size: 16px;
+    --line: 24px;
+  }
+
+  /* Without hover to reveal them, the Variable fields need their edges. */
+  .variable-row .input,
+  .variable-row .textarea {
+    border-color: var(--rule);
   }
 }
 

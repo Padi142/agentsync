@@ -38,7 +38,9 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
+      { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content' },
+      // The topbar's white; the app has no dark theme.
+      { name: 'theme-color', content: '#ffffff' },
       { title: 'AgentSync' },
     ],
     links: [{ rel: 'stylesheet', href: appCss }],
