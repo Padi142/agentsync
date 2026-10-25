@@ -4,6 +4,7 @@ import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, Link, useBlocker, useRouter } from '@tanstack/react-router';
 import { useState } from 'react';
 import { CodeEditor, type LineMark } from '../../components/CodeEditor';
+import { useDraft } from '../../draft';
 import { rpc } from '../../rpc';
 
 export const Route = createFileRoute('/_app/')({
@@ -19,13 +20,14 @@ function TemplateEditor() {
   const { template, machines, variables } = Route.useLoaderData();
   const router = useRouter();
   const navigate = Route.useNavigate();
-  const [text, setText] = useState(template.text);
+  // The draft saves against its own base revision, never the loader's, so a revision saved
+  // elsewhere can't be overwritten by text that was never merged with it.
+  const draft = useDraft({ revision: template.revision, value: template.text });
+  const text = draft.value;
   const [notice, setNotice] = useState('');
-  const [saving, setSaving] = useState(false);
-  const dirty = text !== template.text;
   useBlocker({
-    shouldBlockFn: () => dirty && !window.confirm('Leave without saving your Template changes?'),
-    enableBeforeUnload: () => dirty,
+    shouldBlockFn: () => draft.dirty && !window.confirm('Leave without saving your Template changes?'),
+    enableBeforeUnload: () => draft.dirty,
   });
 
   const error = validate(text);
@@ -46,29 +48,28 @@ function TemplateEditor() {
     ...(preview?.warnings.map((w) => ({ line: w.line, kind: 'warning' as const, message: w.message })) ?? []),
   ];
 
-  const save = async () => {
-    setSaving(true);
+  const save = () => draft.run(async (text, revision) => {
     setNotice('');
-    const [failure, saved] = await safe(rpc.template.put({ text, expectedRevision: template.revision }));
+    const [failure, saved] = await safe(rpc.template.put({ text, expectedRevision: revision }));
     if (!failure) {
-      await router.invalidate();
+      draft.saved(saved.revision);
       setNotice(`Saved revision ${saved.revision}.`);
+      await router.invalidate();
     } else if (isDefinedError(failure) && failure.code === 'CONFLICT') {
       // Someone saved first. Keep this edit as a Conflict and merge it on the resolver.
-      const [error, conflict] = await safe(rpc.conflicts.create({ baseRevision: template.revision, text }));
-      if (!error) {
-        // The edit now lives in the Conflict, so leaving is safe.
-        await navigate({ to: '/conflicts/$conflictId', params: { conflictId: conflict.id }, ignoreBlocker: true });
+      const [error, conflict] = await safe(rpc.conflicts.create({ baseRevision: revision, text }));
+      if (error) {
+        setNotice('The Template changed since you opened it, and keeping your edit as a Conflict failed. Copy your text before reloading.');
         return;
       }
-      setNotice('The Template changed since you opened it, and keeping your edit as a Conflict failed. Copy your text before reloading.');
+      // Editing was paused during the save, so the Conflict holds every edit and leaving is safe.
+      await navigate({ to: '/conflicts/$conflictId', params: { conflictId: conflict.id }, ignoreBlocker: true });
     } else if (isDefinedError(failure) && failure.code === 'INVALID_TEMPLATE') {
       setNotice(failure.data.issues.map((i) => `Line ${i.line}: ${i.message}`).join(' '));
     } else {
       setNotice('Saving failed. Please try again.');
     }
-    setSaving(false);
-  };
+  });
 
   return (
     <div className="split">
@@ -77,15 +78,24 @@ function TemplateEditor() {
           <div>
             <h1>Template</h1>
             <p className="muted">
-              {template.revision ? `Revision ${template.revision}` : 'Not saved yet'}
-              {dirty ? ' · unsaved changes' : ''}
+              {draft.revision ? `Revision ${draft.revision}` : 'Not saved yet'}
+              {draft.dirty ? ' · unsaved changes' : ''}
             </p>
           </div>
-          <button className="button" type="button" onClick={save} disabled={!dirty || !!error || saving}>
-            {saving ? 'Saving…' : 'Save'}
+          <button className="button" type="button" onClick={save} disabled={!draft.dirty || !!error || draft.busy}>
+            {draft.busy ? 'Saving…' : 'Save'}
           </button>
         </div>
-        <CodeEditor label="Template" value={text} onChange={setText} marks={marks} rows={24} />
+        {draft.newer ? (
+          <p className="issue warning">
+            Revision {draft.newer.revision} was saved while you were editing. Saving keeps your edit
+            as a Conflict to merge.{' '}
+            <button className="link-button" type="button" onClick={() => draft.newer && window.confirm('Discard your edits?') && draft.load(draft.newer)}>
+              Discard my edits and load revision {draft.newer.revision}
+            </button>
+          </p>
+        ) : null}
+        <CodeEditor label="Template" value={text} onChange={draft.set} marks={marks} rows={24} readOnly={draft.busy} />
         {error ? (
           <p className="issue error" role="alert">Line {error.line}, column {error.column}: {error.message}</p>
         ) : null}

@@ -4,6 +4,7 @@ import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, useBlocker, useRouter } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { Diff } from '../../components/Diff';
+import { useDraft } from '../../draft';
 import { formatTime } from '../../format';
 import { rpc } from '../../rpc';
 
@@ -71,8 +72,7 @@ function MachinePage() {
         </ul>
         {machineNotice ? <p className="notice" role="status">{machineNotice}</p> : null}
       </section>
-      {/* A new revision, saved here or restored from history, starts the form afresh. */}
-      <VariablesEditor key={variables.revision} notice={notice} setNotice={setNotice} />
+      <VariablesEditor notice={notice} setNotice={setNotice} />
       <VariablesHistory setNotice={setNotice} />
     </div>
   );
@@ -81,15 +81,19 @@ function MachinePage() {
 type Row = { name: string; value: string };
 const toRows = (map: VariableMap): Row[] => Object.entries(map).map(([name, value]) => ({ name, value }));
 const toMap = (rows: Row[]): VariableMap => Object.fromEntries(rows.map((r) => [r.name.trim(), r.value]));
+const sameRows = (a: Row[], b: Row[]) => JSON.stringify(a) === JSON.stringify(b);
 
 function VariablesEditor({ notice, setNotice }: { notice: string; setNotice: (notice: string) => void }) {
   const { machine, variables, template } = Route.useLoaderData();
   const router = useRouter();
-  const [rows, setRows] = useState(() => toRows(variables.variables));
-  const dirty = JSON.stringify(toMap(rows)) !== JSON.stringify(variables.variables);
+  // Saved here, restored from history or changed elsewhere: a newer revision replaces the
+  // form only while it has no unsaved edits.
+  const draft = useDraft({ revision: variables.revision, value: toRows(variables.variables) }, sameRows);
+  const rows = draft.value;
+  const setRows = draft.set;
   useBlocker({
-    shouldBlockFn: () => dirty && !window.confirm('Leave without saving your Variable changes?'),
-    enableBeforeUnload: () => dirty,
+    shouldBlockFn: () => draft.dirty && !window.confirm('Leave without saving your Variable changes?'),
+    enableBeforeUnload: () => draft.dirty,
   });
 
   const names = rows.map((r) => r.name.trim());
@@ -105,22 +109,26 @@ function VariablesEditor({ notice, setNotice }: { notice: string; setNotice: (no
   const update = (i: number, patch: Partial<Row>) =>
     setRows(rows.map((row, j) => (j === i ? { ...row, ...patch } : row)));
 
-  const save = async (event: FormEvent) => {
+  const save = (event: FormEvent) => {
     event.preventDefault();
-    setNotice('');
-    const [error, saved] = await safe(rpc.variables.put({
-      machineId: machine.id, variables: toMap(rows), expectedRevision: variables.revision,
-    }));
-    if (!error) {
-      setNotice(`Saved revision ${saved.revision}.`);
-      await router.invalidate();
-    } else if (isDefinedError(error) && error.code === 'CONFLICT') {
-      setNotice(`These Variables were changed elsewhere (now revision ${error.data.currentRevision}). Reload them and make your change again.`);
-    } else if (isDefinedError(error) && error.code === 'INVALID_VARIABLE_NAME') {
+    return draft.run(async (rows, revision) => {
+      setNotice('');
+      const [error, saved] = await safe(rpc.variables.put({
+        machineId: machine.id, variables: toMap(rows), expectedRevision: revision,
+      }));
+      if (!error) {
+        draft.saved(saved.revision);
+        setNotice(`Saved revision ${saved.revision}.`);
+        await router.invalidate();
+      } else if (isDefinedError(error) && error.code === 'CONFLICT') {
+        setNotice('These Variables were changed elsewhere. Your edits are kept below.');
+        await router.invalidate(); // Learn the newer revision, so the form can offer to load it.
+      } else if (isDefinedError(error) && error.code === 'INVALID_VARIABLE_NAME') {
       setNotice(`Invalid names: ${error.data.names.join(', ')}.`);
-    } else {
-      setNotice('Saving failed. Please try again.');
-    }
+      } else {
+        setNotice('Saving failed. Please try again.');
+      }
+    });
   };
 
   return (
@@ -129,7 +137,7 @@ function VariablesEditor({ notice, setNotice }: { notice: string; setNotice: (no
         <div>
           <h2>Variables</h2>
           <p className="muted">
-            {variables.revision ? `Revision ${variables.revision}` : 'None saved yet'} · substituted for{' '}
+            {draft.revision ? `Revision ${draft.revision}` : 'None saved yet'} · substituted for{' '}
             <code>{'{{name}}'}</code> when Rendering on this Machine
           </p>
         </div>
@@ -138,47 +146,54 @@ function VariablesEditor({ notice, setNotice }: { notice: string; setNotice: (no
         <p className="issue warning">
           The Template uses {missing.length === 1 ? 'a Variable' : 'Variables'} this Machine doesn't set:{' '}
           {missing.map((name) => (
-            <button key={name} className="chip" type="button" onClick={() => setRows([...rows, { name, value: '' }])}>
+            <button key={name} className="chip" type="button" disabled={draft.busy}
+              onClick={() => setRows([...rows, { name, value: '' }])}>
               + {name}
             </button>
           ))}
         </p>
       ) : null}
-      <form className="variables" onSubmit={save}>
-        {rows.map((row, i) => {
-          const issue = row.name || row.value ? problem(names[i], i) : null;
-          return (
-            <div className="variable-row" key={i}>
-              <input
-                aria-label="Name" placeholder="name" value={row.name}
-                aria-invalid={!!issue} onChange={(e) => update(i, { name: e.target.value })}
-              />
-              <textarea
-                aria-label={`Value of ${row.name || 'new Variable'}`} placeholder="value" value={row.value}
-                rows={Math.min(6, row.value.split('\n').length)} onChange={(e) => update(i, { value: e.target.value })}
-              />
-              <button className="link-button" type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
-                Remove
-              </button>
-              {issue ? <p className="field-issue">{issue}</p> : null}
-            </div>
-          );
-        })}
-        <div className="actions">
-          <button className="button secondary" type="button" onClick={() => setRows([...rows, { name: '', value: '' }])}>
-            Add Variable
+      {draft.newer ? (
+        <p className="issue warning">
+          Revision {draft.newer.revision} was saved while you were editing. Saving now would fail.{' '}
+          <button className="link-button" type="button"
+            onClick={() => draft.newer && window.confirm('Discard your edits?') && draft.load(draft.newer)}>
+            Discard my edits and load revision {draft.newer.revision}
           </button>
-          <button className="button" type="submit" disabled={!dirty || invalid}>Save Variables</button>
-        </div>
-      </form>
-      {notice ? (
-        <p className="notice" role="status">
-          {notice}{' '}
-          {notice.startsWith('These Variables') ? (
-            <button className="link-button" type="button" onClick={() => router.invalidate()}>Reload</button>
-          ) : null}
         </p>
       ) : null}
+      <form onSubmit={save}>
+        <fieldset className="variables" disabled={draft.busy}>
+          {rows.map((row, i) => {
+            const issue = row.name || row.value ? problem(names[i], i) : null;
+            return (
+              <div className="variable-row" key={i}>
+                <input
+                  aria-label="Name" placeholder="name" value={row.name}
+                  aria-invalid={!!issue} onChange={(e) => update(i, { name: e.target.value })}
+                />
+                <textarea
+                  aria-label={`Value of ${row.name || 'new Variable'}`} placeholder="value" value={row.value}
+                  rows={Math.min(6, row.value.split('\n').length)} onChange={(e) => update(i, { value: e.target.value })}
+                />
+                <button className="link-button" type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+                  Remove
+                </button>
+                {issue ? <p className="field-issue">{issue}</p> : null}
+              </div>
+            );
+          })}
+          <div className="actions">
+            <button className="button secondary" type="button" onClick={() => setRows([...rows, { name: '', value: '' }])}>
+              Add Variable
+            </button>
+            <button className="button" type="submit" disabled={!draft.dirty || invalid}>
+              {draft.busy ? 'Saving…' : 'Save Variables'}
+            </button>
+          </div>
+        </fieldset>
+      </form>
+      {notice ? <p className="notice" role="status">{notice}</p> : null}
     </section>
   );
 }

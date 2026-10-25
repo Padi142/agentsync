@@ -575,6 +575,13 @@ textarea {
 
 /* Variables */
 
+fieldset {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
 .variables {
   display: grid;
   gap: 10px;

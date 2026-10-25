@@ -10,12 +10,13 @@ export interface LineMark {
  * A plain textarea with a line-number gutter. Marked lines are highlighted in the gutter.
  * Lines don't wrap, so gutter numbers stay aligned with the text.
  */
-export function CodeEditor({ value, onChange, marks = [], label, rows = 20 }: {
+export function CodeEditor({ value, onChange, marks = [], label, rows = 20, readOnly = false }: {
   value: string;
   onChange: (value: string) => void;
   marks?: LineMark[];
   label: string;
   rows?: number;
+  readOnly?: boolean;
 }) {
   const gutter = useRef<HTMLDivElement>(null);
   const lineCount = value.split('\n').length;
@@ -41,6 +42,7 @@ export function CodeEditor({ value, onChange, marks = [], label, rows = 20 }: {
         }}
         wrap="off"
         spellCheck={false}
+        readOnly={readOnly}
       />
     </div>
   );
