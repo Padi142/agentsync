@@ -39,6 +39,8 @@ runtime dependencies and runs in Node, Workers, and the browser.
 ```ts
 render(template, { variables, builtins: { machine: { hostname, nickname, os }, agent } });
 // → { text, warnings }; throws TemplateSyntaxError if malformed
+render(template, context, { mark: (value, name) => `<${value}>` });
+// wraps each substituted value, e.g. to highlight it in a preview; conditions still compare the bare value
 validate(template); // → { line, column, message } | null
 referencedVariables(template); // → Machine Variable names used in any branch
 hasConflictMarkers(text); // → true if <<<<<<< / ||||||| / >>>>>>> lines remain

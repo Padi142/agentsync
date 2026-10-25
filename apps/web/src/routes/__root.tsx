@@ -8,6 +8,8 @@ import {
   useRouterState,
 } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
+import { BrandMark } from '../components/Icon';
+import { loginHref } from '../login';
 import { rpc } from '../rpc';
 import appCss from '../styles.css?url';
 
@@ -42,41 +44,60 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   }),
   shellComponent: DocumentShell,
   component: Layout,
-  pendingComponent: () => <p className="muted page">Loading…</p>,
+  pendingComponent: () => <p className="page-loading">Loading…</p>,
 });
 
 function Layout() {
   const { user, openConflicts } = Route.useRouteContext();
   const loading = useRouterState({ select: (state) => state.status === 'pending' });
+  const path = useRouterState({ select: (state) => state.location.pathname });
   return (
     <>
+      {loading ? <div className="loading-bar" aria-hidden="true" /> : null}
       <header className="topbar">
-        <Link className="brand" to="/">
-          <span className="brand-mark" aria-hidden="true">/</span>
-          AgentSync
+        <Link className="brand" to="/" aria-label="AgentSync">
+          <BrandMark />
+          <span>AgentSync</span>
         </Link>
-        {user ? (
-          <nav className="nav">
-            <Link to="/" activeOptions={{ exact: true }}>Template</Link>
-            <Link to="/machines">Machines</Link>
-            <Link to="/history">History</Link>
-            <Link to="/conflicts">
-              Conflicts
-              {openConflicts ? <span className="badge">{openConflicts}</span> : null}
-            </Link>
-            <Link to="/setup">Setup</Link>
-            <form action="/logout" method="post">
-              <button className="link-button" type="submit" title={user.email}>Sign out</button>
-            </form>
-          </nav>
-        ) : null}
+        <nav className="nav" aria-label="Main">
+          {user ? (
+            <>
+              <Link to="/" activeOptions={{ exact: true }}
+                className={isTemplatePath(path) ? 'active' : undefined}>Template</Link>
+              <Link to="/machines">Machines</Link>
+            </>
+          ) : null}
+          <Link to="/docs">Docs</Link>
+        </nav>
+        <div className="topbar-end">
+          {user ? (
+            <>
+              {/* On the Template's own views, its Conflicts tab shows the count. */}
+              {openConflicts && !isTemplatePath(path) ? (
+                <Link className="conflict-pill" to="/conflicts">
+                  <span className="count">{openConflicts}</span>
+                  {openConflicts === 1 ? 'Conflict' : 'Conflicts'}
+                </Link>
+              ) : null}
+              <span className="account" title={user.name}>{user.email}</span>
+              <form action="/logout" method="post">
+                <button className="button secondary small" type="submit">Sign out</button>
+              </form>
+            </>
+          ) : path === '/signin' ? null : (
+            <a className="button small" href={loginHref(undefined)}>Sign in</a>
+          )}
+        </div>
       </header>
-      <main className="page" aria-busy={loading}>
+      <main aria-busy={loading}>
         <Outlet />
       </main>
     </>
   );
 }
+
+/** History and Conflicts are views of the Template, so its nav item stays lit on them. */
+const isTemplatePath = (path: string) => path === '/' || path.startsWith('/history') || path.startsWith('/conflicts');
 
 function DocumentShell({ children }: { children: ReactNode }) {
   return (

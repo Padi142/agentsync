@@ -20,7 +20,15 @@ export interface RenderResult {
   warnings: RenderWarning[];
 }
 
-export function render(template: string, context: RenderContext): RenderResult {
+export interface RenderOptions {
+  /**
+   * Wraps the text each substitution produces, e.g. to highlight it in a preview.
+   * Conditions still compare the bare value, and a missing Variable's empty text is not wrapped.
+   */
+  mark?: (value: string, name: string) => string;
+}
+
+export function render(template: string, context: RenderContext, options: RenderOptions = {}): RenderResult {
   const warnings: RenderWarning[] = [];
   const resolve = (reference: Reference): string => {
     const value = lookup(reference.name, context);
@@ -38,7 +46,10 @@ export function render(template: string, context: RenderContext): RenderResult {
     nodes
       .map((node) => {
         if (node.type === 'text') return node.value;
-        if (node.type === 'variable') return resolve(node);
+        if (node.type === 'variable') {
+          const value = resolve(node);
+          return options.mark && value ? options.mark(value, node.name) : value;
+        }
         const equal = resolve(node) === node.value;
         return renderNodes(
           equal === (node.operator === '==') ? node.then : node.else,

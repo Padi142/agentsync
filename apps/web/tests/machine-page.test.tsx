@@ -42,6 +42,18 @@ describe('Machine page', () => {
     expect(put).toHaveBeenCalledWith({ machineId: 'b', variables: { editor: 'nano' }, expectedRevision: 1 });
   });
 
+  it('saves with a blank row still open, and leaves the blank row out', async () => {
+    routeMocks.params = { machineId: 'a' };
+    routeMocks.loaderData = machine('a', 'laptop-a', 'helix');
+    render(<MachineRoute />);
+    fireEvent.change(screen.getByLabelText('Value of editor'), { target: { value: 'zed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Variable' }));
+
+    put.mockResolvedValue({ machineId: 'a', variables: { editor: 'zed' }, revision: 2 });
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save Variables' })));
+    expect(put).toHaveBeenLastCalledWith({ machineId: 'a', variables: { editor: 'zed' }, expectedRevision: 1 });
+  });
+
   it('keeps unsaved Variable edits when the same Machine loads a newer revision', () => {
     routeMocks.params = { machineId: 'a' };
     routeMocks.loaderData = machine('a', 'laptop-a', 'helix');
@@ -61,11 +73,12 @@ describe('Machine page', () => {
     routeMocks.loaderData = machine('a', 'laptop-a', 'helix');
     render(<MachineRoute />);
     const input = screen.getByLabelText<HTMLInputElement>('Nickname');
-    const save = screen.getByRole<HTMLButtonElement>('button', { name: 'Save nickname' });
-    expect(save.disabled).toBe(true);
+    // Nothing to save until the nickname changes.
+    expect(screen.queryByRole('button', { name: 'Save nickname' })).toBeNull();
 
     update.mockRejectedValueOnce(new Error('offline'));
     fireEvent.change(input, { target: { value: '  Work laptop ' } });
+    const save = screen.getByRole<HTMLButtonElement>('button', { name: 'Save nickname' });
     await act(async () => fireEvent.click(save));
     expect(update).toHaveBeenCalledWith({ machineId: 'a', nickname: 'Work laptop' });
     expect(input.value).toBe('  Work laptop ');

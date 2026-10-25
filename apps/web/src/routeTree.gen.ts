@@ -10,10 +10,13 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
+import { Route as DocsRouteImport } from './routes/docs'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppHistoryRouteImport } from './routes/_app/history'
 import { Route as AppSetupRouteImport } from './routes/_app/setup'
+import { Route as DocsIndexRouteImport } from './routes/docs.index'
+import { Route as DocsPageRouteImport } from './routes/docs.$page'
 import { Route as AppConflictsIndexRouteImport } from './routes/_app/conflicts.index'
 import { Route as AppConflictsConflictIdRouteImport } from './routes/_app/conflicts.$conflictId'
 import { Route as AppMachinesIndexRouteImport } from './routes/_app/machines.index'
@@ -21,6 +24,11 @@ import { Route as AppMachinesMachineIdRouteImport } from './routes/_app/machines
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsRoute = DocsRouteImport.update({
+  id: '/docs',
+  path: '/docs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SigninRoute = SigninRouteImport.update({
@@ -42,6 +50,16 @@ const AppSetupRoute = AppSetupRouteImport.update({
   id: '/setup',
   path: '/setup',
   getParentRoute: () => AppRoute,
+} as any)
+const DocsIndexRoute = DocsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsPageRoute = DocsPageRouteImport.update({
+  id: '/$page',
+  path: '/$page',
+  getParentRoute: () => DocsRoute,
 } as any)
 const AppConflictsIndexRoute = AppConflictsIndexRouteImport.update({
   id: '/conflicts/',
@@ -66,9 +84,12 @@ const AppMachinesMachineIdRoute = AppMachinesMachineIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
+  '/docs': typeof DocsRouteWithChildren
   '/signin': typeof SigninRoute
   '/history': typeof AppHistoryRoute
   '/setup': typeof AppSetupRoute
+  '/docs/$page': typeof DocsPageRoute
+  '/docs/': typeof DocsIndexRoute
   '/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
   '/machines/$machineId': typeof AppMachinesMachineIdRoute
   '/conflicts/': typeof AppConflictsIndexRoute
@@ -78,7 +99,9 @@ export interface FileRoutesByTo {
   '/signin': typeof SigninRoute
   '/history': typeof AppHistoryRoute
   '/setup': typeof AppSetupRoute
+  '/docs/$page': typeof DocsPageRoute
   '/': typeof AppIndexRoute
+  '/docs': typeof DocsIndexRoute
   '/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
   '/machines/$machineId': typeof AppMachinesMachineIdRoute
   '/conflicts': typeof AppConflictsIndexRoute
@@ -87,10 +110,13 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
+  '/docs': typeof DocsRouteWithChildren
   '/signin': typeof SigninRoute
   '/_app/history': typeof AppHistoryRoute
   '/_app/setup': typeof AppSetupRoute
+  '/docs/$page': typeof DocsPageRoute
   '/_app/': typeof AppIndexRoute
+  '/docs/': typeof DocsIndexRoute
   '/_app/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
   '/_app/machines/$machineId': typeof AppMachinesMachineIdRoute
   '/_app/conflicts/': typeof AppConflictsIndexRoute
@@ -100,9 +126,12 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/docs'
     | '/signin'
     | '/history'
     | '/setup'
+    | '/docs/$page'
+    | '/docs/'
     | '/conflicts/$conflictId'
     | '/machines/$machineId'
     | '/conflicts/'
@@ -112,7 +141,9 @@ export interface FileRouteTypes {
     | '/signin'
     | '/history'
     | '/setup'
+    | '/docs/$page'
     | '/'
+    | '/docs'
     | '/conflicts/$conflictId'
     | '/machines/$machineId'
     | '/conflicts'
@@ -120,10 +151,13 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_app'
+    | '/docs'
     | '/signin'
     | '/_app/history'
     | '/_app/setup'
+    | '/docs/$page'
     | '/_app/'
+    | '/docs/'
     | '/_app/conflicts/$conflictId'
     | '/_app/machines/$machineId'
     | '/_app/conflicts/'
@@ -132,6 +166,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
+  DocsRoute: typeof DocsRouteWithChildren
   SigninRoute: typeof SigninRoute
 }
 
@@ -142,6 +177,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs': {
+      id: '/docs'
+      path: '/docs'
+      fullPath: '/docs'
+      preLoaderRoute: typeof DocsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signin': {
@@ -171,6 +213,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/setup'
       preLoaderRoute: typeof AppSetupRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/docs/': {
+      id: '/docs/'
+      path: '/'
+      fullPath: '/docs/'
+      preLoaderRoute: typeof DocsIndexRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/$page': {
+      id: '/docs/$page'
+      path: '/$page'
+      fullPath: '/docs/$page'
+      preLoaderRoute: typeof DocsPageRouteImport
+      parentRoute: typeof DocsRoute
     }
     '/_app/conflicts/': {
       id: '/_app/conflicts/'
@@ -225,8 +281,21 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface DocsRouteChildren {
+  DocsPageRoute: typeof DocsPageRoute
+  DocsIndexRoute: typeof DocsIndexRoute
+}
+
+const DocsRouteChildren: DocsRouteChildren = {
+  DocsPageRoute: DocsPageRoute,
+  DocsIndexRoute: DocsIndexRoute,
+}
+
+const DocsRouteWithChildren = DocsRoute._addFileChildren(DocsRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
+  DocsRoute: DocsRouteWithChildren,
   SigninRoute: SigninRoute,
 }
 export const routeTree = rootRouteImport

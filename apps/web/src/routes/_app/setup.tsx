@@ -1,50 +1,56 @@
-import { createFileRoute } from '@tanstack/react-router';
-import { useState } from 'react';
+import { createFileRoute, Link } from '@tanstack/react-router';
 import prompt from '../../../../../packages/cli/setup-prompt.md?raw';
-import { copyText } from '../../copy';
+import { Command, CopyBlock } from '../../components/Copy';
+import { Icon } from '../../components/Icon';
+import { serverUrl } from '../../commands';
 
 export const Route = createFileRoute('/_app/setup')({ component: Setup });
 
 function Setup() {
-  // This server, as the CLI should reach it.
-  const server = window.location.origin;
-  const install = `npm install -g agentsync && agentsync init --server ${server}`;
+  const server = serverUrl();
   return (
-    <div className="stack">
-      <section className="panel">
-        <h1>Set up a Machine</h1>
-        <p className="muted">
-          Register a computer so it Renders your Template into its agents' instruction files. Either run
-          the CLI yourself, or give the prompt below to an agent on that computer.
-        </p>
-        <h2>Run it yourself</h2>
-        <p className="muted">Needs Node.js 22.12 or later. It opens a sign-in link to approve this computer.</p>
-        <Copyable label="Install command" text={install} />
-      </section>
-      <section className="panel">
-        <h2>Or ask your agent</h2>
-        <p className="muted">
-          Paste this into Claude Code or Codex on the computer to set up. It runs the same CLI and asks you to
-          approve the sign-in.
-        </p>
-        <Copyable label="Agent setup prompt" text={prompt.replaceAll('<SERVER_URL>', server)} />
-      </section>
-    </div>
-  );
-}
+    <div className="page">
+      <Link className="back-link" to="/machines"><Icon name="back" size={14} />Machines</Link>
+      <header className="page-head">
+        <div>
+          <h1>Add a Machine</h1>
+          <p>
+            Register a computer so its agents get your Template. On your first Machine, its existing
+            <code> CLAUDE.md</code> or <code>AGENTS.md</code> becomes the Template.
+          </p>
+        </div>
+      </header>
 
-function Copyable({ label, text }: { label: string; text: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    setCopied(await copyText(text));
-    setTimeout(() => setCopied(false), 2000);
-  };
-  return (
-    <div className="copyable">
-      <pre className="rendered" aria-label={label}>{text}</pre>
-      <button className="button secondary" type="button" onClick={copy}>
-        {copied ? 'Copied' : `Copy ${label.toLowerCase()}`}
-      </button>
+      <div className="setup-grid">
+        <section className="setup-path" aria-labelledby="agent-path">
+          <h2 id="agent-path">Ask your agent</h2>
+          <p>
+            Paste this into Claude Code or Codex on the computer you're adding. It installs the CLI, asks you to approve
+            the sign-in, and tells you what it set up.
+          </p>
+          <CopyBlock label="Agent setup prompt" title="Setup prompt" text={prompt.replaceAll('<SERVER_URL>', server)} />
+        </section>
+
+        <section className="setup-path" aria-labelledby="cli-path">
+          <h2 id="cli-path">Or run it yourself</h2>
+          <ol className="steps">
+            <li>
+              <p>Install the CLI and register the computer. Needs Node.js 22.12 or later.</p>
+              <Command command={`npm install -g agentsync && agentsync init --server ${server}`} label="Install command" />
+            </li>
+            <li>
+              <p>Open the sign-in link it prints and approve the code.</p>
+              <p className="muted">It then installs a hook for each agent it finds, and writes your Template into their files.</p>
+            </li>
+            <li>
+              <p>Using Codex? Trust the new hook once: open Codex and run <code>/hooks</code>.</p>
+            </li>
+          </ol>
+          <p className="muted">
+            After that, every agent session fetches the latest Template when it starts, and a change applies from the session after. <Link to="/docs/$page" params={{ page: 'cli' }}>See every command</Link>
+          </p>
+        </section>
+      </div>
     </div>
   );
 }

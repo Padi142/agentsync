@@ -8,7 +8,7 @@ const CONTEXT = 3;
 
 /** A line diff from `before` to `after`: removed lines, then added lines, between unchanged ones. */
 export function Diff({ before, after }: { before: string; after: string }) {
-  if (before === after) return <p className="muted">No changes.</p>;
+  if (before === after) return <p className="no-changes">No changes.</p>;
   const regions = diffComm(before.split('\n'), after.split('\n')) as Region[];
   const rows = regions.flatMap((region, i): Row[] => {
     if (!('common' in region)) {

@@ -1,11 +1,14 @@
 import type { VariableMap } from '@agentsync/contract';
 import { isSettableVariableName, referencedVariables, validate } from '@agentsync/template';
 import { isDefinedError, safe } from '@orpc/client';
-import { createFileRoute, useBlocker, useRouter } from '@tanstack/react-router';
-import { useEffect, useState, type FormEvent } from 'react';
+import { createFileRoute, Link, useBlocker, useRouter } from '@tanstack/react-router';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Command, CopyButton } from '../../components/Copy';
 import { Diff } from '../../components/Diff';
+import { Icon } from '../../components/Icon';
+import { Ago } from '../../components/Time';
 import { useDraft } from '../../draft';
-import { formatTime } from '../../format';
+import { OS_NAMES } from '../../format';
 import { useOwnNavigate } from '../../navigation';
 import { rpc } from '../../rpc';
 
@@ -82,65 +85,99 @@ function MachinePage() {
     await navigate({ to: '/machines', search: { notice: error ? 'already-deleted' : 'deleted' }, ignoreBlocker: true });
   };
 
+  const dirtyName = trimmed !== machine.nickname;
+  const nicknameInput = useRef<HTMLInputElement>(null);
   return (
-    <div className="stack">
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h1>{machine.nickname}</h1>
-            <p className="muted">
-              <code>{machine.hostname}</code> · {machine.os} · registered {formatTime(machine.createdAt)} · last seen{' '}
-              {machine.lastSeenAt ? formatTime(machine.lastSeenAt) : 'never'}
-            </p>
-          </div>
-        </div>
-        <form className="inline-form" onSubmit={rename}>
-          <label>
-            Nickname
-            <input value={name} onChange={(e) => setName(e.target.value)} maxLength={100} required
-              aria-invalid={!!nameProblem} disabled={pending !== null} />
-          </label>
-          <button className="button secondary" type="submit"
-            disabled={pending !== null || !!nameProblem || trimmed === machine.nickname}>
-            {pending === 'rename' ? 'Saving…' : 'Save nickname'}
+    <div className="page">
+      <Link className="back-link" to="/machines"><Icon name="back" size={14} />Machines</Link>
+      <form className="nickname-form" onSubmit={rename}>
+        <input ref={nicknameInput} className="nickname-input" aria-label="Nickname" value={name} onChange={(e) => setName(e.target.value)}
+          maxLength={100} required aria-invalid={!!nameProblem} disabled={pending !== null} title="Rename this Machine" />
+        {!dirtyName && pending === null ? (
+          <button className="icon-button" type="button" aria-label="Rename" title="Rename"
+            onClick={() => nicknameInput.current?.select()}>
+            <Icon name="edit" />
           </button>
-        </form>
+        ) : null}
+        {dirtyName || pending === 'rename' ? (
+          <>
+            <button className="button small" type="submit" disabled={pending !== null || !!nameProblem || !dirtyName}>
+              {pending === 'rename' ? 'Saving…' : 'Save nickname'}
+            </button>
+            {pending === null ? (
+              <button className="button secondary small" type="button" onClick={() => setName(machine.nickname)}>Cancel</button>
+            ) : null}
+          </>
+        ) : null}
+      </form>
+      <div style={{ display: 'grid', gap: 8, margin: '8px 0 32px' }}>
         {nameProblem && name ? <p className="field-issue">{nameProblem}</p> : null}
         {changedElsewhere && trimmed !== machine.nickname ? (
-          <p className="issue warning">The saved nickname changed to “{machine.nickname}” while you were editing.</p>
+          <p className="callout warning">The saved nickname changed to “{machine.nickname}” while you were editing.</p>
         ) : null}
-        <p className="muted">
-          Use <code>{'{{machine.nickname}}'}</code> in your Template. <code>{'{{machine.nickname}}'}</code> is a supported
-          alias. Changes apply to Targets on the next sync.
-        </p>
-        <h3>Targets</h3>
-        <ul className="plain">
-          {machine.targets.map((t) => (
-            <li key={t.path}><code>{t.path}</code> <span className="muted">Rendered for {t.agent}</span></li>
-          ))}
-        </ul>
-        {machineNotice ? <p className="notice" role="status">{machineNotice}</p> : null}
-      </section>
-      <VariablesEditor notice={notice} setNotice={setNotice} setDirty={setVariablesDirty} />
-      <VariablesHistory setNotice={setNotice} />
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Delete Machine</h2>
-            <p className="muted">Stops syncing and permanently removes its registration, token and Variables.</p>
-          </div>
-          <button className="button danger" type="button" onClick={remove} disabled={pending !== null}>
-            {pending === 'delete' ? 'Deleting…' : 'Delete Machine'}
-          </button>
+        {machineNotice ? <p className="status-line" data-tone={/failed/.test(machineNotice) ? 'error' : 'success'} role="status">{machineNotice}</p> : null}
+      </div>
+
+      <div className="machine-layout">
+        <div>
+          <VariablesEditor notice={notice} setNotice={setNotice} setDirty={setVariablesDirty} />
+          <section className="section">
+            <div className="section-head">
+              <h2>Targets</h2>
+              <p>Files this Machine writes the Template into</p>
+            </div>
+            {machine.targets.length ? (
+              <ul className="target-list">
+                {machine.targets.map((t) => (
+                  <li key={t.path}>
+                    <code>{t.path}</code>
+                    <span className="agent-tag">for {t.agent}</span>
+                    <CopyButton text={t.path} label={`Copy ${t.path}`} />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">No Targets. Run <code>agentsync init</code> on {machine.nickname} to detect its agents.</p>
+            )}
+          </section>
+          <VariablesHistory setNotice={setNotice} />
         </div>
-      </section>
+
+        <aside className="aside">
+          <section>
+            <h2>About this Machine</h2>
+            <dl className="facts">
+              <dt>System</dt><dd>{OS_NAMES[machine.os] ?? machine.os}</dd>
+              <dt>Hostname</dt><dd><code>{machine.hostname}</code></dd>
+              <dt>Registered</dt><dd><Ago date={machine.createdAt} /></dd>
+              <dt>Last seen</dt><dd>{machine.lastSeenAt ? <Ago date={machine.lastSeenAt} /> : 'Never'}</dd>
+            </dl>
+          </section>
+          <section>
+            <h2>Run on {machine.nickname}</h2>
+            <Command command="agentsync sync" note="Write the latest Template now, instead of at the next agent session." />
+            <Command command="agentsync status" note="Show each file's state and any open Conflicts." />
+            <Command command="agentsync vars" note={<>List this Machine's Variables. Add <code>--var NAME=value</code> to set one.</>} />
+          </section>
+          <section className="danger-zone">
+            <h2>Delete Machine</h2>
+            <p>It stops syncing right away. Its files stay as they are.</p>
+            <button className="button danger small" type="button" onClick={remove} disabled={pending !== null}>
+              {pending === 'delete' ? 'Deleting…' : 'Delete Machine'}
+            </button>
+          </section>
+        </aside>
+      </div>
     </div>
   );
 }
 
 type Row = { name: string; value: string };
 const toRows = (map: VariableMap): Row[] => Object.entries(map).map(([name, value]) => ({ name, value }));
-const toMap = (rows: Row[]): VariableMap => Object.fromEntries(rows.map((r) => [r.name.trim(), r.value]));
+/** A row with neither a name nor a value is a blank one the user added, not a Variable yet. */
+const isBlank = (row: Row) => !row.name.trim() && !row.value;
+const toMap = (rows: Row[]): VariableMap =>
+  Object.fromEntries(rows.filter((r) => !isBlank(r)).map((r) => [r.name.trim(), r.value]));
 const sameRows = (a: Row[], b: Row[]) => JSON.stringify(a) === JSON.stringify(b);
 
 function VariablesEditor({ notice, setNotice, setDirty }: {
@@ -167,7 +204,7 @@ function VariablesEditor({ notice, setNotice, setDirty }: {
       : !isSettableVariableName(name) ? 'Use letters, digits and _, not starting with a digit. agent, machine, if, else and end are reserved.'
       : names.indexOf(name) !== i ? 'This name is used twice.'
       : null;
-  const invalid = names.some((name, i) => problem(name, i));
+  const invalid = rows.some((row, i) => !isBlank(row) && problem(names[i]!, i));
   const used = validate(template.text) ? [] : referencedVariables(template.text);
   const missing = used.filter((name) => !names.includes(name));
 
@@ -189,76 +226,93 @@ function VariablesEditor({ notice, setNotice, setDirty }: {
         setNotice('These Variables were changed elsewhere. Your edits are kept below.');
         await router.invalidate(); // Learn the newer revision, so the form can offer to load it.
       } else if (isDefinedError(error) && error.code === 'INVALID_VARIABLE_NAME') {
-      setNotice(`Invalid names: ${error.data.names.join(', ')}.`);
+        setNotice(`Invalid names: ${error.data.names.join(', ')}.`);
       } else {
-        setNotice('Saving failed. Please try again.');
+        setNotice('Saving failed. Check your connection and try again.');
       }
     });
   };
 
   return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <h2>Variables</h2>
-          <p className="muted">
-            {draft.revision ? `Revision ${draft.revision}` : 'None saved yet'} · substituted for{' '}
-            <code>{'{{name}}'}</code> when Rendering on this Machine
-          </p>
-        </div>
+    <section className="section" id="variables">
+      <div className="section-head">
+        <h2>Variables</h2>
+        <p>
+          Values for <code>{'{{name}}'}</code> in the Template on this Machine
+          {draft.revision ? `, revision ${draft.revision}` : ''}
+        </p>
       </div>
       {missing.length ? (
-        <p className="issue warning">
-          The Template uses {missing.length === 1 ? 'a Variable' : 'Variables'} this Machine doesn't set:{' '}
-          {missing.map((name) => (
-            <button key={name} className="chip" type="button" disabled={draft.busy}
-              onClick={() => setRows([...rows, { name, value: '' }])}>
-              + {name}
-            </button>
-          ))}
-        </p>
+        <div className="callout warning">
+          <Icon name="warning" />
+          <div>
+            <p>The Template uses {missing.length === 1 ? 'a Variable' : 'Variables'} this Machine doesn't set. Add {missing.length === 1 ? 'it' : 'them'}:</p>
+            <div className="chips">
+              {missing.map((name) => (
+                <button key={name} className="chip" type="button" disabled={draft.busy}
+                  onClick={() => setRows([...rows, { name, value: '' }])}>
+                  <Icon name="plus" size={12} />{name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       ) : null}
       {draft.newer ? (
-        <p className="issue warning">
-          Revision {draft.newer.revision} was saved while you were editing. Saving now would fail.{' '}
-          <button className="link-button" type="button" disabled={draft.busy}
-            onClick={() => draft.newer && window.confirm('Discard your edits?') && draft.load(draft.newer)}>
-            Discard my edits and load revision {draft.newer.revision}
-          </button>
-        </p>
+        <div className="callout warning">
+          <Icon name="warning" />
+          <div>
+            <p>Revision {draft.newer.revision} was saved while you were editing. Saving now would fail.</p>
+            <p>
+              <button className="link-button" type="button" disabled={draft.busy}
+                onClick={() => draft.newer && window.confirm('Discard your edits?') && draft.load(draft.newer)}>
+                Discard my edits and load revision {draft.newer.revision}
+              </button>
+            </p>
+          </div>
+        </div>
       ) : null}
       <form onSubmit={save}>
-        <fieldset className="variables" disabled={draft.busy}>
+        <fieldset className="variables-table" disabled={draft.busy}>
+          {rows.length ? (
+            <div className="variable-row head" aria-hidden="true"><span>Name</span><span>Value</span></div>
+          ) : (
+            <p className="variables-empty">No Variables yet. Add one, then use it in the Template as <code>{'{{name}}'}</code>.</p>
+          )}
           {rows.map((row, i) => {
             const issue = row.name || row.value ? problem(names[i], i) : null;
             return (
               <div className="variable-row" key={i}>
                 <input
-                  aria-label="Variable name" placeholder="name" value={row.name}
+                  className="input" aria-label="Variable name" placeholder="name" value={row.name}
                   aria-invalid={!!issue} onChange={(e) => update(i, { name: e.target.value })}
+                  spellCheck={false} autoCapitalize="off"
                 />
                 <textarea
-                  aria-label={`Value of ${row.name || 'new Variable'}`} placeholder="value" value={row.value}
-                  rows={Math.min(6, row.value.split('\n').length)} onChange={(e) => update(i, { value: e.target.value })}
+                  className="textarea" aria-label={`Value of ${row.name || 'new Variable'}`} placeholder="value" value={row.value}
+                  rows={Math.min(6, row.value.split('\n').length)} onChange={(e) => update(i, { value: e.target.value })} spellCheck={false}
                 />
-                <button className="link-button" type="button" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
-                  Remove
+                <button className="icon-button" type="button" aria-label={`Remove ${row.name || 'this Variable'}`} title="Remove"
+                  onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+                  <Icon name="close" />
                 </button>
                 {issue ? <p className="field-issue">{issue}</p> : null}
               </div>
             );
           })}
-          <div className="actions">
-            <button className="button secondary" type="button" onClick={() => setRows([...rows, { name: '', value: '' }])}>
-              Add Variable
+          <div className="variables-foot">
+            <button className="button secondary small" type="button" onClick={() => setRows([...rows, { name: '', value: '' }])}>
+              <Icon name="plus" size={14} />Add Variable
             </button>
-            <button className="button" type="submit" disabled={!draft.dirty || invalid}>
-              {draft.busy ? 'Saving…' : 'Save Variables'}
-            </button>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {notice ? <span className="status-line" data-tone={/fail|changed elsewhere|Invalid/.test(notice) ? 'error' : 'success'} role="status">{notice}</span> : null}
+              <button className="button small" type="submit" disabled={!draft.dirty || invalid}>
+                {draft.busy ? 'Saving…' : 'Save Variables'}
+              </button>
+            </span>
           </div>
         </fieldset>
       </form>
-      {notice ? <p className="notice" role="status">{notice}</p> : null}
     </section>
   );
 }
@@ -286,42 +340,42 @@ function VariablesHistory({ setNotice }: { setNotice: (notice: string) => void }
     await router.invalidate();
   };
 
+  if (history.length === 0) return null;
   return (
-    <section className="panel">
-      <div className="panel-heading">
-        <div>
-          <h2>Variables history</h2>
-          <p className="muted">Restoring saves an old revision as a new one</p>
-        </div>
+    <section className="section">
+      <div className="section-head">
+        <h2>Variable history</h2>
+        <p>Restoring saves an old revision as a new one</p>
       </div>
-      {history.length === 0 ? <p className="muted">No revisions yet.</p> : (
-        <ul className="revisions">
-          {history.map((entry) => (
+      <ul className="rows disclosure">
+        {history.map((entry) => {
+          const isCurrent = entry.revision === variables.revision;
+          return (
             <li key={entry.revision}>
-              <button className="revision-toggle" type="button" aria-expanded={open === entry.revision}
+              <button className="disclosure-toggle" type="button" aria-expanded={open === entry.revision}
                 onClick={() => setOpen(open === entry.revision ? null : entry.revision)}>
-                <span>Revision {entry.revision}{entry.revision === variables.revision ? ' · current' : ''}</span>
-                <span className="muted">{formatTime(entry.createdAt)}</span>
+                <Icon name="chevron" />
+                <strong>Revision {entry.revision}</strong>
+                {isCurrent ? <span className="tag" style={{ marginLeft: 0 }}>Current</span> : null}
+                <span><Ago date={entry.createdAt} /></span>
               </button>
               {open === entry.revision ? (
-                <div className="revision-body">
-                  {entry.revision === variables.revision ? <Diff before="" after={asText(entry.variables)} /> : (
+                <div className="disclosure-body">
+                  {isCurrent ? <Diff before="" after={asText(entry.variables)} /> : (
                     <>
                       <p className="muted">Restoring it would make these changes:</p>
                       <Diff before={asText(variables.variables)} after={asText(entry.variables)} />
+                      <button className="button secondary small" type="button" onClick={() => restore(entry.variables, entry.revision)}>
+                        Restore revision {entry.revision}
+                      </button>
                     </>
                   )}
-                  {entry.revision !== variables.revision ? (
-                    <button className="button secondary" type="button" onClick={() => restore(entry.variables, entry.revision)}>
-                      Restore revision {entry.revision}
-                    </button>
-                  ) : null}
                 </div>
               ) : null}
             </li>
-          ))}
-        </ul>
-      )}
+          );
+        })}
+      </ul>
     </section>
   );
 }

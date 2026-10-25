@@ -23,6 +23,13 @@ describe('render', () => {
     });
   });
 
+  it('marks substituted text, but conditions compare the bare value', () => {
+    const mark = (value: string, name: string) => `[${name}:${value}]`;
+    expect(
+      render('{{if agent == "claude"}}{{editor}}{{end}} on {{agent}}{{missing}}.', laptop, { mark }).text,
+    ).toBe('[editor:helix] on [agent:claude].');
+  });
+
   it('substitutes Built-in Variables from the Machine and the agent', () => {
     expect(
       render('{{agent}} on {{machine.hostname}} ({{ machine.os }})', laptop).text,

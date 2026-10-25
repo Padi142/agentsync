@@ -93,7 +93,7 @@ describe('an operation that finishes after its page was left', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Save and resolve' }));
 
     await act(() => router.navigate({ to: '/conflicts/$conflictId', params: { conflictId: 'c2' } }));
-    await screen.findByText('merged two', { exact: false });
+    await vi.waitFor(() => expect(screen.getByLabelText<HTMLTextAreaElement>('Merged Template').value).toBe('merged two'));
     const merge = screen.getByLabelText<HTMLTextAreaElement>('Merged Template');
     fireEvent.change(merge, { target: { value: 'merged two, edited' } });
 

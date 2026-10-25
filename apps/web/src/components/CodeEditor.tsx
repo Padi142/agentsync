@@ -1,4 +1,4 @@
-import { useId, useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 export interface LineMark {
   line: number;
@@ -41,26 +41,52 @@ function insert(textarea: HTMLTextAreaElement, from: number, to: number, text: s
 }
 
 /**
- * A plain textarea with a line-number gutter. Marked lines are highlighted in the gutter.
- * Lines don't wrap, so gutter numbers stay aligned with the text. With `suggestions`, typing
- * `{{` or `{{if ` offers them, and an "Insert Variable" menu lists them too.
+ * Display-only highlighting: Expressions, escapes and the Markdown punctuation that gives a line
+ * its shape. Validation is the grammar's job; this only has to look right while typing.
  */
-export function CodeEditor({ value, onChange, marks = [], label, rows = 20, readOnly = false, suggestions = [] }: {
+const TOKEN = /(\\\{\{)|(\{\{\s*(?:if\b|else\b|end\b)(?:[^}"]|"[^"]*"|\}(?!\}))*\}\})|(\{\{(?:[^}"]|"[^"]*"|\}(?!\}))*\}\})|^(#{1,6})(?=\s|$)|^(\s*(?:[-*+]|\d+[.)]))(?=\s)|^(\s*>)|^(\s*(?:```|~~~).*)$/g;
+const CLASSES = ['', 'tok-escape', 'tok-block', 'tok-expression', 'tok-punct', 'tok-punct', 'tok-punct', 'tok-fence'];
+const CONFLICT_MARKER = /^(<{7}|={7}$|>{7}|\|{7})/;
+
+export function highlight(line: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let cursor = 0;
+  for (const match of line.matchAll(TOKEN)) {
+    const group = match.findIndex((part, i) => i > 0 && part !== undefined);
+    const start = match.index + match[0].indexOf(match[group]!);
+    if (start > cursor) out.push(line.slice(cursor, start));
+    out.push(<span key={start} className={CLASSES[group]}>{match[group]}</span>);
+    cursor = start + match[group]!.length;
+  }
+  if (cursor < line.length) out.push(line.slice(cursor));
+  return out;
+}
+
+/**
+ * A Template editor: a transparent textarea over a highlighted copy of its text. Both wrap the
+ * same way and the textarea is sized by the copy, so the editor grows with its content and the
+ * page does all the scrolling. Line numbers sit beside each logical line, wrapped or not.
+ * With `suggestions`, typing `{{` or `{{if ` offers them at the caret.
+ */
+export function CodeEditor({ value, onChange, marks = [], label, readOnly = false, suggestions = [], toolbar, placeholder }: {
   value: string;
   onChange: (value: string) => void;
   marks?: LineMark[];
   label: string;
-  rows?: number;
   readOnly?: boolean;
   suggestions?: readonly Suggestion[];
+  /** Shown in the editor's header row, on the left. */
+  toolbar?: ReactNode;
+  placeholder?: string;
 }) {
-  const gutter = useRef<HTMLDivElement>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const caretMarker = useRef<HTMLSpanElement>(null);
   const listId = useId();
   const [caret, setCaret] = useState<number | null>(null);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState<string | null>(null);
-  const lineCount = value.split('\n').length;
+  const [popup, setPopup] = useState<{ top: number; left: number } | null>(null);
+  const lines = value.split('\n');
   const markAt = new Map(marks.map((mark) => [mark.line, mark]));
 
   const enabled = suggestions.length > 0 && !readOnly;
@@ -69,6 +95,14 @@ export function CodeEditor({ value, onChange, marks = [], label, rows = 20, read
   const matches = completion ? suggestions.filter((s) => s.name.startsWith(completion.query)) : [];
   const open = !!completion && matches.length > 0 && dismissed !== key;
   const current = Math.min(active, matches.length - 1);
+
+  // Place the suggestions under the caret, measured from a hidden copy of the text before it.
+  useLayoutEffect(() => {
+    const marker = caretMarker.current;
+    if (!open || !marker) return setPopup(null);
+    const width = marker.offsetParent?.clientWidth ?? 0;
+    setPopup({ top: marker.offsetTop + marker.offsetHeight + 4, left: Math.max(0, Math.min(marker.offsetLeft - 8, width - 340)) });
+  }, [open, caret, value]);
 
   const accept = (suggestion: Suggestion) => {
     if (!completion || !textarea.current || caret === null) return;
@@ -88,32 +122,41 @@ export function CodeEditor({ value, onChange, marks = [], label, rows = 20, read
   };
 
   return (
-    <div className="code-editor-wrap">
-      {enabled ? (
-        <div className="code-editor-tools">
-          <select aria-label="Insert Variable" value="" onChange={(event) => event.target.value && insertVariable(event.target.value)}>
-            <option value="">Insert Variable…</option>
-            {suggestions.map((s) => (
-              <option key={s.name} value={s.name}>{s.name} — {s.description}</option>
-            ))}
-          </select>
+    <div className="editor-frame" data-readonly={readOnly || undefined}>
+      {toolbar || enabled ? (
+        <div className="editor-head">
+          <div className="editor-head-start">{toolbar}</div>
+          {enabled ? (
+            <select className="select small" aria-label="Insert Variable" value=""
+              onChange={(event) => event.target.value && insertVariable(event.target.value)}>
+              <option value="">Insert Variable</option>
+              {suggestions.map((s) => (
+                <option key={s.name} value={s.name}>{s.name}: {s.description}</option>
+              ))}
+            </select>
+          ) : null}
         </div>
       ) : null}
-      <div className="code-editor" style={{ '--rows': rows } as React.CSSProperties}>
-        <div className="gutter" ref={gutter} aria-hidden="true">
-          {Array.from({ length: lineCount }, (_, i) => {
+      <div className="editor" style={{ '--digits': String(lines.length).length } as React.CSSProperties}>
+        <div className="editor-backdrop" aria-hidden="true">
+          {lines.map((line, i) => {
             const mark = markAt.get(i + 1);
-            return (
-              <div key={i} className={mark ? `gutter-line ${mark.kind}` : 'gutter-line'} title={mark?.message}>
-                {i + 1}
-              </div>
-            );
+            const conflict = CONFLICT_MARKER.test(line);
+            const className = ['editor-line', mark && `is-${mark.kind}`, conflict && 'is-conflict'].filter(Boolean).join(' ');
+            return <div key={i} className={className} data-n={i + 1}>{highlight(line)}</div>;
           })}
         </div>
+        {open ? (
+          <div className="editor-measure" aria-hidden="true">
+            {value.slice(0, caret ?? 0)}<span ref={caretMarker}>{'​'}</span>
+          </div>
+        ) : null}
         <textarea
           ref={textarea}
+          className="editor-input"
           aria-label={label}
           value={value}
+          placeholder={placeholder}
           onChange={(event) => {
             onChange(event.target.value);
             setCaret(event.target.selectionStart);
@@ -126,7 +169,7 @@ export function CodeEditor({ value, onChange, marks = [], label, rows = 20, read
               event.preventDefault();
               const step = event.key === 'ArrowDown' ? 1 : -1;
               setActive((current + step + matches.length) % matches.length);
-            } else if (event.key === 'Enter') {
+            } else if (event.key === 'Enter' || event.key === 'Tab') {
               event.preventDefault();
               accept(matches[current]!);
             } else if (event.key === 'Escape') {
@@ -134,11 +177,11 @@ export function CodeEditor({ value, onChange, marks = [], label, rows = 20, read
               setDismissed(key);
             }
           }}
-          onScroll={(event) => {
-            if (gutter.current) gutter.current.scrollTop = event.currentTarget.scrollTop;
-          }}
-          wrap="off"
+          // The backdrop sizes the textarea, so it never needs to scroll. Undo any scroll a browser starts anyway.
+          onScroll={(event) => { event.currentTarget.scrollTop = 0; }}
           spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
           readOnly={readOnly}
           {...(enabled
             ? {
@@ -150,27 +193,29 @@ export function CodeEditor({ value, onChange, marks = [], label, rows = 20, read
               }
             : {})}
         />
+        {open ? (
+          <ul className="suggestions" id={listId} role="listbox" aria-label="Built-in Variables"
+            style={popup ? { top: popup.top, left: popup.left } : { visibility: 'hidden' }}>
+            {matches.map((s, i) => (
+              <li
+                key={s.name}
+                id={`${listId}-${i}`}
+                role="option"
+                aria-selected={i === current}
+                className="suggestion"
+                // Keep focus (and the caret) in the textarea while choosing.
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => accept(s)}
+                onMouseEnter={() => setActive(i)}
+              >
+                <code>{s.name}</code>
+                <span>{s.description}</span>
+              </li>
+            ))}
+            <li className="suggestion-hint" aria-hidden="true"><kbd>↑</kbd><kbd>↓</kbd> choose <kbd>Enter</kbd> insert <kbd>Esc</kbd> close</li>
+          </ul>
+        ) : null}
       </div>
-      {open ? (
-        <ul className="suggestions" id={listId} role="listbox" aria-label="Built-in Variables">
-          {matches.map((s, i) => (
-            <li
-              key={s.name}
-              id={`${listId}-${i}`}
-              role="option"
-              aria-selected={i === current}
-              className={i === current ? 'suggestion active' : 'suggestion'}
-              // Keep focus (and the caret) in the textarea while choosing.
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => accept(s)}
-              onMouseEnter={() => setActive(i)}
-            >
-              <code>{s.name}</code> <span className="muted">{s.description}</span>
-            </li>
-          ))}
-          <li className="suggestion-hint muted" aria-hidden="true">↑↓ to choose · Enter to insert · Esc to close</li>
-        </ul>
-      ) : null}
     </div>
   );
 }

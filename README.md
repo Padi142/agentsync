@@ -10,10 +10,13 @@ Machine registration through the WorkOS device flow. The `agentsync` CLI
 (`packages/cli`) Renders the Template into each agent's Global Instructions and keeps
 them current from Claude Code and Codex `SessionStart` hooks.
 
-The web UI edits the Template with live syntax errors and a per-Machine,
-per-agent preview, manages Machines and their Variables, shows Template and
-Variable history with rollback, resolves Conflicts (`/conflicts`), and gives the
-install command and agent setup prompt (`/setup`, from `packages/cli/setup-prompt.md`). Pages load
+The web UI has three sections. **Template** edits the Template (live syntax
+errors, Cmd/Ctrl+S) beside a per-Machine, per-agent preview that renders the
+Markdown and underlines text that came from a Variable, with History (rollback) and
+Conflicts (`/conflicts`) as views of it. **Machines** manages each Machine's nickname,
+Variables and their history, with copyable CLI commands, and **Add a Machine** (`/setup`)
+gives the install command and agent setup prompt (from `packages/cli/setup-prompt.md`).
+**Docs** (`/docs`, public) is written as Markdown in `apps/web/src/docs/`. Pages load
 their data in the browser through the oRPC client (the root route sets
 `ssr: false`); the server renders only the document shell. Device approval
 needs no page here: WorkOS AuthKit hosts the `verification_uri`.

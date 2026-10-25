@@ -17,6 +17,7 @@
   "dependencies": {
     "@agentsync/contract": "workspace:^",
     "@agentsync/template": "workspace:^",
+    "@fontsource-variable/recursive": "^5.3.0",
     "@orpc/client": "^1.15.0",
     "@orpc/contract": "^1.15.0",
     "@orpc/server": "^1.15.0",
@@ -28,12 +29,15 @@
     "node-diff3": "^3.2.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "zod": "^4.5.4"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.54.4",
     "@cloudflare/workers-types": "^5.20260907.1",
     "@testing-library/react": "^16.3.3",
+    "@types/hast": "^3.0.5",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.1.1",

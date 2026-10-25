@@ -3,6 +3,8 @@ import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { useState } from 'react';
 import { z } from 'zod';
 import { Diff } from '../../components/Diff';
+import { TemplateBar } from '../../components/TemplateBar';
+import { Ago } from '../../components/Time';
 import { formatTime } from '../../format';
 import { useOwnNavigate } from '../../navigation';
 import { rpc } from '../../rpc';
@@ -56,58 +58,77 @@ function History() {
   };
 
   if (!revision) {
-    return <section className="panel"><h1>History</h1><p className="muted">The Template has no revisions yet.</p></section>;
+    return (
+      <>
+        <TemplateBar />
+        <div className="page">
+          <div className="empty">
+            <h2>No revisions yet</h2>
+            <p>Each time the Template is saved, from here or from a Machine, a revision appears here. You can compare any two and roll back.</p>
+            <Link className="button" to="/">Open the editor</Link>
+          </div>
+        </div>
+      </>
+    );
   }
   const isCurrent = revision.revision === template.revision;
   return (
-    <div className="split narrow-left">
-      <section className="panel">
-        <h1>History</h1>
-        <p className="muted">Template revisions, newest first</p>
-        <ul className="revision-list">
-          {history.map((entry) => (
-            <li key={entry.revision}>
-              <Link
-                to="/history"
-                search={{ revision: entry.revision }}
-                className={entry.revision === revision.revision ? 'revision-link active' : 'revision-link'}
-                onClick={() => setNotice('')}
-              >
-                <span>Revision {entry.revision}{entry.revision === template.revision ? ' · current' : ''}</span>
-                <span className="muted">{formatTime(entry.createdAt)}</span>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </section>
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Revision {revision.revision}</h2>
-            <p className="muted">Saved {formatTime(revision.createdAt)}</p>
+    <>
+      <TemplateBar />
+      <div className="history-layout">
+        <nav aria-label="Revisions">
+          <ul className="revision-list">
+            {history.map((entry) => (
+              <li key={entry.revision}>
+                <Link
+                  to="/history"
+                  search={{ revision: entry.revision }}
+                  className={entry.revision === revision.revision ? 'revision-link active' : 'revision-link'}
+                  onClick={() => setNotice('')}
+                >
+                  <strong>
+                    Revision {entry.revision}
+                    {entry.revision === template.revision ? <span className="tag">Current</span> : null}
+                  </strong>
+                  <span><Ago date={entry.createdAt} /></span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        <section className="history-main" aria-label={`Revision ${revision.revision}`}>
+          <div className="history-head">
+            <div>
+              <h2>Revision {revision.revision}</h2>
+              <p>Saved {formatTime(revision.createdAt)}</p>
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div className="segmented" role="group" aria-label="Compare">
+                <button type="button" aria-pressed={compare === 'previous'} onClick={() => setCompare('previous')}>
+                  What it changed
+                </button>
+                <button type="button" aria-pressed={compare === 'current'} onClick={() => setCompare('current')} disabled={isCurrent}>
+                  Compared to current
+                </button>
+              </div>
+              {isCurrent ? null : (
+                <button className="button small" type="button" onClick={rollback}>Roll back to this revision</button>
+              )}
+            </div>
           </div>
-          {isCurrent ? null : (
-            <button className="button" type="button" onClick={rollback}>Roll back to this revision</button>
+          {notice ? (
+            <p className={/failed|nothing was rolled back/.test(notice) ? 'callout error' : 'callout success'} role="status">{notice}</p>
+          ) : null}
+          {compare === 'current' && !isCurrent ? (
+            <>
+              <p className="muted">Rolling back would make these changes to revision {template.revision}:</p>
+              <Diff before={template.text} after={revision.text} />
+            </>
+          ) : (
+            <Diff before={previous?.text ?? ''} after={revision.text} />
           )}
-        </div>
-        <div className="segmented" role="group" aria-label="Compare">
-          <button type="button" aria-pressed={compare === 'previous'} onClick={() => setCompare('previous')}>
-            What it changed
-          </button>
-          <button type="button" aria-pressed={compare === 'current'} onClick={() => setCompare('current')} disabled={isCurrent}>
-            Compared to current
-          </button>
-        </div>
-        {notice ? <p className="notice" role="status">{notice}</p> : null}
-        {compare === 'current' && !isCurrent ? (
-          <>
-            <p className="muted">Rolling back would make these changes to revision {template.revision}:</p>
-            <Diff before={template.text} after={revision.text} />
-          </>
-        ) : (
-          <Diff before={previous?.text ?? ''} after={revision.text} />
-        )}
-      </section>
-    </div>
+        </section>
+      </div>
+    </>
   );
 }

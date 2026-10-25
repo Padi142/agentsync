@@ -35,8 +35,10 @@ describe('Setup page', () => {
     expect(screen.getAllByRole('button', { name: /^Copy/ })).toHaveLength(2);
   });
 
-  it('is linked from the navigation', async () => {
-    await open('/');
-    expect(screen.getByRole('link', { name: 'Setup' }).getAttribute('href')).toBe('/setup');
+  it('is linked from the Machines page, which also gives the install command when there are none', async () => {
+    await open('/machines');
+    expect((await screen.findByRole('link', { name: /More ways to add a Machine/ })).getAttribute('href')).toBe('/setup');
+    expect(screen.getByLabelText('Install command').textContent)
+      .toBe(`npm install -g agentsync && agentsync init --server ${window.location.origin}`);
   });
 });
