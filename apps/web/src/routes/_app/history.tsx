@@ -1,6 +1,6 @@
 import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { z } from 'zod';
 import { Diff } from '../../components/Diff';
 import { formatTime } from '../../format';
@@ -31,13 +31,12 @@ function History() {
   const navigate = useOwnNavigate();
   const [compare, setCompare] = useState<'previous' | 'current'>('previous');
   const [notice, setNotice] = useState('');
-  // History stays mounted while the selection changes, so a rollback that finishes late
-  // checks that its revision is still the one on screen before showing the result.
-  const selected = useRef(revision?.revision);
-  selected.current = revision?.revision;
-
   const rollback = async () => {
     if (!revision) return;
+    // History stays mounted while the selection changes. The router's latest location moves as
+    // soon as a navigation starts, before its page loads, so it shows whether the user went
+    // elsewhere while the rollback was running.
+    const startedAt = router.latestLocation.href;
     const [error, saved] = await safe(rpc.template.rollback({
       revision: revision.revision, expectedRevision: template.revision,
     }));
@@ -48,7 +47,7 @@ function History() {
       await router.invalidate();
       return;
     }
-    if (selected.current === revision.revision) {
+    if (router.latestLocation.href === startedAt) {
       await navigate({ to: '/history', search: { revision: saved.revision } });
     } else {
       await router.invalidate(); // Show the new revision in the list, but keep the selection.

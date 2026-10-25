@@ -44,13 +44,17 @@ function clearSession(c: AuthContext) {
   deleteCookie(c, SESSION_COOKIE, cookieOptions(c));
 }
 
+const MAX_RETURN_PATH = 512;
+
 /**
  * `value` if it is a path on this app to return to after sign-in, otherwise `/`. Only a single
  * leading `/` is allowed: `//host` and `/\host` are other origins to a browser, and browsers drop
  * tabs and newlines from URLs, so whitespace, control characters and backslashes are rejected too.
+ * A path longer than 512 characters is dropped: it rides in the login cookie, and a browser that
+ * refuses an oversized cookie would lose the OAuth state with it.
  */
 export function returnPath(value: string | undefined, origin: string): string {
-  if (!value || !/^\/(?![/\\])[^\s\\\x00-\x1f\x7f]*$/.test(value)) return '/';
+  if (!value || value.length > MAX_RETURN_PATH || !/^\/(?![/\\])[^\s\\\x00-\x1f\x7f]*$/.test(value)) return '/';
   return new URL(value, origin).origin === origin ? value : '/';
 }
 
