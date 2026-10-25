@@ -157,7 +157,7 @@ describe('init', () => {
     const t = setup();
     mkdirSync(t.path('.claude'));
     t.server.putTemplate('editor: {{editor}}{{if os == "x"}}{{shell}}{{end}}\n');
-    t.answer('vim', '', '');
+    t.answer('claude', 'vim', '', '');
 
     const result = await t.cli('init', '--server', t.server.url);
 
@@ -179,7 +179,7 @@ describe('init', () => {
     expect(claude).toMatchObject({ model: 'opus', hooks: { SessionStart: [{ hooks: [{ command: 'agentsync sync --hook claude' }] }] } });
     const codex = JSON.parse(readFileSync(t.path('.codex/hooks.json'), 'utf8'));
     expect(codex).toMatchObject({ hooks: { SessionStart: [{ hooks: [{ command: 'agentsync sync --hook codex' }] }] } });
-    expect(result.stdout).toContain('/hooks');
+    expect(result.stderr).toContain('/hooks');
     expect(readFileSync(t.path('.claude/skills/agentsync/SKILL.md'), 'utf8')).toContain('name: agentsync');
     expect(existsSync(t.path('.agents/skills/agentsync/SKILL.md'))).toBe(true);
   });

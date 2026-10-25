@@ -10,12 +10,20 @@ import { fakeServer } from './fake-server.js';
 export function setup() {
   const home = mkdtempSync(join(tmpdir(), 'agentsync-test-'));
   const server = fakeServer();
+  /** Answers in order: a choice's value, several values separated by commas, or text. */
   const answers: string[] = [];
   const edits: ((file: string) => void)[] = [];
   const launched: { agent: string; prompt: string }[] = [];
   const sleeps: number[] = [];
   const questions: string[] = [];
   let interactive = false;
+
+  function next(question: string): string {
+    questions.push(question);
+    const answer = answers.shift();
+    if (answer === undefined) throw new Error(`Unexpected question: ${question}`);
+    return answer;
+  }
 
   async function cli(...args: string[]) {
     let stdout = '';
@@ -26,15 +34,20 @@ export function setup() {
       hostname: 'laptop',
       platform: 'linux',
       fetch: server.fetch,
-      interactive,
+      tty: { stdin: interactive, stdout: interactive, stderr: interactive },
       out: (text) => (stdout += `${text}\n`),
       err: (text) => (stderr += `${text}\n`),
-      ask: async (question) => {
-        questions.push(question);
-        const answer = answers.shift();
-        if (answer === undefined) throw new Error(`Unexpected question: ${question}`);
-        return answer;
+      select: async (message, choices) => {
+        const answer = next(`${message} ${choices.map((choice) => choice.label).join(' / ')}`);
+        if (!choices.some((choice) => choice.value === answer)) throw new Error(`"${answer}" is not a choice for: ${message}`);
+        return answer as never;
       },
+      multiselect: async (message, choices) => {
+        const answer = next(`${message} ${choices.map((choice) => choice.label).join(' / ')}`);
+        return answer.split(',').filter(Boolean) as never;
+      },
+      text: async (message) => next(message),
+      progress: () => ({ stop() {} }),
       edit: async (file) => {
         const edit = edits.shift();
         if (!edit) throw new Error(`Unexpected edit of ${file}`);

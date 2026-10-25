@@ -3,9 +3,9 @@ import { spawn } from 'node:child_process';
 import { accessSync, constants, realpathSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { createInterface } from 'node:readline/promises';
 import { run } from './cli.js';
 import type { Io } from './io.js';
+import { terminal } from './terminal.js';
 
 const quote = (value: string) =>
   process.platform === 'win32' ? `"${value}"` : `'${value.replaceAll("'", `'\\''`)}'`;
@@ -42,17 +42,11 @@ const io: Io = {
   hostname: hostname().replace(/\.local$/, ''),
   platform: process.platform,
   fetch: globalThis.fetch,
-  interactive: !!process.stdin.isTTY && !!process.stdout.isTTY,
+  tty: { stdin: !!process.stdin.isTTY, stdout: !!process.stdout.isTTY, stderr: !!process.stderr.isTTY },
+  columns: process.stdout.columns,
   out: (text) => process.stdout.write(`${text}\n`),
   err: (text) => process.stderr.write(`${text}\n`),
-  async ask(question) {
-    const readline = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      return (await readline.question(question)).trim();
-    } finally {
-      readline.close();
-    }
-  },
+  ...terminal,
   // $EDITOR may carry arguments, such as `code --wait`, so it runs through the shell.
   edit: (file) => wait(`${process.env.VISUAL || process.env.EDITOR || 'vi'} ${quote(file)}`, [], true),
   launchAgent: (agent, prompt) => wait(agent, [prompt], false),

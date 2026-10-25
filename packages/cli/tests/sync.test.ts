@@ -96,7 +96,7 @@ describe('sync', () => {
     t.write('.claude/CLAUDE.md', 'claude edit\n');
     t.write('.codex/AGENTS.md', 'codex edit\n');
     t.server.putTemplate('two\n');
-    t.answer('o', 'k');
+    t.answer('overwrite', 'keep');
 
     const result = await t.cli('sync');
 
@@ -110,7 +110,7 @@ describe('sync', () => {
     t.registered(undefined, { '~/.claude/CLAUDE.md': 'one\n' });
     t.write('.claude/CLAUDE.md', 'one\nhand edit\n');
     t.server.putTemplate('one\n');
-    t.answer('a', 'claude');
+    t.answer('agent', 'claude');
 
     const result = await t.cli('sync');
 

@@ -34,13 +34,13 @@ describe('edit', () => {
     t.registered();
     t.server.putTemplate('one\n');
     t.onEdit(append('{{if x}}\n'));
-    t.answer('e');
+    t.answer('edit');
     t.onEdit((file) => writeFileSync(file, 'fixed\n'));
 
     const result = await t.cli('edit');
 
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain('line 2');
+    expect(result.stderr).toContain('line 2');
     expect(t.server.state.template.text).toBe('fixed\n');
   });
 
@@ -58,7 +58,7 @@ describe('edit', () => {
 
     it('keeps the edit as a Conflict and can point to the web resolver', async () => {
       const t = conflicted();
-      t.answer('w');
+      t.answer('web');
 
       const result = await t.cli('edit');
 
@@ -71,7 +71,7 @@ describe('edit', () => {
 
     it('can fix the Conflict here in the editor', async () => {
       const t = conflicted();
-      t.answer('f');
+      t.answer('fix');
       t.onEdit((file) => {
         expect(readFileSync(file, 'utf8')).toContain('<<<<<<<');
         writeFileSync(file, 'one\ntheirs\nmine\n');
@@ -86,7 +86,7 @@ describe('edit', () => {
 
     it('can hand the Conflict to the agent this Machine uses', async () => {
       const t = conflicted();
-      t.answer('a', 'codex');
+      t.answer('agent', 'codex');
 
       const result = await t.cli('edit');
 
@@ -179,7 +179,7 @@ describe('edit', () => {
         append('mine\n')(file);
         t.server.putTemplate('one\ntheirs\n');
       });
-      t.answer('f');
+      t.answer('fix');
       let draft = '';
       t.onEdit((file) => {
         draft = file;
@@ -210,12 +210,12 @@ describe('edit', () => {
       drafts.push(file);
       append('{{if x}}\n')(file);
     });
-    t.answer('q');
+    t.answer('discard');
 
     const cancelled = await t.cli('edit');
 
     expect(cancelled.code).toBe(0);
     expect(drafts.map((file) => existsSync(file))).toEqual([false, false]);
-    expect(t.questions.at(-1)).toMatch(/\[q\]uit.*discard/);
+    expect(t.questions.at(-1)).toMatch(/Discard edit/);
   });
 });

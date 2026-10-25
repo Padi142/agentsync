@@ -10,7 +10,7 @@ npm install -g agentsync
 agentsync init --server https://your-agentsync-server
 ```
 
-Run `agentsync --help` for every command and flag.
+Run `agentsync --help` for the commands, and `agentsync help <command>` for one command's flags.
 
 ## Commands
 
@@ -26,7 +26,17 @@ Run `agentsync --help` for every command and flag.
 | `logout` | Revokes the Machine and removes its token, plus the hooks and skill files AgentSync installed that nobody changed. Targets stay. |
 
 Every command takes `--json` (one JSON document on stdout, progress on stderr),
-`--yes` (never prompt) and `--server`.
+`--yes` (never prompt) and `--server`, plus display flags:
+
+| Flag | Effect |
+|---|---|
+| `--verbose` | Per-file steps, the server, and full Drift diffs |
+| `--no-color` | No color on either stream (so does a nonempty `NO_COLOR`) |
+| `--no-progress` | No spinner while waiting |
+| `--plain` | No color, symbols or animation; numbered choices instead of arrow-key menus |
+
+Prompts appear only when stdin, stdout and stderr are all terminals, outside CI and `TERM=dumb`,
+and without `--yes`, `--json` or `--hook`. Prompts and spinners go to stderr; results to stdout.
 
 | Exit code | Meaning |
 |---|---|
@@ -36,6 +46,7 @@ Every command takes `--json` (one JSON document on stdout, progress on stderr),
 | 3 | Drift |
 | 4 | Conflict |
 | 5 | auth: not registered, revoked, or registration denied, expired or invalid |
+| 130 | cancelled with Ctrl+C at a prompt; completed writes are remembered and edit drafts kept |
 
 ## How it works
 

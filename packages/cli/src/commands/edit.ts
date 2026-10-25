@@ -4,7 +4,7 @@ import { ORPCError } from '@orpc/client';
 import type { Context, Outcome } from '../context.js';
 import { CliError, EXIT, usage } from '../exit.js';
 import { readText } from '../files.js';
-import { choose, handOff } from '../handoff.js';
+import { handOff } from '../handoff.js';
 import { expandHome } from '../paths.js';
 import { readDraft, withDraft } from '../drafts.js';
 import { machineClient } from '../session.js';
@@ -29,8 +29,16 @@ async function editUntil(ctx: Context, file: string, problem: (text: string) => 
     const text = readDraft(file);
     const found = problem(text);
     if (!found) return text;
-    ctx.say(found);
-    if ((await choose(ctx, '[e]dit again, or [q]uit and discard this edit? ', ['edit', 'quit'])) === 'quit') return null;
+    ctx.warn(found);
+    const next = await ctx.select(
+      'What now?',
+      [
+        { value: 'edit', label: 'Edit again' },
+        { value: 'discard', label: 'Discard edit', hint: 'your changes are lost' },
+      ],
+      'edit',
+    );
+    if (next === 'discard') return null;
   }
 }
 
@@ -53,11 +61,15 @@ async function save(client: ContractClient, text: string, base: number) {
 async function offerResolution(ctx: Context, client: ContractClient, conflict: Conflict): Promise<Outcome> {
   const kept: Outcome = { code: EXIT.conflict, data: { conflict: { id: conflict.id, url: conflict.url } } };
   ctx.say(`The Template changed since you started editing, so your edit was kept as Conflict ${conflict.id}.`);
-  const choice = await choose(ctx, 'Resolve it on the [w]eb, [f]ix it here, or hand it to an [a]gent? ', [
+  const choice = await ctx.select(
+    'How do you want to resolve it?',
+    [
+      { value: 'web', label: 'Resolve it in the browser', hint: conflict.url },
+      { value: 'fix', label: 'Fix it here in the editor' },
+      { value: 'agent', label: 'Ask an agent to resolve it' },
+    ],
     'web',
-    'fix',
-    'agent',
-  ]);
+  );
   if (choice === 'web') {
     ctx.say(`Open ${conflict.url}`);
     return kept;
@@ -93,14 +105,14 @@ export async function edit(ctx: Context): Promise<Outcome> {
     if (text === null) throw usage(`${ctx.flags.file} does not exist.`);
     const problem = syntaxProblem(text);
     if (problem) throw new CliError(`${problem}. Nothing was saved.`, EXIT.error);
-    const saved = await save(client, text, base);
+    const saved = await ctx.during('Saving…', () => save(client, text, base));
     if (saved.conflict) return conflictOutcome(ctx, saved.conflict);
-    ctx.say(`Saved Template revision ${saved.template.revision}.`);
+    ctx.success(`Saved Template revision ${saved.template.revision}`);
     return { data: { revision: saved.template.revision } };
   }
 
   if (!ctx.canAsk) throw usage('edit opens an editor. Without a terminal, use --file <path> --base <revision>.');
-  const current = await client.template.get();
+  const current = await ctx.during('Fetching the Template…', () => client.template.get());
   const base = current.revision;
   const recovery = (file: string) => `Save it with \`agentsync edit --file ${file} --base ${base}\`.`;
   // Once saved, as a revision or as a Conflict, the edit is safe on the server and the draft goes.
@@ -113,6 +125,6 @@ export async function edit(ctx: Context): Promise<Outcome> {
     return { data: { revision: base } };
   }
   if (saved.conflict) return offerResolution(ctx, client, saved.conflict);
-  ctx.say(`Saved Template revision ${saved.template.revision}. Run \`agentsync sync\` to apply it here.`);
+  ctx.success(`Saved Template revision ${saved.template.revision} · run \`agentsync sync\` to apply it here`);
   return { data: { revision: saved.template.revision } };
 }

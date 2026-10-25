@@ -4,15 +4,18 @@ import { checkTarget } from '../targets.js';
 import { assertValid, renderTargets } from './sync.js';
 
 const describe = {
-  missing: 'not written yet',
-  current: 'up to date',
-  stale: 'out of date, run agentsync sync',
-  drift: 'Drift: edited by hand',
+  missing: 'Not written yet',
+  current: 'Current',
+  stale: 'Out of date',
+  drift: 'Drift',
 } as const;
+
+/** Below this width each Target gets its own lines instead of one row. */
+const NARROW_COLUMNS = 60;
 
 /** This Machine, its Targets compared with the Template, and open Conflicts. Writes nothing. */
 export async function status(ctx: Context): Promise<Outcome> {
-  const payload = await machineClient(ctx).machines.sync();
+  const payload = await ctx.during('Fetching the Template…', () => machineClient(ctx).machines.sync());
   const { machine, template, openConflicts } = payload;
   if (template.revision > 0) assertValid(template.text);
   const targets = renderTargets(ctx, payload).map(({ target, path, rendered }) => {
@@ -24,10 +27,20 @@ export async function status(ctx: Context): Promise<Outcome> {
     return { path: target.path, agent: target.agent, ...check };
   });
 
-  ctx.say(`Machine "${machine.name}" (${machine.os}) on ${ctx.config.server}`);
-  ctx.say(template.revision ? `Template revision ${template.revision}` : 'No Template yet');
-  for (const target of targets) ctx.say(`  ${target.path}: ${describe[target.status]}`);
-  if (openConflicts.count) ctx.say(`${openConflicts.count} open Conflict(s): ${openConflicts.url}`);
+  const paint = ctx.paint.out;
+  ctx.say(`Machine ${paint.bold(machine.name)} · ${template.revision ? `Template revision ${template.revision}` : 'no Template yet'}`);
+  ctx.detail(`Server ${ctx.config.server} · ${machine.os}`);
+  const narrow = (ctx.io.columns ?? 80) < NARROW_COLUMNS;
+  const agentWidth = Math.max(0, ...targets.map((target) => target.agent.length));
+  const pathWidth = Math.max(0, ...targets.map((target) => target.path.length));
+  for (const target of targets) {
+    const color = target.status === 'current' ? paint.green : target.status === 'drift' ? paint.yellow : (text: string) => text;
+    const word = color(describe[target.status]);
+    if (narrow) ctx.say(`  ${target.agent}: ${word}\n    ${target.path}`);
+    else ctx.say(`  ${target.agent.padEnd(agentWidth)}  ${target.path.padEnd(pathWidth)}  ${word}`);
+  }
+  if (targets.some((target) => target.status !== 'current')) ctx.say('Run `agentsync sync` to update this Machine.');
+  if (openConflicts.count) ctx.warn(`${openConflicts.count} open Conflict(s): ${openConflicts.url}`);
   return {
     data: {
       server: ctx.config.server,

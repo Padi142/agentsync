@@ -35,7 +35,10 @@
   "dependencies": {
     "@agentsync/contract": "workspace:^",
     "@agentsync/template": "workspace:^",
+    "@clack/prompts": "^1.8.1",
     "@orpc/client": "^1.15.0",
-    "diff": "^9.0.0"
+    "diff": "^9.0.0",
+    "ora": "^9.4.1",
+    "picocolors": "^1.1.1"
   }
 }

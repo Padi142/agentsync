@@ -2,7 +2,7 @@ import { isAbsolute } from 'node:path';
 import type { ContractClient, DeviceAuthorization, MachineOs, Target } from '@agentsync/contract';
 import { referencedVariables } from '@agentsync/template';
 import { ORPCError } from '@orpc/client';
-import { type Agent, detectAgents, findAgent, targetFor } from '../agents.js';
+import { AGENTS, type Agent, detectAgents, findAgent, targetFor } from '../agents.js';
 import { connect, normaliseServer } from '../client.js';
 import type { PendingLogin } from '../config.js';
 import type { Context, Outcome } from '../context.js';
@@ -21,8 +21,11 @@ export function machineOs(platform: NodeJS.Platform): MachineOs {
   return 'linux';
 }
 
-/** The Targets to register: `--agent`/`--target` if given, otherwise every detected agent. */
-function chooseTargets(ctx: Context): Target[] {
+/**
+ * The Targets to register: `--agent`/`--target` if given, otherwise the detected agents. At a
+ * terminal, a person picks among the known agents, with the detected ones already selected.
+ */
+async function chooseTargets(ctx: Context): Promise<Target[]> {
   const { flags, io } = ctx;
   const targets: Target[] = [];
   for (const id of flags.agent) {
@@ -38,7 +41,21 @@ function chooseTargets(ctx: Context): Target[] {
     if (!isAbsolute(path)) throw usage(`--target paths must be absolute or start with ~/, not "${match[2]}".`);
     targets.push({ agent: match[1]!, path: tildify(path, io) });
   }
-  if (!flags.agent.length && !flags.target.length) targets.push(...detectAgents(io).map((agent) => targetFor(agent, io)));
+  if (!flags.agent.length && !flags.target.length) {
+    const detected = detectAgents(io).map((agent) => agent.id);
+    const picked = ctx.canAsk
+      ? await ctx.multiselect(
+          'Which agents should AgentSync keep in sync?',
+          AGENTS.map((agent) => ({
+            value: agent.id,
+            label: agent.name,
+            hint: `${tildify(agent.instructions(io), io)}${detected.includes(agent.id) ? '' : ', not found here'}`,
+          })),
+          detected,
+        )
+      : detected;
+    targets.push(...AGENTS.filter((agent) => picked.includes(agent.id)).map((agent) => targetFor(agent, io)));
+  }
   if (!targets.length) {
     throw usage('No agents found on this Machine. Pass --agent claude, --agent codex, or --target <agent>=<path>.');
   }
@@ -71,8 +88,7 @@ async function register(ctx: Context, server: string, targets: Target[]): Promis
     config.pending = pending;
     ctx.save();
   }
-  ctx.say(`To register this Machine, open ${pending.verificationUriComplete}`);
-  ctx.say(`and confirm the code ${pending.userCode}.`);
+  ctx.say(`To register this Machine, approve it in the browser.\n\nOpen: ${pending.verificationUriComplete}\nCode: ${pending.userCode}\n`);
   const shown = { userCode: pending.userCode, verificationUri: pending.verificationUriComplete };
   if (!ctx.flags.wait) {
     ctx.say('Run `agentsync init` again once you have approved it.');
@@ -80,6 +96,17 @@ async function register(ctx: Context, server: string, targets: Target[]): Promis
   }
 
   const name = (ctx.flags.name ?? io.hostname).trim() || 'machine';
+  return ctx.during('Waiting for browser approval…', () => poll(ctx, client, pending, name, targets));
+}
+
+async function poll(
+  ctx: Context,
+  client: ReturnType<typeof connect>,
+  pending: PendingLogin,
+  name: string,
+  targets: Target[],
+): Promise<null> {
+  const { io, config } = ctx;
   let interval = pending.interval;
   for (;;) {
     await io.sleep(interval * 1000);
@@ -95,11 +122,11 @@ async function register(ctx: Context, server: string, targets: Target[]): Promis
     }
     delete config.pending;
     if (result.status === 'approved') {
-      config.server = server;
+      config.server = pending.server;
       config.token = result.token;
       config.machineId = result.machine.id;
       ctx.save();
-      ctx.say(`Registered this Machine as "${result.machine.name}".`);
+      ctx.success(`Registered Machine ${result.machine.name}`);
       return null;
     }
     ctx.save();
@@ -136,7 +163,7 @@ async function importExisting(ctx: Context, client: ContractClient, targets: Tar
     if (error instanceof ORPCError && error.code === 'CONFLICT') return undefined;
     throw error;
   }
-  ctx.say(`Imported ${source.path} as the first Template revision.`);
+  ctx.success(`Imported ${source.path} as the first Template revision`);
   return source.path;
 }
 
@@ -146,7 +173,7 @@ async function askForVariables(ctx: Context, client: ContractClient, machineId: 
   const missing = referencedVariables(template.text).filter((name) => !(name in current.variables));
   const answers: Record<string, string> = {};
   for (const name of missing) {
-    const value = await ctx.io.ask(`Value of {{${name}}} on this Machine (empty to leave unset): `);
+    const value = await ctx.text(`Value of {{${name}}} on this Machine (leave empty to keep it unset)`);
     if (value) answers[name] = value;
   }
   if (Object.keys(answers).length) await changeVariables(client, machineId, answers);
@@ -155,7 +182,7 @@ async function askForVariables(ctx: Context, client: ContractClient, machineId: 
 /** Register this Machine (if needed), then set up its Variables, Template, hooks and skill, and sync. */
 export async function init(ctx: Context): Promise<Outcome> {
   const server = chooseServer(ctx);
-  const chosen = chooseTargets(ctx);
+  const chosen = await chooseTargets(ctx);
   const set = parseAssignments(ctx.flags.var);
   if (ctx.config.token && ctx.config.server !== server) {
     throw usage(`This Machine is registered with ${ctx.config.server}. Run \`agentsync logout\` first.`);
@@ -188,8 +215,7 @@ export async function init(ctx: Context): Promise<Outcome> {
     if (ctx.flags.hooks) {
       installHook(ctx, agent);
       hooks.push(tildify(agent.hooksFile(ctx.io), ctx.io));
-      ctx.say(`Installed the ${agent.name} SessionStart hook in ${tildify(agent.hooksFile(ctx.io), ctx.io)}.`);
-      if (agent.id === 'codex') ctx.say('Codex runs it only once you trust it: open Codex and run /hooks.');
+      ctx.detail(`Installed the ${agent.name} SessionStart hook in ${tildify(agent.hooksFile(ctx.io), ctx.io)}.`);
     }
     if (ctx.flags.skill) {
       const { file, written } = installSkill(ctx, agent);
@@ -197,7 +223,12 @@ export async function init(ctx: Context): Promise<Outcome> {
       if (!list.includes(tildify(file, ctx.io))) list.push(tildify(file, ctx.io));
     }
   }
-  if (skills.length) ctx.say(`Installed the agentsync skill in ${skills.join(', ')}.`);
+  if (skills.length) ctx.detail(`Installed the agentsync skill in ${skills.join(', ')}.`);
+  const installed = [hooks.length && 'hooks', skills.length && 'the agentsync skill'].filter(Boolean).join(' and ');
+  if (installed) ctx.success(`Installed ${installed} for ${agents.map((agent) => agent.name).join(', ')}`);
+  if (hooks.length && agents.some((agent) => agent.id === 'codex')) {
+    ctx.warn('Codex: open Codex, run /hooks and trust the new hook. It runs only once you do.');
+  }
   for (const file of skillsLeftAlone) {
     ctx.warn(`Left ${file} alone: AgentSync did not write it, or it was changed since. Remove it to get the agentsync skill.`);
   }

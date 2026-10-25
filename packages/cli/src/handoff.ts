@@ -1,25 +1,19 @@
 import { AGENTS, detectAgents } from './agents.js';
 import type { Context } from './context.js';
 
-/** Ask a person a question until they answer with one of `choices` (matched by first letter or in full). */
-export async function choose(ctx: Context, question: string, choices: string[]): Promise<string> {
-  for (;;) {
-    const answer = (await ctx.io.ask(question)).toLowerCase();
-    const match = choices.find((choice) => choice === answer || choice[0] === answer);
-    if (match) return match;
-    ctx.say(`Please answer ${choices.join(', ')}.`);
-  }
-}
-
 /** The agent this Machine hands Drift and Conflicts to: asked once, then remembered. */
 async function handoffAgent(ctx: Context): Promise<string> {
   if (ctx.config.handoffAgent) return ctx.config.handoffAgent;
   const detected = detectAgents(ctx.io);
-  const candidates = (detected.length ? detected : AGENTS).map((agent) => agent.id);
+  const candidates = detected.length ? detected : AGENTS;
   const agent =
     candidates.length === 1
-      ? candidates[0]!
-      : await choose(ctx, `Which agent should take over? (${candidates.join('/')}) `, candidates);
+      ? candidates[0]!.id
+      : await ctx.select(
+          'Which agent should take over? AgentSync remembers this choice.',
+          candidates.map((agent) => ({ value: agent.id, label: agent.name, hint: `runs \`${agent.id}\`` })),
+          candidates[0]!.id,
+        );
   ctx.config.handoffAgent = agent;
   ctx.save();
   return agent;

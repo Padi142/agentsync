@@ -8,6 +8,8 @@ export const EXIT = {
   drift: 3,
   conflict: 4,
   auth: 5,
+  /** The person interrupted a prompt or wait (Ctrl+C), by the usual shell convention. */
+  cancelled: 130,
 } as const;
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
@@ -24,6 +26,10 @@ export class CliError extends Error {
 }
 
 export const usage = (message: string) => new CliError(message, EXIT.usage);
+
+export const cancelled = () => new CliError('Cancelled.', EXIT.cancelled);
+
+export const isCancelled = (error: unknown) => error instanceof CliError && error.exitCode === EXIT.cancelled;
 
 /** The exit code for anything a command throws. */
 export function exitCodeFor(error: unknown): ExitCode {

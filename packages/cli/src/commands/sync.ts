@@ -2,8 +2,8 @@ import { isAbsolute } from 'node:path';
 import type { SyncPayload } from '@agentsync/contract';
 import { render, validate } from '@agentsync/template';
 import type { Context, Outcome } from '../context.js';
-import { CliError, describeError, EXIT } from '../exit.js';
-import { choose, handOff } from '../handoff.js';
+import { CliError, describeError, EXIT, isCancelled } from '../exit.js';
+import { handOff } from '../handoff.js';
 import { expandHome } from '../paths.js';
 import { machineClient } from '../session.js';
 import { backupPath, checkTarget, writeTarget } from '../targets.js';
@@ -36,6 +36,45 @@ ${diff.trimEnd()}
    Expression such as \`{{if machine.name == "…"}}\` or a Variable (\`agentsync vars --var KEY=VALUE\`).
 3. Save it with \`agentsync edit --file <file> --base <revision>\`.
 4. Run \`agentsync sync --overwrite\` and check that ${path} now holds the change.`;
+}
+
+type DriftChoice = 'keep' | 'review' | 'agent' | 'overwrite';
+
+/** Ask what to do about a Drifted Target. "Review changes" shows the diff and asks again. */
+async function askAboutDrift(ctx: Context, path: string, diff: string): Promise<Exclude<DriftChoice, 'review'>> {
+  ctx.io.err(ctx.paint.err.attention(`Drift in ${path}`));
+  for (;;) {
+    const choice = await ctx.select<DriftChoice>(
+      'This Target was edited by hand. What should happen?',
+      [
+        { value: 'keep', label: 'Keep the hand edit and skip this Target' },
+        { value: 'review', label: 'Review changes' },
+        { value: 'agent', label: 'Ask an agent to update the Template' },
+        { value: 'overwrite', label: 'Replace with the Template; keep a backup' },
+      ],
+      'keep',
+    );
+    if (choice !== 'review') return choice;
+    ctx.io.out(diff.trimEnd());
+  }
+}
+
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+
+/** One line with the outcome: what was updated, what was already current, and what was skipped or failed. */
+function summarise(ctx: Context, revision: number, results: TargetResult[]): void {
+  const count = (...statuses: TargetResult['status'][]) => results.filter((result) => statuses.includes(result.status)).length;
+  const updated = count('written', 'overwritten');
+  const current = count('unchanged');
+  const skipped = count('kept', 'handed-off', 'drift');
+  const failed = count('error');
+  if (!skipped && !failed) {
+    if (!updated) ctx.success(`All ${plural(current, 'Target')} ${current === 1 ? 'is' : 'are'} up to date · Template revision ${revision}`);
+    else ctx.success(`Synced Template revision ${revision} · ${plural(updated, 'Target')} updated, ${current} already current`);
+    return;
+  }
+  const parts = [`${updated} updated`, `${current} already current`, `${skipped} skipped`, `${failed} failed`];
+  if (!ctx.flags.json) ctx.warn(`Template revision ${revision} · ${parts.join(', ')}`);
 }
 
 /**
@@ -105,47 +144,47 @@ export async function applySync(ctx: Context, payload: SyncPayload): Promise<Out
         if (check.status === 'missing' || check.status === 'stale') {
           write(false);
           result.status = 'written';
-          ctx.say(`Wrote ${target.path}`);
+          ctx.detail(`Wrote ${target.path}`);
         } else if (check.status === 'current') {
           ctx.config.written[target.path] = rendered;
         } else {
           result.diff = check.diff!;
-          let choice = ctx.flags.overwrite ? 'overwrite' : ctx.flags.keep ? 'keep' : null;
-          if (!choice && ctx.canAsk) {
-            ctx.say(`\n${target.path} has Drift: it was edited by hand since AgentSync wrote it.\n\n${check.diff}`);
-            choice = await choose(
-              ctx,
-              'Discard the hand edit and [o]verwrite, [k]eep it and skip, or hand it to an [a]gent? ',
-              ['overwrite', 'keep', 'agent'],
-            );
-          }
+          let choice: DriftChoice | null = ctx.flags.overwrite ? 'overwrite' : ctx.flags.keep ? 'keep' : null;
+          if (!choice && ctx.canAsk) choice = await askAboutDrift(ctx, target.path, check.diff!);
           if (choice === 'overwrite') {
             write(true);
             result.status = 'overwritten';
-            ctx.say(`Overwrote ${target.path} (the hand edit is in ${backupPath(target.path)})`);
+            ctx.say(`Replaced ${target.path} with the Template; the hand edit is in ${backupPath(target.path)}`);
           } else if (choice === 'keep') {
             result.status = 'kept';
-            ctx.say(`Kept the hand edit in ${target.path}`);
+            ctx.say(`Kept the hand edit in ${target.path} and skipped it`);
           } else if (choice === 'agent') {
             await handOff(ctx, driftPrompt(target.path, check.diff!));
             result.status = 'handed-off';
           } else {
             result.status = 'drift';
-            if (!ctx.flags.hook) {
-              ctx.say(`\n${target.path} has Drift: it was edited by hand since AgentSync wrote it.\n\n${check.diff}`);
-              ctx.say(
-                'Run `agentsync sync --overwrite` to discard it (a backup is kept), `agentsync sync --keep` to leave it,\nor fold the change into the Template.',
-              );
-            }
+            ctx.warn(`Drift in ${target.path}: it was edited by hand since AgentSync wrote it, so it was left alone.`);
+            if (ctx.flags.verbose && !ctx.flags.json) ctx.io.err(check.diff!.trimEnd());
+            ctx.warn(
+              'Run `agentsync sync --overwrite` to replace it (a backup is kept), `agentsync sync --keep` to leave it, or fold the change into the Template.',
+            );
           }
         }
       } catch (error) {
+        // A Ctrl+C stops the whole sync; the `finally` below still remembers what was written.
+        if (isCancelled(error)) throw error;
         // One Target that cannot be read or written must not stop the others.
         result.status = 'error';
         result.error = describeError(error);
         ctx.warn(`Could not write ${target.path}: ${result.error}`);
       }
     }
+  } catch (error) {
+    const updated = results.filter((result) => result.status === 'written' || result.status === 'overwritten').length;
+    if (isCancelled(error) && updated) {
+      throw new CliError(`Cancelled after updating ${plural(updated, 'Target')}.`, EXIT.cancelled);
+    }
+    throw error;
   } finally {
     // Remember what was written even if something later fails, or the next sync sees false Drift.
     ctx.save();
@@ -158,6 +197,7 @@ export async function applySync(ctx: Context, payload: SyncPayload): Promise<Out
   if (payload.openConflicts.count > 0 && !ctx.flags.hook) {
     ctx.warn(`${payload.openConflicts.count} open Conflict(s). Resolve them at ${payload.openConflicts.url}`);
   }
+  summarise(ctx, template.revision, results);
   const failed = results.some((result) => result.status === 'error');
   const drifted = results.some((result) => result.status === 'drift');
   return { code: failed ? EXIT.error : drifted ? EXIT.drift : EXIT.ok, data, results };
@@ -208,5 +248,6 @@ async function hookSync(ctx: Context): Promise<Outcome> {
 
 export async function sync(ctx: Context): Promise<Outcome> {
   if (ctx.flags.hook !== undefined) return hookSync(ctx);
-  return applySync(ctx, await machineClient(ctx).machines.sync());
+  const payload = await ctx.during('Fetching the Template…', () => machineClient(ctx).machines.sync());
+  return applySync(ctx, payload);
 }
