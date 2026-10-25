@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { chmodSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
@@ -81,5 +81,22 @@ describe('sync --hook', () => {
     const result = await t.cli('sync', '--hook', 'claude');
     expect(result.code).toBe(0);
     expect(result.stdout).toMatch(/^AgentSync: /);
+  });
+
+  it('does not claim it kept the instructions when it failed after writing a Target', async () => {
+    const t = setup();
+    t.registered();
+    t.server.putTemplate('one\n');
+    chmodSync(t.path('.config/agentsync'), 0o500);
+    try {
+      const result = await t.cli('sync', '--hook', 'claude');
+
+      expect(result.code).toBe(0);
+      expect(read(t.path('.claude/CLAUDE.md'))).toBe('one\n');
+      expect(result.stdout).toMatch(/^AgentSync: sync failed; some Targets may have been updated: /);
+      expect(result.stdout).not.toContain('kept the existing instructions');
+    } finally {
+      chmodSync(t.path('.config/agentsync'), 0o700);
+    }
   });
 });

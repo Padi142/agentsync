@@ -171,8 +171,11 @@ export async function applySync(ctx: Context, payload: SyncPayload): Promise<Out
 async function hookSync(ctx: Context): Promise<Outcome> {
   const agent = ctx.flags.hook!;
   const parts: string[] = [];
+  /** Once Targets may have been written, a failure must not claim the old files were kept. */
+  let writing = false;
   try {
     const payload = await machineClient(ctx, HOOK_TIMEOUT_MS).machines.sync();
+    writing = true;
     const { results, data } = await applySync(ctx, payload);
     const written = results.filter((result) => result.status === 'written');
     const own = written.filter((result) => result.agent === agent);
@@ -196,7 +199,8 @@ async function hookSync(ctx: Context): Promise<Outcome> {
       parts.push(`${payload.openConflicts.count} open Conflict(s), resolve at ${payload.openConflicts.url}`);
     }
   } catch (error) {
-    parts.push(`kept the existing instructions: ${describeError(error)}`);
+    const outcome = writing ? 'sync failed; some Targets may have been updated' : 'kept the existing instructions';
+    parts.push(`${outcome}: ${describeError(error)}`);
   }
   if (parts.length) ctx.io.out(`AgentSync: ${parts.map((part) => part.replace(/\.$/, '')).join('; ')}.`);
   return { code: EXIT.ok };
