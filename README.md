@@ -72,6 +72,9 @@ creating the authorization URL.
   short-lived HttpOnly login cookie to validate the OAuth state.
 - `GET /callback` exchanges the authorization code, provisions the local user,
   and sets an encrypted HttpOnly session cookie. Cookies are Secure on HTTPS.
+- `GET /login?returnTo=/conflicts/<id>` comes back to that path after sign-in. The
+  path travels in the signed login cookie and must start with a single `/`; `//`,
+  `/\`, absolute URLs, whitespace and control characters fall back to `/`.
 - `GET /api/auth/get-session` returns only the local user's ID, name, and email.
 - `POST /logout` clears the cookie and redirects through WorkOS to end the session.
 - `/rpc/*` implements `@agentsync/contract`. A browser authenticates with the session

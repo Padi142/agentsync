@@ -18,7 +18,9 @@ const { rpc } = vi.hoisted(() => {
         get: vi.fn(async () => ({ revision: 1, text: 'base', updatedAt: null })),
         put: vi.fn(),
         history: vi.fn(async () => []),
-        revision: vi.fn(),
+        revision: vi.fn(async ({ revision }: { revision: number }) =>
+          ({ revision, text: `text ${revision}`, createdAt: new Date(0) })),
+        rollback: vi.fn(),
       },
       machines: { list: vi.fn(async () => [machine]), get: vi.fn(async () => machine) },
       variables: {
@@ -111,5 +113,22 @@ describe('an operation that finishes after its page was left', () => {
 
     expect(router.state.location.pathname).toBe('/conflicts/c1');
     expect(confirm).not.toHaveBeenCalled(); // The edit lives in the Conflict, so leaving needs no prompt.
+  });
+});
+
+describe('a rollback that finishes after another revision was selected', () => {
+  it('keeps the newer selection instead of jumping to the rolled-back revision', async () => {
+    rpc.template.get.mockResolvedValue({ revision: 3, text: 'text 3', updatedAt: null });
+    rpc.template.history.mockResolvedValue([3, 2, 1].map((revision) => ({ revision, createdAt: new Date(0) })));
+    const router = await open('/history?revision=1');
+    const rollback = deferred<unknown>();
+    rpc.template.rollback.mockReturnValue(rollback.promise);
+    fireEvent.click(await screen.findByRole('button', { name: 'Roll back to this revision' }));
+
+    await act(() => router.navigate({ to: '/history', search: { revision: 2 } }));
+    await act(async () => rollback.resolve({ revision: 4, text: 'text 1', updatedAt: null }));
+
+    expect(router.state.location.search).toEqual({ revision: 2 });
+    expect(screen.getByText('Restored revision 1 as revision 4.')).toBeTruthy();
   });
 });

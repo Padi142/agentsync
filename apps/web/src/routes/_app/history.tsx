@@ -1,6 +1,6 @@
 import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { z } from 'zod';
 import { Diff } from '../../components/Diff';
 import { formatTime } from '../../format';
@@ -31,6 +31,10 @@ function History() {
   const navigate = useOwnNavigate();
   const [compare, setCompare] = useState<'previous' | 'current'>('previous');
   const [notice, setNotice] = useState('');
+  // History stays mounted while the selection changes, so a rollback that finishes late
+  // checks that its revision is still the one on screen before showing the result.
+  const selected = useRef(revision?.revision);
+  selected.current = revision?.revision;
 
   const rollback = async () => {
     if (!revision) return;
@@ -44,7 +48,11 @@ function History() {
       await router.invalidate();
       return;
     }
-    await navigate({ to: '/history', search: { revision: saved.revision } });
+    if (selected.current === revision.revision) {
+      await navigate({ to: '/history', search: { revision: saved.revision } });
+    } else {
+      await router.invalidate(); // Show the new revision in the list, but keep the selection.
+    }
     setNotice(`Restored revision ${revision.revision} as revision ${saved.revision}.`);
   };
 
