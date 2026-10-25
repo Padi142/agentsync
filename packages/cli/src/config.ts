@@ -1,0 +1,46 @@
+import { join } from 'node:path';
+import { readJson, removeFile, writeJson } from './files.js';
+import type { Io } from './io.js';
+import { configDir } from './paths.js';
+
+/** A device flow started by `init --no-wait`, resumed by the next `init`. */
+export interface PendingLogin {
+  server: string;
+  deviceCode: string;
+  userCode: string;
+  verificationUriComplete: string;
+  interval: number;
+  /** Milliseconds since the epoch. */
+  expiresAt: number;
+}
+
+/**
+ * This Machine's AgentSync state, in one per-user file with mode 0600 because it holds the
+ * Machine token. `written` keeps the text last written to each Target (keyed by its stored
+ * path, e.g. `~/.claude/CLAUDE.md`): Drift is a Target that no longer matches it, and keeping
+ * the text rather than a hash lets us show the hand edit as a diff.
+ */
+export interface Config {
+  server?: string;
+  token?: string;
+  machineId?: string;
+  pending?: PendingLogin;
+  /** The agent that `edit` and `sync` hand Conflicts and Drift to. */
+  handoffAgent?: string;
+  written: Record<string, string>;
+}
+
+export const configFile = (io: Io) => join(configDir(io), 'config.json');
+
+export function loadConfig(io: Io): Config {
+  const config = readJson<Partial<Config>>(configFile(io), {});
+  return { ...config, written: config.written ?? {} };
+}
+
+export function saveConfig(io: Io, config: Config): void {
+  writeJson(configFile(io), config, 0o600);
+}
+
+export function deleteConfig(io: Io): void {
+  removeFile(configFile(io));
+}

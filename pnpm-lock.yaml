@@ -88,13 +88,38 @@ importers:
         version: 4.129.0(@cloudflare/workers-types@5.20260907.1)
 
   packages/cli:
+    dependencies:
+      '@agentsync/contract':
+        specifier: workspace:^
+        version: link:../contract
+      '@agentsync/template':
+        specifier: workspace:^
+        version: link:../template
+      '@orpc/client':
+        specifier: ^1.15.0
+        version: 1.15.0
+      diff:
+        specifier: ^9.0.0
+        version: 9.0.0
     devDependencies:
+      '@orpc/contract':
+        specifier: ^1.15.0
+        version: 1.15.0
+      '@orpc/server':
+        specifier: ^1.15.0
+        version: 1.15.0(ws@8.21.0)
       '@types/node':
         specifier: ^24.10.0
         version: 24.13.3
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@24.13.3)(vite@8.2.2(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13))
+      zod:
+        specifier: ^4.5.4
+        version: 4.5.4
 
   packages/contract:
     dependencies:
@@ -1640,6 +1665,10 @@ packages:
 
   diff@8.0.4:
     resolution: {integrity: sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw==}
+    engines: {node: '>=0.3.1'}
+
+  diff@9.0.0:
+    resolution: {integrity: sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw==}
     engines: {node: '>=0.3.1'}
 
   drizzle-kit@0.31.10:
@@ -3464,6 +3493,8 @@ snapshots:
   detect-libc@2.1.2: {}
 
   diff@8.0.4: {}
+
+  diff@9.0.0: {}
 
   drizzle-kit@0.31.10:
     dependencies:

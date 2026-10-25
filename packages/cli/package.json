@@ -1,23 +1,41 @@
 {
-  "name": "@agentsync/cli",
+  "name": "agentsync",
   "version": "0.1.0",
-  "description": "The AgentSync CLI scaffold",
+  "description": "Keep your agents' Global Instructions in sync across every Machine",
   "license": "MIT",
   "type": "module",
   "bin": {
     "agentsync": "dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "skill",
+    "setup-prompt.md"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests",
+    "test": "vitest run",
     "start": "node dist/index.js"
   },
   "devDependencies": {
+    "@orpc/contract": "^1.15.0",
+    "@orpc/server": "^1.15.0",
     "@types/node": "^24.10.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5",
+    "zod": "^4.5.4"
+  },
+  "dependencies": {
+    "@agentsync/contract": "workspace:^",
+    "@agentsync/template": "workspace:^",
+    "@orpc/client": "^1.15.0",
+    "diff": "^9.0.0"
   }
 }
