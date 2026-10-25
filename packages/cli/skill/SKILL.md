@@ -61,3 +61,4 @@ The SessionStart hook runs `agentsync sync --hook <agent>` and prints at most on
 - **Drift**: the Target was skipped. Offer to [fold it into the Template](#fold-drift-into-the-template).
 - **open Conflict**: offer to [resolve it](#resolve-a-conflict).
 - **kept the existing instructions**: the server was unreachable or the Machine is not registered. The files on disk are unchanged.
+- **sync failed; some Targets may have been updated**: it failed after it started writing. Run `agentsync status --json` to see where each Target stands.

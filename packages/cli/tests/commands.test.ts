@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
@@ -99,6 +99,23 @@ describe('logout', () => {
     expect(result.code).toBe(0);
     expect(readFileSync(skill, 'utf8')).toContain('My addition.');
     expect(result.stderr).toContain('~/.claude/skills/agentsync/SKILL.md');
+  });
+
+  it('keeps a symlinked skill directory (e.g. from dotfiles) and finishes the cleanup', async () => {
+    const t = setup();
+    mkdirSync(t.path('dotfiles/agentsync-skill'), { recursive: true });
+    mkdirSync(t.path('.claude/skills'), { recursive: true });
+    symlinkSync(t.path('dotfiles/agentsync-skill'), t.path('.claude/skills/agentsync'));
+    await t.cli('init', '--yes', '--server', t.server.url);
+    expect(existsSync(t.path('dotfiles/agentsync-skill/SKILL.md'))).toBe(true);
+
+    const result = await t.cli('logout');
+
+    expect(result.code).toBe(0);
+    expect(lstatSync(t.path('.claude/skills/agentsync')).isSymbolicLink()).toBe(true);
+    expect(existsSync(t.path('dotfiles/agentsync-skill/SKILL.md'))).toBe(false);
+    expect(existsSync(t.path('.config/agentsync/config.json'))).toBe(false);
+    expect(JSON.parse(readFileSync(t.path('.claude/settings.json'), 'utf8'))).toEqual({});
   });
 
   it('still cleans up when the server already revoked the Machine', async () => {

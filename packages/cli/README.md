@@ -124,7 +124,8 @@ it when the current instructions matter. The skill says the same.
 for Claude Code and `~/.agents/skills/agentsync/` for Codex. The config keeps a SHA-256 of
 each skill file it writes. `init` updates, and `logout` removes, only a file that still
 matches it. A skill file AgentSync did not write, or that was changed since, is left alone
-with a warning. It covers the commands, exit
+with a warning. A symlinked `skills/agentsync/` directory stays: `logout` removes only the
+file inside it. It covers the commands, exit
 codes, Template syntax, folding Drift into the Template, and resolving Conflicts.
 
 ## Development

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync, rmdirSync } from 'node:fs';
+import { lstatSync, readFileSync, rmdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Agent } from './agents.js';
 import type { Context } from './context.js';
@@ -28,9 +28,13 @@ export function installSkill(ctx: Context, agent: Agent): { file: string; writte
   return { file, written: true };
 }
 
-/** Remove the skill's own directory (`skills/agentsync/`) once it is empty. */
+/**
+ * Remove the skill's own directory (`skills/agentsync/`) once it is empty. A symlink there
+ * (e.g. to a dotfiles directory) belongs to the person, so it stays.
+ */
 function removeEmptyDir(dir: string): void {
   try {
+    if (lstatSync(dir).isSymbolicLink()) return;
     rmdirSync(dir);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
