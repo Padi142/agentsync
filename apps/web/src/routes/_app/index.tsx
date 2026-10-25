@@ -122,7 +122,7 @@ function TemplateEditor() {
         </div>
         {machines.length === 0 ? (
           <p className="muted">
-            No Machines yet. Register one with the AgentSync CLI to preview how it Renders.
+            No Machines yet. <Link to="/setup">Set one up</Link> to preview how it Renders.
           </p>
         ) : (
           <>

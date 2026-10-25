@@ -12,7 +12,8 @@ them current from Claude Code and Codex `SessionStart` hooks.
 
 The web UI edits the Template with live syntax errors and a per-Machine,
 per-agent preview, manages Machines and their Variables, shows Template and
-Variable history with rollback, and resolves Conflicts (`/conflicts`). Pages load
+Variable history with rollback, resolves Conflicts (`/conflicts`), and gives the
+install command and agent setup prompt (`/setup`, from `packages/cli/setup-prompt.md`). Pages load
 their data in the browser through the oRPC client (the root route sets
 `ssr: false`); the server renders only the document shell. Device approval
 needs no page here: WorkOS AuthKit hosts the `verification_uri`.

@@ -747,3 +747,16 @@ fieldset {
     transition: background-color 150ms ease, color 150ms ease;
   }
 }
+
+/* Setup */
+
+.copyable {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  margin-bottom: 8px;
+}
+
+.copyable pre {
+  width: 100%;
+}
