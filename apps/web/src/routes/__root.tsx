@@ -8,6 +8,8 @@ import {
   useRouterState,
 } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
+import { clearProfile } from '@databuddy/sdk';
+import { Analytics, useIdentify } from '../analytics';
 import { BrandMark, Icon } from '../components/Icon';
 import { loginHref } from '../login';
 import { ErrorPage } from '../components/ErrorPage';
@@ -75,6 +77,7 @@ const Brand = () => (
 
 function Layout() {
   const { user, openConflicts } = Route.useRouteContext();
+  useIdentify(user);
   const loading = useRouterState({ select: (state) => state.status === 'pending' });
   const path = useRouterState({ select: (state) => state.location.pathname });
   return (
@@ -109,7 +112,7 @@ function Layout() {
               <div id="account-menu" className="account-menu" popover="auto">
                 <p className="account-label">Signed in as</p>
                 <p className="account-email">{user.email}</p>
-                <form action="/logout" method="post">
+                <form action="/logout" method="post" onSubmit={clearProfile}>
                   <button className="button secondary small" type="submit">Sign out</button>
                 </form>
               </div>
@@ -137,6 +140,7 @@ function DocumentShell({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
+        <Analytics />
         <Scripts />
       </body>
     </html>

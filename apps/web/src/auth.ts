@@ -4,6 +4,7 @@ import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } 
 import { HTTPException } from 'hono/http-exception';
 import { findUser, provisionUser, type AppUser } from './db/users';
 import type { Env } from './env';
+import { SIGNUP_COOKIE } from './signup';
 
 const SESSION_COOKIE = 'wos-session';
 const LOGIN_COOKIE = 'wos-login';
@@ -113,7 +114,10 @@ export async function handleCallback(c: AuthContext) {
       session: { sealSession: true, cookiePassword: c.env.WORKOS_COOKIE_PASSWORD },
     });
     if (!result.sealedSession) throw new Error('Missing sealed session');
+    const isNew = !await findUser(c.env, result.user.id);
     await provisionUser(c.env, result.user);
+    // Readable by the page, which reports the sign-up and removes it.
+    if (isNew) setCookie(c, SIGNUP_COOKIE, '1', { ...cookieOptions(c), httpOnly: false, maxAge: LOGIN_TTL });
     setSession(c, result.sealedSession);
     // Checked again on the way out, so the redirect never leaves the app.
     const returnTo = typeof login.returnTo === 'string' ? login.returnTo : undefined;

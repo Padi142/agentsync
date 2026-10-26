@@ -18,6 +18,7 @@
     }
   ],
   "vars": {
+    "DATABUDDY_WEBSITE_ID": "ddcf6feb-4cb3-40be-944a-47262adf4b69",
     "WORKOS_CLIENT_ID": "client_01M5QJZF8AA9ZGPB2NXPAMPCB6",
     "WORKOS_REDIRECT_URI": "https://agentsync.krejzac.cz/callback"
   },

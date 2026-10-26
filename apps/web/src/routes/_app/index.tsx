@@ -3,6 +3,7 @@ import { BUILTIN_VARIABLES, validate, type TemplateError } from '@agentsync/temp
 import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, Link, useBlocker, useRouter } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
+import { track } from '../../analytics';
 import { CodeEditor, type EditorHandle, type LineMark } from '../../components/CodeEditor';
 import { Command, CopyButton } from '../../components/Copy';
 import { Icon } from '../../components/Icon';
@@ -72,6 +73,7 @@ function TemplateEditor() {
     setNotice('');
     const [failure, saved] = await safe(rpc.template.put({ text, expectedRevision: revision }));
     if (!failure) {
+      track('template_saved');
       draft.saved(saved.revision);
       await router.invalidate();
     } else if (isDefinedError(failure) && failure.code === 'CONFLICT') {
