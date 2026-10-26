@@ -31,7 +31,7 @@ async function chooseTargets(ctx: Context): Promise<Target[]> {
   const targets: Target[] = [];
   for (const id of flags.agent) {
     const agent = findAgent(id);
-    if (!agent) throw usage(`Unknown agent "${id}". Known agents: claude, codex. Use --target for others.`);
+    if (!agent) throw usage(`Unknown agent "${id}". Known agents: ${AGENTS.map((a) => a.id).join(', ')}. Use --target for others.`);
     targets.push(targetFor(agent, io));
   }
   for (const value of flags.target) {
@@ -58,7 +58,8 @@ async function chooseTargets(ctx: Context): Promise<Target[]> {
     targets.push(...AGENTS.filter((agent) => picked.includes(agent.id)).map((agent) => targetFor(agent, io)));
   }
   if (!targets.length) {
-    throw usage('No agents found on this Machine. Pass --agent claude, --agent codex, or --target <agent>=<path>.');
+    const flags = AGENTS.map((agent) => `--agent ${agent.id}`).join(', ');
+    throw usage(`No agents found on this Machine. Pass ${flags}, or --target <agent>=<path>.`);
   }
   return targets;
 }
@@ -243,13 +244,18 @@ export async function init(ctx: Context): Promise<Outcome> {
     (agent): agent is Agent => !!agent,
   );
   const hooks: string[] = [];
+  const hooksLeftAlone: string[] = [];
   const skills: string[] = [];
   const skillsLeftAlone: string[] = [];
   for (const agent of agents) {
     if (ctx.flags.hooks) {
-      installHook(ctx, agent);
-      hooks.push(tildify(agent.hooksFile(ctx.io), ctx.io));
-      ctx.detail(`Installed the ${agent.name} SessionStart hook in ${tildify(agent.hooksFile(ctx.io), ctx.io)}.`);
+      const file = tildify(agent.hooksFile(ctx.io), ctx.io);
+      if (installHook(ctx, agent)) {
+        hooks.push(file);
+        ctx.detail(`Installed the ${agent.name} hook in ${file}.`);
+      } else {
+        hooksLeftAlone.push(file);
+      }
     }
     if (ctx.flags.skill) {
       const { file, written } = installSkill(ctx, agent);
@@ -263,10 +269,13 @@ export async function init(ctx: Context): Promise<Outcome> {
   if (hooks.length && agents.some((agent) => agent.id === 'codex')) {
     ctx.warn('Codex: open Codex, run /hooks and trust the new hook. It runs only once you do.');
   }
+  for (const file of hooksLeftAlone) {
+    ctx.warn(`Left ${file} alone: AgentSync did not write it, or it was changed since. Remove it to get the AgentSync hook.`);
+  }
   for (const file of skillsLeftAlone) {
     ctx.warn(`Left ${file} alone: AgentSync did not write it, or it was changed since. Remove it to get the agentsync skill.`);
   }
 
   const { code, data } = await applySync(ctx, await client.machines.sync());
-  return { code: code ?? EXIT.ok, data: { machineId, nickname: machine.nickname, hostname: machine.hostname, imported, hooks, skills, skillsLeftAlone, ...data } };
+  return { code: code ?? EXIT.ok, data: { machineId, nickname: machine.nickname, hostname: machine.hostname, imported, hooks, hooksLeftAlone, skills, skillsLeftAlone, ...data } };
 }

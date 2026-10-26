@@ -171,7 +171,7 @@ function SyntaxReference() {
         <dt><code>{'{{machine.nickname}}'}</code></dt>
         <dd>The name you give a Machine. <code>{'{{machine.hostname}}'}</code> and <code>{'{{machine.os}}'}</code> work too.</dd>
         <dt><code>{'{{agent}}'}</code></dt>
-        <dd>The agent the file is for, such as <code>claude</code> or <code>codex</code>.</dd>
+        <dd>The agent the file is for, such as <code>claude</code>, <code>codex</code> or <code>pi</code>.</dd>
         <dt><code>{'{{if agent == "codex"}}…{{else}}…{{end}}'}</code></dt>
         <dd>Text for some Machines or agents only. <code>!=</code> works too.</dd>
         <dt><code>{'\\{{'}</code></dt>

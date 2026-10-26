@@ -74,6 +74,24 @@ describe('logout', () => {
     expect(existsSync(t.path('.claude/skills/agentsync'))).toBe(false);
   });
 
+  it('removes the pi extension, unless the person changed it', async () => {
+    const t = setup();
+    mkdirSync(t.path('.pi/agent'), { recursive: true });
+    await t.cli('init', '--yes', '--server', t.server.url);
+    const extension = t.path('.pi/agent/extensions/agentsync.ts');
+    expect(existsSync(extension)).toBe(true);
+
+    expect((await t.cli('logout')).code).toBe(0);
+    expect(existsSync(extension)).toBe(false);
+
+    await t.cli('init', '--yes', '--server', t.server.url);
+    writeFileSync(extension, `${readFileSync(extension, 'utf8')}// mine\n`);
+    const result = await t.cli('logout');
+
+    expect(readFileSync(extension, 'utf8')).toContain('// mine');
+    expect(result.stderr).toContain('~/.pi/agent/extensions/agentsync.ts');
+  });
+
   it('leaves a hook of the person’s own that mentions the AgentSync command', async () => {
     const t = setup();
     const wrapper = { type: 'command', command: 'audit-wrapper agentsync sync --hook claude; run-other-setup' };

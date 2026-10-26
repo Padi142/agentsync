@@ -8,7 +8,7 @@ Drizzle, and a typed oRPC API that implements `@agentsync/contract`: the
 Template, Machines and their Variables (with revision history), Conflicts, and
 Machine registration through the WorkOS device flow. The `agentsync` CLI
 (`packages/cli`) Renders the Template into each agent's Global Instructions and keeps
-them current from Claude Code and Codex `SessionStart` hooks.
+them current from Claude Code and Codex `SessionStart` hooks and a pi extension.
 
 The web UI has three sections. **Template** edits the Template (live syntax
 errors, Cmd/Ctrl+S) beside a per-Machine, per-agent preview that renders the

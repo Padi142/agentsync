@@ -1,6 +1,7 @@
 import type { Agent } from './agents.js';
 import type { Context } from './context.js';
 import { readJson, writeJson } from './files.js';
+import { removeOwned, writeOwned } from './owned.js';
 
 type Json = Record<string, unknown>;
 
@@ -65,26 +66,65 @@ export const hookHandler = (ctx: Context, agent: Agent): Handler => ({
   timeout: HOOK_TIMEOUT_SECONDS,
 });
 
-/** Install the hook into `agent`'s config file and remember exactly what was written. */
-export function installHook(ctx: Context, agent: Agent): void {
+/**
+ * The pi extension that runs `command`. pi awaits an extension's factory before it reads
+ * AGENTS.md, so the session that is starting gets the update. The `AgentSync:` line goes to the
+ * person as a notice and to the model at the end of the system prompt. Whatever happens, the
+ * promise resolves, so pi always starts.
+ */
+export const piExtension = (command: string) => `// Written by AgentSync: it syncs your Global Instructions when a pi session starts.
+// AgentSync updates this file while it is unchanged, and \`agentsync logout\` removes it.
+import { exec } from 'node:child_process';
+import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+
+const COMMAND = ${JSON.stringify(command)};
+
+export default async function agentsync(pi: ExtensionAPI) {
+  const line = await new Promise<string>((resolve) => {
+    try {
+      exec(COMMAND, { timeout: ${HOOK_TIMEOUT_SECONDS * 1000}, windowsHide: true }, (_error, stdout) => resolve(String(stdout ?? '').trim()));
+    } catch {
+      resolve('');
+    }
+  });
+  if (!line) return;
+  pi.on('session_start', (_event, ctx) => {
+    if (ctx.hasUI) ctx.ui.notify(line, 'info');
+  });
+  pi.on('before_agent_start', (event) => ({ systemPrompt: \`\${event.systemPrompt}\\n\\n\${line}\` }));
+}
+`;
+
+/**
+ * Install the hook into `agent`'s config and remember exactly what was written. Returns false
+ * when a pi extension was left alone because someone wrote or changed it.
+ */
+export function installHook(ctx: Context, agent: Agent): boolean {
   const file = agent.hooksFile(ctx.io);
   const handler = hookHandler(ctx, agent);
+  if (agent.hookKind === 'pi-extension') {
+    const written = writeOwned((ctx.config.extensions ??= {}), file, piExtension(handler.command!));
+    if (written) ctx.save();
+    return written;
+  }
   const hooks = (ctx.config.hooks ??= {});
   writeJson(file, withHook(readJson<Json>(file, {}), handler, hooks[file]), { createMode: 0o600 });
   hooks[file] = handler;
   ctx.save();
+  return true;
 }
 
-/** Remove every hook AgentSync recorded installing. Returns the files it changed. */
-export function uninstallHooks(ctx: Context): string[] {
-  const changed: string[] = [];
+/** Remove every hook AgentSync recorded installing, unless someone changed it since. */
+export function uninstallHooks(ctx: Context): { removed: string[]; kept: string[] } {
+  const removed: string[] = [];
   for (const [file, handler] of Object.entries(ctx.config.hooks ?? {})) {
     const settings = readJson<Json | null>(file, null);
     if (!settings) continue;
     const next = withoutHook(settings, handler);
     if (JSON.stringify(next) === JSON.stringify(settings)) continue;
     writeJson(file, next);
-    changed.push(file);
+    removed.push(file);
   }
-  return changed;
+  const extensions = removeOwned(ctx.config.extensions ?? {});
+  return { removed: [...removed, ...extensions.removed], kept: extensions.kept };
 }

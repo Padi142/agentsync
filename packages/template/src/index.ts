@@ -160,7 +160,7 @@ export const BUILTIN_VARIABLES: readonly BuiltinVariable[] = [
   },
   {
     name: 'agent',
-    description: 'The agent a Target belongs to, such as claude or codex',
+    description: 'The agent a Target belongs to, such as claude, codex or pi',
     read: (builtins) => builtins.agent,
   },
 ];
