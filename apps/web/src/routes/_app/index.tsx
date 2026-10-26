@@ -8,6 +8,7 @@ import { CodeEditor, type EditorHandle, type LineMark } from '../../components/C
 import { Command, CopyButton } from '../../components/Copy';
 import { Icon } from '../../components/Icon';
 import { InsertMenu, InsertPalette, insertables } from '../../components/Insert';
+import { Select } from '../../components/Select';
 import { Markdown, MarkedText } from '../../components/Markdown';
 import { TemplateBar } from '../../components/TemplateBar';
 import { Ago } from '../../components/Time';
@@ -200,9 +201,8 @@ function Preview({ machines, machine, example, onMachine, agents, agent, onAgent
           {example ? (
             <span className="example-note">Example Machine</span>
           ) : (
-            <select className="select small" aria-label="Machine" value={machine.id} onChange={(e) => onMachine(e.target.value)}>
-              {machines.map((m) => <option key={m.id} value={m.id}>{m.nickname}</option>)}
-            </select>
+            <Select label="Machine" value={machine.id} onChange={onMachine}
+              options={machines.map((m) => ({ value: m.id, label: m.nickname, description: `${m.hostname}, ${m.os}` }))} />
           )}
           {agents.length > 1 ? (
             <div className="segmented" role="group" aria-label="Agent">

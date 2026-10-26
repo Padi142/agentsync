@@ -2,6 +2,7 @@ import { BUILTIN_VARIABLES } from '@agentsync/template';
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { Suggestion } from './CodeEditor';
 import { Icon } from './Icon';
+import { Select } from './Select';
 
 /** Something a click can write into the Template: `before` and `after` go around the selection. */
 export interface Insertable {
@@ -188,7 +189,6 @@ function ConditionBuilder({ values, onInsert, disabled }: {
   disabled?: boolean;
 }) {
   const names = Object.keys(values);
-  const own = names.filter((name) => !BUILTIN_NAMES.has(name));
   const [picked, setVariable] = useState('machine.os');
   const variable = names.includes(picked) ? picked : names[0]!;
   const [negate, setNegate] = useState(false);
@@ -205,17 +205,10 @@ function ConditionBuilder({ values, onInsert, disabled }: {
     <div className="condition">
       <div className="condition-row">
         <span className="condition-word">If</span>
-        <select className="select small" aria-label="Variable" value={variable} disabled={disabled}
-          onChange={(event) => setVariable(event.target.value)}>
-          <optgroup label="Built-in">
-            {names.filter((name) => BUILTIN_NAMES.has(name)).map((name) => <option key={name}>{name}</option>)}
-          </optgroup>
-          {own.length ? (
-            <optgroup label="Your Variables">
-              {own.map((name) => <option key={name}>{name}</option>)}
-            </optgroup>
-          ) : null}
-        </select>
+        <Select label="Variable" mono value={variable} disabled={disabled} onChange={setVariable}
+          options={names.map((name) => BUILTIN_NAMES.has(name)
+            ? { value: name, label: name, group: 'Built-in', description: BUILTIN_VARIABLES.find((v) => v.name === name)?.description }
+            : { value: name, label: name, group: 'Your Variables' })} />
         <div className="segmented" role="group" aria-label="Comparison">
           <button type="button" aria-pressed={!negate} disabled={disabled} onClick={() => setNegate(false)}>is</button>
           <button type="button" aria-pressed={negate} disabled={disabled} onClick={() => setNegate(true)}>is not</button>

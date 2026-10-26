@@ -55,8 +55,13 @@ describe('Template editor', () => {
 
     // A condition wraps the selection: pick the Variable, the comparison, then click a value.
     const palette = within(screen.getByRole('region', { name: 'Insert at the caret' }));
+    // jsdom has no Popover API, so the open list still counts as hidden there.
+    const pickVariable = (name: string) => {
+      fireEvent.click(palette.getByRole('combobox', { name: 'Variable' }));
+      fireEvent.click(screen.getByRole('option', { hidden: true, name: new RegExp(`^${name.replace('.', '\\.')}`) }));
+    };
     editor.setSelectionRange(6, 11);
-    fireEvent.change(palette.getByRole('combobox', { name: 'Variable' }), { target: { value: 'agent' } });
+    pickVariable('agent');
     fireEvent.click(palette.getByRole('button', { name: 'is not' }));
     fireEvent.click(palette.getByRole('button', { name: 'codex' }));
     await act(async () => new Promise(requestAnimationFrame));
@@ -73,7 +78,7 @@ describe('Template editor', () => {
     // On an empty line, or around whole lines, a block's tags get lines of their own.
     fireEvent.change(editor, { target: { value: 'one\n\ntwo\nthree\n' } });
     editor.setSelectionRange(4, 4);
-    fireEvent.change(palette.getByRole('combobox', { name: 'Variable' }), { target: { value: 'machine.os' } });
+    pickVariable('machine.os');
     fireEvent.click(palette.getByRole('button', { name: 'is' }));
     fireEvent.click(palette.getByRole('button', { name: 'linux' }));
     await act(async () => new Promise(requestAnimationFrame));

@@ -1084,6 +1084,63 @@ kbd {
   list-style: none;
 }
 
+/* A Select's list: the suggestions' look, in the top layer under its button. */
+.select-list {
+  position: fixed;
+  inset: auto;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(360px, 60dvh);
+  overflow-y: auto;
+  margin: 0;
+  color: var(--ink);
+}
+
+.select-list .suggestion {
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 14px;
+}
+
+.select-list .suggestion > :not(.select-check) {
+  grid-column: 1;
+}
+
+.select-list .suggestion strong {
+  font-weight: 550;
+}
+
+.select-list .suggestion[aria-selected='true'] {
+  background: none;
+}
+
+.select-list .suggestion[data-active] {
+  background: var(--ditto-wash);
+}
+
+.select-list .select-check {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  color: var(--ditto-ink);
+}
+
+/* Block-level, so a long label ends in an ellipsis. */
+button.select {
+  display: inline-block;
+  max-width: 100%;
+  line-height: 22px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.select[data-mono] {
+  font-family: var(--mono);
+  font-variation-settings: var(--code);
+}
+
 /* ---------- Insert menu ---------- */
 
 .insert-menu {
@@ -1191,12 +1248,6 @@ kbd {
   font-family: var(--mono);
   font-variation-settings: var(--code);
   font-weight: 700;
-}
-
-.condition-row .select {
-  max-width: 100%;
-  font-family: var(--mono);
-  font-variation-settings: var(--code);
 }
 
 .condition-value {
