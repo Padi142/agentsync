@@ -1,6 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "agentsync-web",
+  "name": "agentsync",
+  "account_id": "96e93dbd051ab80c048e781ecf028a7a",
+  "workers_dev": true,
   "main": "src/server.ts",
   "compatibility_date": "2026-09-07",
   "compatibility_flags": ["nodejs_compat"],
@@ -8,13 +10,26 @@
     {
       "binding": "DB",
       "database_name": "agentsync-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "641eb5f9-8545-4c7c-8fda-e44992ce06f3",
+      // Local dev keeps its own D1, stored under this ID in .wrangler/state.
+      "preview_database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "drizzle/migrations",
       "migrations_pattern": "drizzle/migrations/*.sql"
     }
   ],
-  "vars": {},
+  "vars": {
+    "WORKOS_CLIENT_ID": "client_01M5QJZF8AA9ZGPB2NXPAMPCB6",
+    "WORKOS_REDIRECT_URI": "https://agentsync.krejzac.cz/callback"
+  },
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": true
+    }
   }
 }

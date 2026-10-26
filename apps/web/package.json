@@ -10,8 +10,9 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply agentsync-db --local --config wrangler.jsonc",
+    "db:migrate:remote": "wrangler d1 migrations apply agentsync-db --remote --config wrangler.jsonc",
     "cf-typegen": "wrangler types --config wrangler.jsonc",
-    "deploy": "pnpm build && wrangler deploy --config wrangler.jsonc",
+    "deploy": "pnpm build && wrangler deploy",
     "test": "vitest run"
   },
   "dependencies": {

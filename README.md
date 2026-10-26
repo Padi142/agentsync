@@ -131,11 +131,40 @@ complete AuthKit sign-in, save the Template, and sign out. This needs valid Work
 
 ## Deployment
 
-Replace the placeholder D1 database ID in `apps/web/wrangler.jsonc`, apply the
-migrations to the deployment database, and configure the WorkOS bindings.
-Store `WORKOS_API_KEY` and `WORKOS_COOKIE_PASSWORD` as Worker secrets. Configure
-`WORKOS_CLIENT_ID` and `WORKOS_REDIRECT_URI` as Worker variables. Deployment is
-not part of the local scaffold.
+The app is deployed at <https://agentsync.krejzac.cz> as the
+`agentsync` Cloudflare Worker, backed by the `agentsync-db` D1 database.
+`apps/web/wrangler.jsonc` contains the account, database binding, WorkOS client
+ID, and HTTPS callback URL. The callback's origin is the only origin the app accepts
+browser requests from, so the web app works only on that domain; the Worker's
+`workers.dev` URL still serves the CLI, which sends no Origin. It currently uses the
+existing WorkOS staging environment.
+
+Use Node.js 22.12+ and authenticate Wrangler for the configured Cloudflare
+account (`pnpm --filter @agentsync/web exec wrangler login`, or set
+`CLOUDFLARE_API_TOKEN`). From the repository root:
+
+```sh
+pnpm db:migrate:remote
+pnpm run deploy
+```
+
+Remote migrations target the deployed database; local development continues to
+use its own D1 database. `pnpm run deploy` builds the shared packages and web app,
+then uploads the generated Worker and static assets.
+
+`WORKOS_API_KEY` and a separate deployment `WORKOS_COOKIE_PASSWORD` are stored as
+Worker secrets. Later deployments preserve them. To set or rotate either secret:
+
+```sh
+pnpm --filter @agentsync/web exec wrangler secret put WORKOS_API_KEY
+pnpm --filter @agentsync/web exec wrangler secret put WORKOS_COOKIE_PASSWORD
+```
+
+The HTTPS callback is registered in WorkOS. Set the application's **Initiate
+login URI** to `https://agentsync.krejzac.cz/login` and allow
+`https://agentsync.krejzac.cz/` as a **Sign-out redirect** in the WorkOS
+dashboard. These settings require WorkOS dashboard access; the API key can
+register callbacks but cannot manage those two settings.
 
 ## License
 
