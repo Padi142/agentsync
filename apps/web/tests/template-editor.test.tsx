@@ -53,19 +53,36 @@ describe('Template editor', () => {
     render(<Editor />);
     const editor = screen.getByLabelText<HTMLTextAreaElement>('Template');
 
-    // A Block wraps the selection.
+    // A condition wraps the selection: pick the Variable, the comparison, then click a value.
+    const palette = within(screen.getByRole('region', { name: 'Insert at the caret' }));
     editor.setSelectionRange(6, 11);
-    fireEvent.click(screen.getByRole('button', { name: /^\{\{if agent == "codex"\}\}/ }));
+    fireEvent.change(palette.getByRole('combobox', { name: 'Variable' }), { target: { value: 'agent' } });
+    fireEvent.click(palette.getByRole('button', { name: 'is not' }));
+    fireEvent.click(palette.getByRole('button', { name: 'codex' }));
     await act(async () => new Promise(requestAnimationFrame));
-    expect(editor.value).toBe('Hello {{if agent == "codex"}}world{{end}}');
+    expect(editor.value).toBe('Hello {{if agent != "codex"}}world{{end}}');
 
     // Your own Variables are offered too, and say where they are set.
     editor.setSelectionRange(5, 5);
     fireEvent.click(screen.getByRole('button', { name: 'Insert' }));
     fireEvent.click(screen.getByRole('menuitem', { name: /\{\{editor\}\}.*Set on 1 of 2 Machines/ }));
     await act(async () => new Promise(requestAnimationFrame));
-    expect(editor.value).toBe('Hello{{editor}} {{if agent == "codex"}}world{{end}}');
+    expect(editor.value).toBe('Hello{{editor}} {{if agent != "codex"}}world{{end}}');
     expect(screen.queryByRole('menu')).toBeNull();
+
+    // On an empty line, or around whole lines, a block's tags get lines of their own.
+    fireEvent.change(editor, { target: { value: 'one\n\ntwo\nthree\n' } });
+    editor.setSelectionRange(4, 4);
+    fireEvent.change(palette.getByRole('combobox', { name: 'Variable' }), { target: { value: 'machine.os' } });
+    fireEvent.click(palette.getByRole('button', { name: 'is' }));
+    fireEvent.click(palette.getByRole('button', { name: 'linux' }));
+    await act(async () => new Promise(requestAnimationFrame));
+    expect(editor.value).toBe('one\n{{if machine.os == "linux"}}\n\n{{end}}\ntwo\nthree\n');
+    const two = editor.value.indexOf('two');
+    editor.setSelectionRange(two, editor.value.length);
+    fireEvent.click(palette.getByRole('button', { name: 'macos' }));
+    await act(async () => new Promise(requestAnimationFrame));
+    expect(editor.value).toBe('one\n{{if machine.os == "linux"}}\n\n{{end}}\n{{if machine.os == "macos"}}\ntwo\nthree\n{{end}}\n');
   });
 
   it('offers the values a condition can compare with, and completes the quote', async () => {

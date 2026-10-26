@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CodeEditor, type EditorHandle, type LineMark } from '../../components/CodeEditor';
 import { Command, CopyButton } from '../../components/Copy';
 import { Icon } from '../../components/Icon';
-import { InsertMenu, InsertPalette, insertables, type Insertable } from '../../components/Insert';
+import { InsertMenu, InsertPalette, insertables } from '../../components/Insert';
 import { Markdown, MarkedText } from '../../components/Markdown';
 import { TemplateBar } from '../../components/TemplateBar';
 import { Ago } from '../../components/Time';
@@ -65,7 +65,8 @@ function TemplateEditor() {
   const own = ownVariables(variables, machines.length);
   const items = insertables(own);
   const editor = useRef<EditorHandle>(null);
-  const insert = (item: Insertable) => editor.current?.wrap(item.before, item.after);
+  const values = conditionValues(machines, variables);
+  const insert = ({ before, after }: { before: string; after?: string }) => editor.current?.wrap(before, after);
 
   const save = () => draft.run(async (text, revision) => {
     setNotice('');
@@ -150,14 +151,14 @@ function TemplateEditor() {
             </div>
           ) : null}
           <CodeEditor ref={editor} label="Template" value={text} onChange={draft.set} marks={marks} readOnly={draft.busy}
-            suggestions={[...BUILTIN_VARIABLES, ...own]} values={conditionValues(machines, variables)}
+            suggestions={[...BUILTIN_VARIABLES, ...own]} values={values}
             placeholder={'# Global instructions\n\nWrite what every agent should know. Type {{ for Variables.'}
             toolbar={<span>Type <code>{'{{'}</code> for Variables</span>}
-            actions={<InsertMenu items={items} onInsert={insert} disabled={draft.busy} />} />
+            actions={<InsertMenu items={items} values={values} onInsert={insert} disabled={draft.busy} />} />
           {error ? (
             <p className="callout error" role="alert">Line {error.line}, column {error.column}: {error.message}</p>
           ) : null}
-          <InsertPalette items={items} onInsert={insert} disabled={draft.busy} />
+          <InsertPalette items={items} values={values} onInsert={insert} disabled={draft.busy} />
           <p className="example-note"><Link to="/docs/$page" params={{ page: 'templates' }}>Read the Template guide</Link></p>
         </section>
 

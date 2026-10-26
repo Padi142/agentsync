@@ -164,7 +164,7 @@ function Resolver() {
           {notice ? <p className="callout warning" role="status">{notice}</p> : null}
           <CodeEditor ref={editor} label="Merged Template" value={text} onChange={draft.set} marks={marks} readOnly={draft.busy}
             suggestions={BUILTIN_VARIABLES} values={VALUES} toolbar={<span>Merged Template</span>}
-            actions={<InsertMenu items={INSERTABLES} disabled={draft.busy} onInsert={(item) => editor.current?.wrap(item.before, item.after)} />} />
+            actions={<InsertMenu items={INSERTABLES} values={VALUES} disabled={draft.busy} onInsert={(item) => editor.current?.wrap(item.before, item.after)} />} />
           {markers || error || suspected.length ? (
             <ul className="issues">
               {markers ? <li className="callout error">Remove every Conflict marker (<code>{'<<<<<<<'}</code>, <code>=======</code>, <code>{'>>>>>>>'}</code>) before saving.</li> : null}

@@ -14,7 +14,10 @@ export interface Suggestion {
 
 /** Lets a palette outside the editor write into it at the caret. */
 export interface EditorHandle {
-  /** Put `before` and `after` around the selection and leave the caret just before `after`. */
+  /**
+   * Put `before` and `after` around the selection and leave the caret just before `after`. A block
+   * (`after` given) around whole lines, or on an empty line, gets its tags on lines of their own.
+   */
   wrap: (before: string, after?: string) => void;
 }
 
@@ -163,9 +166,15 @@ export function CodeEditor({ ref, value, onChange, marks = [], label, readOnly =
     wrap: (before, after = '') => {
       const input = textarea.current;
       if (!input || readOnly) return;
-      const { selectionStart: from, selectionEnd: to } = input;
-      const selected = input.value.slice(from, to);
-      insert(input, from, to, before + selected + after, onChange, from + before.length + selected.length);
+      const { value: text, selectionStart: from, selectionEnd: to } = input;
+      const selected = text.slice(from, to);
+      // A selection of whole lines usually ends with their line break, which stays after the block.
+      const trailing = selected.endsWith('\n') ? '\n' : '';
+      const body = selected.slice(0, selected.length - trailing.length);
+      const lines = after !== '' && (from === 0 || text[from - 1] === '\n')
+        && (trailing !== '' || to === text.length || text[to] === '\n');
+      if (lines) insert(input, from, to, `${before}\n${body}\n${after}${trailing}`, onChange, from + before.length + 1 + body.length);
+      else insert(input, from, to, before + selected + after, onChange, from + before.length + selected.length);
     },
   }), [readOnly, onChange]);
 

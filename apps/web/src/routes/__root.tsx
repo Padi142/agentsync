@@ -8,7 +8,7 @@ import {
   useRouterState,
 } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
-import { BrandMark } from '../components/Icon';
+import { BrandMark, Icon } from '../components/Icon';
 import { loginHref } from '../login';
 import { ErrorPage } from '../components/ErrorPage';
 import { rpc } from '../rpc';
@@ -102,10 +102,17 @@ function Layout() {
                   {openConflicts === 1 ? 'Conflict' : 'Conflicts'}
                 </Link>
               ) : null}
-              <span className="account" title={user.name}>{user.email}</span>
-              <form action="/logout" method="post">
-                <button className="button secondary small" type="submit">Sign out</button>
-              </form>
+              {/* The email stays behind a click, so it isn't on every screenshot or shared screen. */}
+              <button type="button" className="icon-button" popoverTarget="account-menu" aria-label="Account">
+                <Icon name="user" />
+              </button>
+              <div id="account-menu" className="account-menu" popover="auto">
+                <p className="account-label">Signed in as</p>
+                <p className="account-email">{user.email}</p>
+                <form action="/logout" method="post">
+                  <button className="button secondary small" type="submit">Sign out</button>
+                </form>
+              </div>
             </>
           ) : path === '/signin' ? null : (
             <a className="button small" href={loginHref(undefined)}>Sign in</a>

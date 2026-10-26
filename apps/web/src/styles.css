@@ -239,12 +239,41 @@ p {
   min-width: 0;
 }
 
-.account {
-  color: var(--graphite);
+/* Opened from the account button; the top layer puts it under the top bar's right end. */
+.account-menu {
+  position: fixed;
+  inset: auto;
+  top: calc(var(--topbar) - 4px);
+  right: max(12px, env(safe-area-inset-right));
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: 0 12px 32px -12px rgba(26, 27, 37, 0.28);
   font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.account-menu:popover-open {
+  animation: pop 140ms var(--ease-out);
+  transform-origin: top right;
+}
+
+.account-menu p {
+  margin: 0;
+}
+
+.account-label {
+  color: var(--graphite);
+}
+
+.account-menu .account-email {
+  margin-bottom: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .conflict-pill {
@@ -1123,6 +1152,103 @@ kbd {
 .insert-option:hover {
   outline: 0;
   background: var(--ditto-wash);
+}
+
+.insert-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 6px 2px;
+  font-weight: 600;
+}
+
+.insert-popover .condition {
+  padding: 4px 8px 8px;
+}
+
+/* ---------- Condition builder ---------- */
+
+.condition {
+  display: grid;
+  gap: 10px;
+}
+
+.condition-row,
+.condition-values,
+.condition-other {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.condition-row {
+  gap: 8px;
+}
+
+.condition-word {
+  color: var(--ditto-ink);
+  font-family: var(--mono);
+  font-variation-settings: var(--code);
+  font-weight: 700;
+}
+
+.condition-row .select {
+  max-width: 100%;
+  font-family: var(--mono);
+  font-variation-settings: var(--code);
+}
+
+.condition-value {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--sheet);
+  color: var(--ditto-ink);
+  font-family: var(--mono);
+  font-variation-settings: var(--code);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 120ms var(--ease-out), border-color 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+
+@media (hover: hover) {
+  .condition-value:not(:disabled):hover {
+    border-color: transparent;
+    background: var(--ditto-wash);
+  }
+}
+
+.condition-value:not(:disabled):active {
+  border-color: transparent;
+  background: var(--ditto-wash);
+  transform: scale(0.97);
+}
+
+.condition-value:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.condition-other .input {
+  width: 150px;
+  min-height: 28px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-variation-settings: var(--code);
+  font-size: 13px;
+}
+
+.condition-preview {
+  color: var(--faint);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.palette-condition {
+  padding: 6px 8px 10px;
 }
 
 /* ---------- Insert palette ---------- */
@@ -2573,10 +2699,6 @@ fieldset.variables-table {
   }
 
   .brand span {
-    display: none;
-  }
-
-  .account {
     display: none;
   }
 
