@@ -92,11 +92,16 @@ describe('withoutHook', () => {
 describe('piExtension', () => {
   type Handler = (event: Record<string, unknown>, ctx: unknown) => unknown;
 
-  /** Write the extension for `command`, load it the way pi does, and return the handlers it registered. */
-  async function load(command: string, timeoutMs?: number) {
+  /** Write the extension for `command` and import it the way pi does. */
+  async function importExtension(command: string, timeoutMs?: number) {
     const file = join(mkdtempSync(join(tmpdir(), 'agentsync-pi-')), 'agentsync.ts');
     writeFileSync(file, piExtension(command, timeoutMs));
-    const { default: factory } = await import(pathToFileURL(file).href);
+    return (await import(pathToFileURL(file).href)).default;
+  }
+
+  /** Load the extension for `command` and return the handlers it registered. */
+  async function load(command: string, timeoutMs?: number) {
+    const factory = await importExtension(command, timeoutMs);
     const handlers: Record<string, Handler> = {};
     await factory({ on: (event: string, handler: Handler) => void (handlers[event] = handler) });
     return handlers;
@@ -132,6 +137,41 @@ describe('piExtension', () => {
     const pid = Number(readFileSync(pidFile, 'utf8'));
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+  });
+
+  it('keeps pi running when it cannot start taskkill on Windows', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agentsync-pi-'));
+    const pidFile = join(dir, 'pid');
+    const stuck = `fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000)`;
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const systemRoot = process.env.SystemRoot;
+    // The extension takes the Windows branch, but the command itself still runs here.
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const factory = await importExtension(`node -e ${JSON.stringify(stuck)}`, 300).finally(() =>
+      Object.defineProperty(process, 'platform', platform),
+    );
+    process.env.SystemRoot = join(dir, 'no-windows-here');
+    try {
+      const handlers: Record<string, Handler> = {};
+      await factory({ on: (event: string, handler: Handler) => void (handlers[event] = handler) });
+      // Give taskkill's failed launch time to report its error, which must not be thrown.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      expect(handlers).toEqual({});
+    } finally {
+      if (systemRoot === undefined) delete process.env.SystemRoot;
+      else process.env.SystemRoot = systemRoot;
+      process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL');
+    }
+  });
+
+  it('keeps a character that arrives split across two chunks whole', async () => {
+    const euro = [...Buffer.from('€')];
+    const split = `process.stdout.write(Buffer.from('AgentSync: ')); process.stdout.write(Buffer.from([${euro[0]}]));`
+      + ` setTimeout(() => process.stdout.write(Buffer.from([${euro.slice(1).join(', ')}])), 100)`;
+    const handlers = await load(`node -e ${JSON.stringify(split)}`);
+
+    expect(handlers.before_agent_start!({ systemPrompt: 'pi' }, {})).toEqual({ systemPrompt: 'pi\n\nAgentSync: €' });
   });
 
   it('keeps a command with quotes intact', () => {

@@ -83,14 +83,21 @@ import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 const COMMAND = ${JSON.stringify(command)};
 const windows = process.platform === 'win32';
 
-/** Stop the command and everything it started. */
+/** Stop the command and everything it started. A failure here must not take pi down with it. */
 function stop(child: ChildProcess) {
   child.stdout?.destroy();
   child.unref();
   if (child.pid === undefined) return;
   try {
-    if (windows) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).unref();
-    else process.kill(-child.pid, 'SIGKILL');
+    if (windows) {
+      // By full path: taskkill is found even when System32 is not on PATH.
+      const taskkill = \`\${process.env.SystemRoot || 'C:\\\\Windows'}\\\\System32\\\\taskkill.exe\`;
+      const killer = spawn(taskkill, ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+      killer.on('error', () => {});
+      killer.unref();
+    } else {
+      process.kill(-child.pid, 'SIGKILL');
+    }
   } catch {}
 }
 
@@ -104,7 +111,9 @@ export default async function agentsync(pi: ExtensionAPI) {
         resolve('');
         stop(child);
       }, ${timeoutMs});
-      child.stdout?.on('data', (chunk) => (stdout += chunk));
+      // Decoded as one stream, so a character split across chunks stays whole.
+      child.stdout?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk: string) => (stdout += chunk));
       child.on('error', () => {
         clearTimeout(deadline);
         resolve('');
