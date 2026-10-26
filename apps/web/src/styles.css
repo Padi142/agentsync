@@ -647,8 +647,7 @@ kbd {
 
 /* A notice that answers an action, or a section opening, eases in instead of popping into place. */
 .appear,
-.disclosure-body,
-.syntax[open] > :not(summary) {
+.disclosure-body {
   animation: appear 200ms var(--ease-out);
 }
 
@@ -865,10 +864,6 @@ kbd {
   border-bottom: 1px solid var(--rule);
 }
 
-.editor-head .select {
-  max-width: 170px;
-}
-
 .editor-head-start {
   display: flex;
   align-items: center;
@@ -1060,35 +1055,194 @@ kbd {
   list-style: none;
 }
 
-/* ---------- Syntax reference ---------- */
+/* ---------- Insert menu ---------- */
 
-.syntax {
-  border-top: 1px solid var(--rule);
-  padding-top: 14px;
+.insert-menu {
+  position: relative;
 }
 
-.syntax summary {
+.insert-braces {
+  color: var(--ditto-ink);
+  font-family: var(--mono);
+  font-variation-settings: var(--code);
+  font-weight: 700;
+}
+
+.insert-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 6;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(440px, 70dvh);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--sheet);
+  box-shadow: 0 12px 32px -12px rgba(26, 27, 37, 0.28);
+  font-size: 13px;
+  line-height: 1.4;
+  animation: pop 140ms var(--ease-out);
+  transform-origin: top right;
+}
+
+.insert-group {
+  padding: 8px 10px 2px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.insert-option {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  text-align: left;
   cursor: pointer;
+}
+
+.insert-option code {
+  color: var(--ditto-ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.insert-option span {
+  color: var(--graphite);
+  font-size: 12px;
+}
+
+.insert-option:focus,
+.insert-option:hover {
+  outline: 0;
+  background: var(--ditto-wash);
+}
+
+/* ---------- Insert palette ---------- */
+
+.palette {
+  border-top: 1px solid var(--rule);
+  padding-top: 14px;
+  font-size: 13px;
+}
+
+.palette h2 {
+  margin: 0 0 6px;
   color: var(--graphite);
   font-size: 13px;
   font-weight: 600;
 }
 
-.syntax dl {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 8px 18px;
-  margin: 14px 0 0;
-  font-size: 13px;
+.palette h3 {
+  margin: 12px 8px 2px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
-.syntax dt code {
+/* One grid for every group, so descriptions line up across them. */
+.palette-list {
+  display: grid;
+  grid-template-columns: max-content 1fr auto;
+  column-gap: 16px;
+}
+
+.palette-group {
+  display: grid;
+  grid-template-columns: subgrid;
+}
+
+.palette-list > *,
+.palette-group > * {
+  grid-column: 1 / -1;
+}
+
+.palette-item {
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--graphite);
+  text-align: left;
+  cursor: pointer;
+}
+
+.palette-item > code:first-child {
+  justify-self: start;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--ditto-wash);
   color: var(--ditto-ink);
 }
 
-.syntax dd {
-  margin: 0;
+.palette-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ditto-ink);
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.palette-item:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -2px;
+}
+
+.palette-item:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+@media (hover: hover) {
+  .palette-item:not(:disabled):hover {
+    background: var(--sheet);
+    box-shadow: 0 0 0 1px var(--rule);
+  }
+}
+
+.palette-item:not(:disabled):is(:hover, :focus-visible) .palette-action {
+  opacity: 1;
+}
+
+.palette-item:not(:disabled):active {
+  background: var(--ditto-wash);
+}
+
+.palette-note {
+  margin: 12px 8px 0;
   color: var(--graphite);
+}
+
+/* On a phone the descriptions go under their Expression. */
+@media (max-width: 640px) {
+  .palette-list {
+    grid-template-columns: 1fr;
+  }
+
+  .palette-item {
+    grid-template-columns: 1fr;
+    gap: 2px;
+    padding: 7px 8px;
+  }
+
+  .palette-action {
+    display: none;
+  }
 }
 
 /* ---------- Preview ---------- */
@@ -2541,7 +2695,6 @@ fieldset.variables-table {
   /* Entrances still fade, without moving. */
   .appear,
   .disclosure-body,
-  .syntax[open] > :not(summary),
   .hero-copy > *,
   .demo {
     animation-name: fade !important;

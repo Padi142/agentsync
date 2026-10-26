@@ -3,9 +3,10 @@ import { BUILTIN_VARIABLES, validate, type TemplateError } from '@agentsync/temp
 import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, Link, useBlocker, useRouter } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
-import { CodeEditor, type LineMark } from '../../components/CodeEditor';
+import { CodeEditor, type EditorHandle, type LineMark } from '../../components/CodeEditor';
 import { Command, CopyButton } from '../../components/Copy';
 import { Icon } from '../../components/Icon';
+import { InsertMenu, InsertPalette, insertables, type Insertable } from '../../components/Insert';
 import { Markdown, MarkedText } from '../../components/Markdown';
 import { TemplateBar } from '../../components/TemplateBar';
 import { Ago } from '../../components/Time';
@@ -14,6 +15,7 @@ import { useDraft } from '../../draft';
 import { useOwnNavigate } from '../../navigation';
 import { renderMarked, type MarkedRender } from '../../preview';
 import { rpc } from '../../rpc';
+import { conditionValues, ownVariables } from '../../suggestions';
 
 export const Route = createFileRoute('/_app/')({
   loader: async () => {
@@ -60,6 +62,10 @@ function TemplateEditor() {
     ...warnings.map((w) => ({ line: w.line, kind: 'warning' as const, message: w.message })),
   ];
   const canSave = draft.dirty && !error && !draft.busy;
+  const own = ownVariables(variables, machines.length);
+  const items = insertables(own);
+  const editor = useRef<EditorHandle>(null);
+  const insert = (item: Insertable) => editor.current?.wrap(item.before, item.after);
 
   const save = () => draft.run(async (text, revision) => {
     setNotice('');
@@ -143,14 +149,16 @@ function TemplateEditor() {
               {notice ? <p className="callout error appear" role="alert">{notice}</p> : null}
             </div>
           ) : null}
-          <CodeEditor label="Template" value={text} onChange={draft.set} marks={marks} readOnly={draft.busy}
-            suggestions={BUILTIN_VARIABLES}
+          <CodeEditor ref={editor} label="Template" value={text} onChange={draft.set} marks={marks} readOnly={draft.busy}
+            suggestions={[...BUILTIN_VARIABLES, ...own]} values={conditionValues(machines, variables)}
             placeholder={'# Global instructions\n\nWrite what every agent should know. Type {{ for Variables.'}
-            toolbar={<span>Type <code>{'{{'}</code> for Variables</span>} />
+            toolbar={<span>Type <code>{'{{'}</code> for Variables</span>}
+            actions={<InsertMenu items={items} onInsert={insert} disabled={draft.busy} />} />
           {error ? (
             <p className="callout error" role="alert">Line {error.line}, column {error.column}: {error.message}</p>
           ) : null}
-          <SyntaxReference />
+          <InsertPalette items={items} onInsert={insert} disabled={draft.busy} />
+          <p className="example-note"><Link to="/docs/$page" params={{ page: 'templates' }}>Read the Template guide</Link></p>
         </section>
 
         <Preview machines={machines} machine={machine} example={example} onMachine={setMachineId}
@@ -158,27 +166,6 @@ function TemplateEditor() {
           missing={[...new Set(warnings.map((w) => w.variable))]} />
       </div>
     </>
-  );
-}
-
-function SyntaxReference() {
-  return (
-    <details className="syntax">
-      <summary>Expression syntax</summary>
-      <dl>
-        <dt><code>{'{{editor}}'}</code></dt>
-        <dd>A Variable you set per Machine.</dd>
-        <dt><code>{'{{machine.nickname}}'}</code></dt>
-        <dd>The name you give a Machine. <code>{'{{machine.hostname}}'}</code> and <code>{'{{machine.os}}'}</code> work too.</dd>
-        <dt><code>{'{{agent}}'}</code></dt>
-        <dd>The agent the file is for, such as <code>claude</code>, <code>codex</code> or <code>pi</code>.</dd>
-        <dt><code>{'{{if agent == "codex"}}…{{else}}…{{end}}'}</code></dt>
-        <dd>Text for some Machines or agents only. <code>!=</code> works too.</dd>
-        <dt><code>{'\\{{'}</code></dt>
-        <dd>A literal <code>{'{{'}</code>.</dd>
-      </dl>
-      <p className="example-note" style={{ marginTop: 12 }}><Link to="/docs/$page" params={{ page: 'templates' }}>Read the Template guide</Link></p>
-    </details>
   );
 }
 

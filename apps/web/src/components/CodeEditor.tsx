@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useId, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 
 export interface LineMark {
   line: number;
@@ -12,31 +12,52 @@ export interface Suggestion {
   description: string;
 }
 
-/** The variable being typed at the caret: inside `{{` (a substitution) or after `{{if ` (a condition). */
+/** Lets a palette outside the editor write into it at the caret. */
+export interface EditorHandle {
+  /** Put `before` and `after` around the selection and leave the caret just before `after`. */
+  wrap: (before: string, after?: string) => void;
+}
+
+/**
+ * What is being typed at the caret: a name inside `{{` (a substitution) or after `{{if ` (a
+ * condition), or the quoted value a condition compares `variable` with.
+ */
 interface Completion {
   query: string;
   /** Where the typed part starts. */
   from: number;
-  condition: boolean;
+  kind: 'substitution' | 'condition' | 'value';
+  variable?: string;
 }
 
 /** An unescaped `{{`, optionally `if`, then the start of a name, right before the caret. */
 const OPEN_EXPRESSION = /(\\?)\{\{\s*(?:(if)\s+)?([A-Za-z_][\w.]*)?$/;
+/** An unescaped `{{if name == "` (or `!=`) and the start of its value, right before the caret. */
+const OPEN_VALUE = /(\\?)\{\{\s*if\s+([A-Za-z_][\w.]*)\s*[!=]=\s*"([^"\n]*)$/;
 
 function completionAt(value: string, caret: number): Completion | null {
-  const match = OPEN_EXPRESSION.exec(value.slice(0, caret));
+  const before = value.slice(0, caret);
+  const quoted = OPEN_VALUE.exec(before);
+  if (quoted) {
+    const query = quoted[3]!;
+    return quoted[1] ? null : { query, from: caret - query.length, kind: 'value', variable: quoted[2] };
+  }
+  const match = OPEN_EXPRESSION.exec(before);
   if (!match || match[1]) return null;
   const query = match[3] ?? '';
-  return { query, from: caret - query.length, condition: !!match[2] };
+  return { query, from: caret - query.length, kind: match[2] ? 'condition' : 'substitution' };
 }
 
 /** Replace the textarea's `from`–`to` with `text` the way typing would, so undo still works. */
-function insert(textarea: HTMLTextAreaElement, from: number, to: number, text: string, onChange: (value: string) => void) {
+function insert(textarea: HTMLTextAreaElement, from: number, to: number, text: string, onChange: (value: string) => void,
+  caret = from + text.length) {
   textarea.focus();
   textarea.setSelectionRange(from, to);
-  if (!document.execCommand('insertText', false, text)) {
+  if (document.execCommand('insertText', false, text)) {
+    textarea.setSelectionRange(caret, caret);
+  } else {
     onChange(textarea.value.slice(0, from) + text + textarea.value.slice(to));
-    requestAnimationFrame(() => textarea.setSelectionRange(from + text.length, from + text.length));
+    requestAnimationFrame(() => textarea.setSelectionRange(caret, caret));
   }
 }
 
@@ -66,17 +87,23 @@ export function highlight(line: string): ReactNode[] {
  * A Template editor: a transparent textarea over a highlighted copy of its text. Both wrap the
  * same way and the textarea is sized by the copy, so the editor grows with its content and the
  * page does all the scrolling. Line numbers sit beside each logical line, wrapped or not.
- * With `suggestions`, typing `{{` or `{{if ` offers them at the caret.
+ * With `suggestions`, typing `{{` or `{{if ` offers them at the caret, and with `values`, typing
+ * `{{if name == "` offers what `name` can be.
  */
-export function CodeEditor({ value, onChange, marks = [], label, readOnly = false, suggestions = [], toolbar, placeholder }: {
+export function CodeEditor({ ref, value, onChange, marks = [], label, readOnly = false, suggestions = [], values = {}, toolbar, actions, placeholder }: {
+  ref?: Ref<EditorHandle>;
   value: string;
   onChange: (value: string) => void;
   marks?: LineMark[];
   label: string;
   readOnly?: boolean;
   suggestions?: readonly Suggestion[];
+  /** Values a condition might compare each Variable with, by Variable name. */
+  values?: Readonly<Record<string, readonly Suggestion[]>>;
   /** Shown in the editor's header row, on the left. */
   toolbar?: ReactNode;
+  /** Shown in the editor's header row, on the right. */
+  actions?: ReactNode;
   placeholder?: string;
 }) {
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -92,7 +119,10 @@ export function CodeEditor({ value, onChange, marks = [], label, readOnly = fals
   const enabled = suggestions.length > 0 && !readOnly;
   const completion = enabled && caret !== null ? completionAt(value, caret) : null;
   const key = completion ? `${completion.from}:${completion.query}` : null;
-  const matches = completion ? suggestions.filter((s) => s.name.startsWith(completion.query)) : [];
+  const matches = !completion ? []
+    : completion.kind === 'value'
+      ? (Object.hasOwn(values, completion.variable!) ? values[completion.variable!]! : []).filter((s) => s.name.toLowerCase().startsWith(completion.query.toLowerCase()))
+      : suggestions.filter((s) => s.name.startsWith(completion.query));
   const open = !!completion && matches.length > 0 && dismissed !== key;
   const current = Math.min(active, matches.length - 1);
 
@@ -106,35 +136,45 @@ export function CodeEditor({ value, onChange, marks = [], label, readOnly = fals
 
   const accept = (suggestion: Suggestion) => {
     if (!completion || !textarea.current || caret === null) return;
+    const { from, kind } = completion;
+    setActive(0);
+    if (kind === 'value') {
+      // Replace the whole value up to its closing quote, then close what is still open.
+      const to = caret + /^[^"\n]*/.exec(value.slice(caret))![0].length;
+      const quoted = value[to] === '"';
+      const text = quoted ? suggestion.name : `${suggestion.name}"${/^\s*\}\}/.test(value.slice(to)) ? '' : '}}'}`;
+      // Leave the caret past the closing quote.
+      insert(textarea.current, from, to, text, onChange, from + text.length + (quoted ? 1 : 0));
+      setDismissed(`${from}:${suggestion.name}`);
+      return;
+    }
     // Replace the whole name, including any part after the caret, so no old suffix is left behind.
     const to = caret + (/^[\w.]*/.exec(value.slice(caret))?.[0].length ?? 0);
-    const closed = /^\s*\}\}/.test(value.slice(to));
-    insert(textarea.current, completion.from, to, suggestion.name + (completion.condition || closed ? '' : '}}'), onChange);
-    setActive(0);
+    const rest = value.slice(to);
+    // A condition always compares, so go straight on to its value, where its values are offered.
+    const suffix = kind === 'condition' ? (/^\s*[!=]=/.test(rest) ? '' : ' == "') : /^\s*\}\}/.test(rest) ? '' : '}}';
+    insert(textarea.current, from, to, suggestion.name + suffix, onChange);
     // The caret may still sit right after the inserted name; don't offer it again there.
-    setDismissed(`${completion.from}:${suggestion.name}`);
+    setDismissed(`${from}:${suggestion.name}`);
   };
 
-  const insertVariable = (name: string) => {
-    if (!textarea.current) return;
-    const { selectionStart, selectionEnd } = textarea.current;
-    insert(textarea.current, selectionStart, selectionEnd, `{{${name}}}`, onChange);
-  };
+  // A textarea keeps its selection while blurred, so this inserts where the caret last was.
+  useImperativeHandle(ref, () => ({
+    wrap: (before, after = '') => {
+      const input = textarea.current;
+      if (!input || readOnly) return;
+      const { selectionStart: from, selectionEnd: to } = input;
+      const selected = input.value.slice(from, to);
+      insert(input, from, to, before + selected + after, onChange, from + before.length + selected.length);
+    },
+  }), [readOnly, onChange]);
 
   return (
     <div className="editor-frame" data-readonly={readOnly || undefined}>
-      {toolbar || enabled ? (
+      {toolbar || actions ? (
         <div className="editor-head">
           <div className="editor-head-start">{toolbar}</div>
-          {enabled ? (
-            <select className="select small" aria-label="Insert Variable" value=""
-              onChange={(event) => event.target.value && insertVariable(event.target.value)}>
-              <option value="">Insert Variable</option>
-              {suggestions.map((s) => (
-                <option key={s.name} value={s.name}>{s.name}: {s.description}</option>
-              ))}
-            </select>
-          ) : null}
+          {actions}
         </div>
       ) : null}
       <div className="editor" style={{ '--digits': String(lines.length).length } as React.CSSProperties}>
@@ -194,7 +234,7 @@ export function CodeEditor({ value, onChange, marks = [], label, readOnly = fals
             : {})}
         />
         {open ? (
-          <ul className="suggestions" id={listId} role="listbox" aria-label="Built-in Variables"
+          <ul className="suggestions" id={listId} role="listbox" aria-label={completion?.kind === 'value' ? `Values of ${completion.variable}` : 'Variables'}
             style={popup ? { top: popup.top, left: popup.left } : { visibility: 'hidden' }}>
             {matches.map((s, i) => (
               <li

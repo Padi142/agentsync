@@ -2,16 +2,18 @@ import type { Template } from '@agentsync/contract';
 import { hasConflictMarkers, suspectedConflictMarkers, validate, BUILTIN_VARIABLES } from '@agentsync/template';
 import { isDefinedError, safe } from '@orpc/client';
 import { createFileRoute, Link, useBlocker } from '@tanstack/react-router';
-import { useState } from 'react';
-import { CodeEditor, type LineMark } from '../../components/CodeEditor';
+import { useRef, useState } from 'react';
+import { CodeEditor, type EditorHandle, type LineMark } from '../../components/CodeEditor';
 import { Command, CopyButton } from '../../components/Copy';
 import { Icon } from '../../components/Icon';
+import { InsertMenu, insertables } from '../../components/Insert';
 import { TemplateBar } from '../../components/TemplateBar';
 import { Ago } from '../../components/Time';
 import { conflictHunks, pickSide, remerge, type ConflictHunk, type Side } from '../../conflict-text';
 import { useDraft } from '../../draft';
 import { useOwnNavigate } from '../../navigation';
 import { rpc } from '../../rpc';
+import { conditionValues } from '../../suggestions';
 
 export const Route = createFileRoute('/_app/conflicts/$conflictId')({
   loader: async ({ params: { conflictId } }) => {
@@ -49,6 +51,7 @@ function Resolver() {
   // The draft's revision is the Template revision this text is merged against. It moves on
   // when someone saves meanwhile. Unsaved means "differs from the Conflict's own text".
   const draft = useDraft({ revision: conflict.serverRevision, value: conflict.text });
+  const editor = useRef<EditorHandle>(null);
   const text = draft.value;
   const [newer, setNewer] = useState<Template | null>(null);
   const [notice, setNotice] = useState('');
@@ -159,8 +162,9 @@ function Resolver() {
             </p>
           ) : null}
           {notice ? <p className="callout warning" role="status">{notice}</p> : null}
-          <CodeEditor label="Merged Template" value={text} onChange={draft.set} marks={marks} readOnly={draft.busy}
-            suggestions={BUILTIN_VARIABLES} toolbar={<span>Merged Template</span>} />
+          <CodeEditor ref={editor} label="Merged Template" value={text} onChange={draft.set} marks={marks} readOnly={draft.busy}
+            suggestions={BUILTIN_VARIABLES} values={VALUES} toolbar={<span>Merged Template</span>}
+            actions={<InsertMenu items={INSERTABLES} disabled={draft.busy} onInsert={(item) => editor.current?.wrap(item.before, item.after)} />} />
           {markers || error || suspected.length ? (
             <ul className="issues">
               {markers ? <li className="callout error">Remove every Conflict marker (<code>{'<<<<<<<'}</code>, <code>=======</code>, <code>{'>>>>>>>'}</code>) before saving.</li> : null}
@@ -234,5 +238,8 @@ function Hunk({ hunk, onPick, disabled }: { hunk: ConflictHunk; onPick: (side: S
     </div>
   );
 }
+
+const INSERTABLES = insertables();
+const VALUES = conditionValues([]);
 
 const inside = (hunk: ConflictHunk, line: number) => line >= hunk.firstLine && line <= hunk.lastLine;
