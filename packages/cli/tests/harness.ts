@@ -6,8 +6,11 @@ import { run } from '../src/cli.js';
 import type { Io } from '../src/io.js';
 import { fakeServer } from './fake-server.js';
 
-/** A temporary home directory and a fake server, with `cli()` to run commands against them. */
-export function setup() {
+/**
+ * A temporary home directory and a fake server, with `cli()` to run commands against them.
+ * `env` adds environment variables for the commands.
+ */
+export function setup(options: { env?: Record<string, string> } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'agentsync-test-'));
   const server = fakeServer();
   /** Answers in order: a choice's value, several values separated by commas, or text. */
@@ -30,7 +33,7 @@ export function setup() {
     let stderr = '';
     const io: Io = {
       home,
-      env: { EDITOR: 'fake-editor' },
+      env: { EDITOR: 'fake-editor', ...options.env },
       hostname: 'laptop',
       platform: 'linux',
       fetch: server.fetch,

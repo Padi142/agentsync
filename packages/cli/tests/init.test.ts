@@ -203,6 +203,18 @@ describe('init', () => {
     });
   });
 
+  it('expands a leading ~ in $PI_CODING_AGENT_DIR, as pi does', async () => {
+    const t = setup({ env: { PI_CODING_AGENT_DIR: '~/custom-pi' } });
+    mkdirSync(t.path('custom-pi'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([{ path: '~/custom-pi/AGENTS.md', agent: 'pi' }]);
+    expect(existsSync(t.path('custom-pi/extensions/agentsync.ts'))).toBe(true);
+  });
+
   it('leaves a pi extension AgentSync did not write alone, and says so', async () => {
     const t = setup();
     t.write('.pi/agent/extensions/agentsync.ts', 'export default function () {}\n');

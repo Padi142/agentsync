@@ -101,7 +101,9 @@ and without `--yes`, `--json` or `--hook`. Prompts and spinners go to stderr; re
 - Codex: a `SessionStart` hook in `~/.codex/hooks.json`. Codex skips a new hook until you
   trust it once: open Codex and run `/hooks`.
 - pi: an extension, `~/.pi/agent/extensions/agentsync.ts`, since pi has no hook config.
-  pi loads extensions there by itself, so there is nothing to trust.
+  pi loads extensions there by itself, so there is nothing to trust. pi waits for it, so it
+  gives up after 10 seconds: it kills the command's process group and pi starts with the
+  existing file.
 
 The hook command is `agentsync` when the CLI is installed on `PATH`, otherwise the
 absolute Node and script path (`npx`'s temporary directory does not count). The config

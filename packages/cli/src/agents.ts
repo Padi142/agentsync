@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Target } from '@agentsync/contract';
 import type { Io } from './io.js';
-import { tildify } from './paths.js';
+import { expandHome, tildify } from './paths.js';
 
 /** An agent AgentSync knows how to set up: where it reads Global Instructions, skills and hooks. */
 export interface Agent {
@@ -57,7 +57,8 @@ export const AGENTS: readonly Agent[] = [
   {
     id: 'pi',
     name: 'pi',
-    home: (io) => io.env.PI_CODING_AGENT_DIR || join(io.home, '.pi', 'agent'),
+    // pi expands a leading `~` in $PI_CODING_AGENT_DIR itself, the same way expandHome does.
+    home: (io) => (io.env.PI_CODING_AGENT_DIR ? expandHome(io.env.PI_CODING_AGENT_DIR, io) : join(io.home, '.pi', 'agent')),
     instructions(io) {
       return join(this.home(io), 'AGENTS.md');
     },

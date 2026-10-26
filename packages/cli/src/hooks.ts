@@ -69,20 +69,50 @@ export const hookHandler = (ctx: Context, agent: Agent): Handler => ({
 /**
  * The pi extension that runs `command`. pi awaits an extension's factory before it reads
  * AGENTS.md, so the session that is starting gets the update. The `AgentSync:` line goes to the
- * person as a notice and to the model at the end of the system prompt. Whatever happens, the
- * promise resolves, so pi always starts.
+ * person as a notice and to the model at the end of the system prompt.
+ *
+ * Whatever happens, the promise resolves by the deadline, so pi always starts. At the deadline
+ * the extension lets go of the command's output pipe, so pi can still exit, and kills the
+ * command's whole process group: killing only the shell would leave the command running.
  */
-export const piExtension = (command: string) => `// Written by AgentSync: it syncs your Global Instructions when a pi session starts.
+export const piExtension = (command: string, timeoutMs = HOOK_TIMEOUT_SECONDS * 1000) => `// Written by AgentSync: it syncs your Global Instructions when a pi session starts.
 // AgentSync updates this file while it is unchanged, and \`agentsync logout\` removes it.
-import { exec } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 
 const COMMAND = ${JSON.stringify(command)};
+const windows = process.platform === 'win32';
+
+/** Stop the command and everything it started. */
+function stop(child: ChildProcess) {
+  child.stdout?.destroy();
+  child.unref();
+  if (child.pid === undefined) return;
+  try {
+    if (windows) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).unref();
+    else process.kill(-child.pid, 'SIGKILL');
+  } catch {}
+}
 
 export default async function agentsync(pi: ExtensionAPI) {
   const line = await new Promise<string>((resolve) => {
+    let stdout = '';
     try {
-      exec(COMMAND, { timeout: ${HOOK_TIMEOUT_SECONDS * 1000}, windowsHide: true }, (_error, stdout) => resolve(String(stdout ?? '').trim()));
+      // Its own process group (on POSIX), so the deadline can stop it as a whole.
+      const child = spawn(COMMAND, { shell: true, detached: !windows, stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+      const deadline = setTimeout(() => {
+        resolve('');
+        stop(child);
+      }, ${timeoutMs});
+      child.stdout?.on('data', (chunk) => (stdout += chunk));
+      child.on('error', () => {
+        clearTimeout(deadline);
+        resolve('');
+      });
+      child.on('close', () => {
+        clearTimeout(deadline);
+        resolve(stdout.trim());
+      });
     } catch {
       resolve('');
     }

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -93,9 +93,9 @@ describe('piExtension', () => {
   type Handler = (event: Record<string, unknown>, ctx: unknown) => unknown;
 
   /** Write the extension for `command`, load it the way pi does, and return the handlers it registered. */
-  async function load(command: string) {
+  async function load(command: string, timeoutMs?: number) {
     const file = join(mkdtempSync(join(tmpdir(), 'agentsync-pi-')), 'agentsync.ts');
-    writeFileSync(file, piExtension(command));
+    writeFileSync(file, piExtension(command, timeoutMs));
     const { default: factory } = await import(pathToFileURL(file).href);
     const handlers: Record<string, Handler> = {};
     await factory({ on: (event: string, handler: Handler) => void (handlers[event] = handler) });
@@ -117,6 +117,21 @@ describe('piExtension', () => {
   it('registers nothing when the hook prints nothing or cannot run', async () => {
     expect(await load('node -e ""')).toEqual({});
     expect(await load('agentsync-command-that-does-not-exist')).toEqual({});
+  });
+
+  it('lets pi go on at the deadline, and stops a hook that ignores SIGTERM', async () => {
+    const pidFile = join(mkdtempSync(join(tmpdir(), 'agentsync-pi-')), 'pid');
+    const stuck = `fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)`;
+    const started = Date.now();
+
+    // Through a shell, so the stuck process is the shell's child, as \`agentsync\` is in real use.
+    const handlers = await load(`sh -c ${JSON.stringify(`node -e ${JSON.stringify(stuck)}`)}`, 500);
+
+    expect(handlers).toEqual({});
+    expect(Date.now() - started).toBeLessThan(3000);
+    const pid = Number(readFileSync(pidFile, 'utf8'));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
   });
 
   it('keeps a command with quotes intact', () => {
