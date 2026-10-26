@@ -27,7 +27,7 @@ AgentSync fills these in for you:
 | `{{machine.nickname}}` | The name you gave the Machine. Change it on the web or with `agentsync rename`. |
 | `{{machine.hostname}}` | The computer's own hostname. |
 | `{{machine.os}}` | `macos`, `linux` or `windows`. |
-| `{{agent}}` | The agent the file is for, such as `claude` or `codex`. |
+| `{{agent}}` | The agent the file is for, such as `claude`, `codex` or `pi`. |
 
 An unknown `machine.` name, like `{{machine.arch}}`, is an error, so typos are caught when you save.
 

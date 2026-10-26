@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { readJson, removeFile, writeJson } from './files.js';
 import type { Handler } from './hooks.js';
 import type { Io } from './io.js';
+import type { Owned } from './owned.js';
 import { configDir } from './paths.js';
 
 /** A device flow started by `init --no-wait`, resumed by the next `init`. */
@@ -34,7 +35,9 @@ export interface Config {
   /** The exact hook handler installed in each agent's hook file, so only that is ever removed. */
   hooks?: Record<string, Handler>;
   /** A SHA-256 of each skill file AgentSync wrote, so a file someone changed is left alone. */
-  skills?: Record<string, string>;
+  skills?: Owned;
+  /** The same for each pi extension AgentSync wrote as a hook. */
+  extensions?: Owned;
   written: Record<string, string>;
 }
 

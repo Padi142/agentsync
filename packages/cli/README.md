@@ -1,8 +1,9 @@
 # agentsync
 
 The AgentSync CLI. It Renders your one Template (stored on the AgentSync server) with
-this Machine's Variables into every Target, such as `~/.claude/CLAUDE.md` and
-`~/.codex/AGENTS.md`, and keeps them current from each agent's `SessionStart` hook.
+this Machine's Variables into every Target, such as `~/.claude/CLAUDE.md`,
+`~/.codex/AGENTS.md` and `~/.pi/agent/AGENTS.md`, and keeps them current from a hook that
+runs when each agent's session starts.
 See `GLOSSARY.md` at the repo root for the terms.
 
 ```sh
@@ -59,7 +60,8 @@ and without `--yes`, `--json` or `--hook`. Prompts and spinners go to stderr; re
   `$AGENTSYNC_CONFIG_DIR`) with mode `0600`, and sent as `Authorization: Bearer`. The CLI
   sends no Origin header and no cookies, which is what lets it past the server's CSRF check.
 - **Agents.** Claude Code is detected by `~/.claude` (or `$CLAUDE_CONFIG_DIR`), Codex by
-  `~/.codex` (or `$CODEX_HOME`). `--target <agent>=<path>` adds a Target for any other
+  `~/.codex` (or `$CODEX_HOME`), pi by `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`).
+  `--target <agent>=<path>` adds a Target for any other
   agent. Targets are stored on the server as `~/…`, so they read the same on every Machine.
   A Target path must be absolute or start with `~/`: hooks run in whatever project the
   agent opens, so a relative path would mean a different file each time. `sync` skips one
@@ -88,32 +90,39 @@ and without `--yes`, `--json` or `--hook`. Prompts and spinners go to stderr; re
   `setup-prompt.md` is the text the web app's Setup page gives to an agent. Replace every
   `<SERVER_URL>` in it with the server's origin.
 - **Hand-off.** At a terminal, Drift and Conflicts can be handed to an agent: the CLI
-  starts `claude` or `codex` with a prompt. Your choice is remembered per Machine.
+  starts `claude`, `codex` or `pi` with a prompt. Your choice is remembered per Machine.
 
 ## Hooks
 
-`init` adds a `SessionStart` hook that runs `agentsync sync --hook <agent>`:
+`init` adds a hook that runs `agentsync sync --hook <agent>` when a session starts:
 
-- Claude Code: `~/.claude/settings.json`. Existing settings and hooks are kept.
-- Codex: `~/.codex/hooks.json`. Codex skips a new hook until you trust it once: open
-  Codex and run `/hooks`.
+- Claude Code: a `SessionStart` hook in `~/.claude/settings.json`. Existing settings and
+  hooks are kept.
+- Codex: a `SessionStart` hook in `~/.codex/hooks.json`. Codex skips a new hook until you
+  trust it once: open Codex and run `/hooks`.
+- pi: an extension, `~/.pi/agent/extensions/agentsync.ts`, since pi has no hook config.
+  pi loads extensions there by itself, so there is nothing to trust. pi waits for it, so it
+  gives up after 10 seconds: it kills the command's process group and pi starts with the
+  existing file.
 
 The hook command is `agentsync` when the CLI is installed on `PATH`, otherwise the
 absolute Node and script path (`npx`'s temporary directory does not count). The config
 records the exact handler it installed. Re-running `init` replaces that handler, and
 `logout` removes it, only while it is unchanged. Any other handler, even one that mentions
-`agentsync`, is left alone.
+`agentsync`, is left alone. The pi extension is a whole file, so it is tracked like the
+skill: by a SHA-256 of what AgentSync wrote. A file that differs is left alone with a warning.
 
 Hook mode fails open. It never prompts, waits at most 2 seconds for the server, keeps the
 existing files when it cannot reach the server, always exits 0, and prints at most one
-`AgentSync: …` line. Both agents add a SessionStart hook's stdout to the session's
-context, so the agent sees that line. It reports updated Targets, skipped Drift, unset
+`AgentSync: …` line. Claude Code and Codex add a SessionStart hook's stdout to the
+session's context. The pi extension shows the line as a notice and appends it to the system
+prompt. Either way the agent sees it. It reports updated Targets, skipped Drift, unset
 Variables and open Conflicts (with a link).
 
-### Does a change apply to the current session? No: there is a one-session lag
+### Does a change apply to the current session? Not for Claude Code or Codex; yes for pi
 
-Both agents read their instructions file before the `SessionStart` hook's write can
-reach them, so a Template change the hook writes takes effect from the next session.
+Claude Code and Codex read their instructions file before the `SessionStart` hook's write
+can reach them, so a Template change the hook writes takes effect from the next session.
 
 - **Claude Code.** The [memory docs](https://code.claude.com/docs/en/memory) say
   CLAUDE.md files above the working directory "are loaded at launch", and the
@@ -132,10 +141,18 @@ reach them, so a Template change the hook writes takes effect from the next sess
 To soften the lag, the hook's line names the updated Target and tells the agent to read
 it when the current instructions matter. The skill says the same.
 
+- **pi.** pi awaits an extension's factory before it reads `AGENTS.md` (in
+  `DefaultResourceLoader.reload()`, `loadExtensions` runs before `loadProjectContextFiles`),
+  so the session that is starting gets the update and the hook's line only says what it
+  updated. pi loads extensions again for `/new`, `/resume`, `/fork` and `/reload`, so the
+  hook runs for those too. Tested with pi 0.73.1 (`pi -p` against a local model endpoint,
+  with the generated extension running a command that rewrites `AGENTS.md`): the first
+  request's system prompt held the new file and ended with the `AgentSync:` line.
+
 ## Agent skill
 
 `init` installs `skill/SKILL.md` as the `agentsync` skill: `~/.claude/skills/agentsync/`
-for Claude Code and `~/.agents/skills/agentsync/` for Codex. The config keeps a SHA-256 of
+for Claude Code and `~/.agents/skills/agentsync/` for Codex and pi, which both read it there. The config keeps a SHA-256 of
 each skill file it writes. `init` updates, and `logout` removes, only a file that still
 matches it. A skill file AgentSync did not write, or that was changed since, is left alone
 with a warning. A symlinked `skills/agentsync/` directory stays: `logout` removes only the

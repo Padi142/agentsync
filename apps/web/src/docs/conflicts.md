@@ -12,7 +12,7 @@ Decide what to do with it:
 - **Throw it away.** `agentsync sync --overwrite` writes the Template and keeps your edit in `<target>.agentsync-backup`.
 - **Decide later.** `agentsync sync --keep` leaves the file alone for now.
 
-Run interactively, `sync` asks you, and can hand the decision to Claude Code or Codex. The hook never overwrites Drift; it reports it on the agent's first line.
+Run interactively, `sync` asks you, and can hand the decision to Claude Code, Codex or pi. The hook never overwrites Drift; it reports it on the agent's first line.
 
 ## Conflicts: two edits overlapped
 

@@ -52,7 +52,7 @@ and sync. Safe to run again. Alias: login.
   --server <url>             The AgentSync server
   --nickname <nickname>      The Machine nickname (default: asked, or the hostname);
                              on a registered Machine, renames it
-  --agent <id>               Sync this agent: claude or codex (default: those found here)
+  --agent <id>               Sync this agent: claude, codex or pi (default: those found here)
   --target <agent>=<path>    Sync another agent's file, e.g. gemini=~/.gemini/GEMINI.md
   --var KEY=VALUE            Set a Variable on this Machine
   --import <path>            On the account's first Machine, start the Template from this file

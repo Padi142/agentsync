@@ -29,6 +29,18 @@ describe('sync --hook', () => {
     expect(result.stdout).toContain('read ~/.claude/CLAUDE.md');
   });
 
+  it('for pi, which reads its instructions after the hook, only says what it updated', async () => {
+    const t = setup();
+    t.registered([{ path: '~/.pi/agent/AGENTS.md', agent: 'pi' }]);
+    t.server.putTemplate('one\n');
+
+    const result = await t.cli('sync', '--hook', 'pi');
+
+    expect(result.code).toBe(0);
+    expect(read(t.path('.pi/agent/AGENTS.md'))).toBe('one\n');
+    expect(result.stdout).toBe('AgentSync: updated ~/.pi/agent/AGENTS.md to Template revision 1.\n');
+  });
+
   it('keeps the existing files and exits 0 when the server cannot be reached', async () => {
     const t = setup();
     t.registered(undefined, { '~/.claude/CLAUDE.md': 'one\n' });

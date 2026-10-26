@@ -2,17 +2,24 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Target } from '@agentsync/contract';
 import type { Io } from './io.js';
-import { tildify } from './paths.js';
+import { expandHome, tildify } from './paths.js';
 
 /** An agent AgentSync knows how to set up: where it reads Global Instructions, skills and hooks. */
 export interface Agent {
-  id: 'claude' | 'codex';
+  id: 'claude' | 'codex' | 'pi';
   name: string;
   /** The agent's own config directory. It existing is how we detect the agent. */
   home(io: Io): string;
   instructions(io: Io): string;
   skillFile(io: Io): string;
   hooksFile(io: Io): string;
+  /**
+   * How the SessionStart hook is installed: `json` adds a handler to the JSON hook config in
+   * `hooksFile`; `pi-extension` writes `hooksFile` whole, as a pi extension.
+   */
+  hookKind: 'json' | 'pi-extension';
+  /** The agent reads its Global Instructions after the hook ran, so the starting session gets an update. */
+  readsAfterHook: boolean;
 }
 
 export const AGENTS: readonly Agent[] = [
@@ -29,6 +36,8 @@ export const AGENTS: readonly Agent[] = [
     hooksFile(io) {
       return join(this.home(io), 'settings.json');
     },
+    hookKind: 'json',
+    readsAfterHook: false,
   },
   {
     id: 'codex',
@@ -42,6 +51,25 @@ export const AGENTS: readonly Agent[] = [
     hooksFile(io) {
       return join(this.home(io), 'hooks.json');
     },
+    hookKind: 'json',
+    readsAfterHook: false,
+  },
+  {
+    id: 'pi',
+    name: 'pi',
+    // pi expands a leading `~` in $PI_CODING_AGENT_DIR itself, the same way expandHome does.
+    home: (io) => (io.env.PI_CODING_AGENT_DIR ? expandHome(io.env.PI_CODING_AGENT_DIR, io) : join(io.home, '.pi', 'agent')),
+    instructions(io) {
+      return join(this.home(io), 'AGENTS.md');
+    },
+    // pi reads user skills from ~/.agents/skills too, so it shares Codex's copy.
+    skillFile: (io) => join(io.home, '.agents', 'skills', 'agentsync', 'SKILL.md'),
+    // pi has no hook config. An extension runs the hook, and pi awaits it before reading AGENTS.md.
+    hooksFile(io) {
+      return join(this.home(io), 'extensions', 'agentsync.ts');
+    },
+    hookKind: 'pi-extension',
+    readsAfterHook: true,
   },
 ];
 

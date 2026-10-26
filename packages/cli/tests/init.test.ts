@@ -185,6 +185,48 @@ describe('init', () => {
     expect(existsSync(t.path('.agents/skills/agentsync/SKILL.md'))).toBe(true);
   });
 
+  it('sets up pi with an extension as its hook, sharing the skill with Codex', async () => {
+    const t = setup();
+    mkdirSync(t.path('.pi/agent'), { recursive: true });
+    mkdirSync(t.path('.codex'));
+
+    const result = await t.cli('init', '--yes', '--json', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toContainEqual({ path: '~/.pi/agent/AGENTS.md', agent: 'pi' });
+    const extension = readFileSync(t.path('.pi/agent/extensions/agentsync.ts'), 'utf8');
+    expect(extension).toContain('const COMMAND = "agentsync sync --hook pi";');
+    expect(result.json()).toMatchObject({
+      hooks: ['~/.codex/hooks.json', '~/.pi/agent/extensions/agentsync.ts'],
+      skills: ['~/.agents/skills/agentsync/SKILL.md'],
+    });
+  });
+
+  it('expands a leading ~ in $PI_CODING_AGENT_DIR, as pi does', async () => {
+    const t = setup({ env: { PI_CODING_AGENT_DIR: '~/custom-pi' } });
+    mkdirSync(t.path('custom-pi'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([{ path: '~/custom-pi/AGENTS.md', agent: 'pi' }]);
+    expect(existsSync(t.path('custom-pi/extensions/agentsync.ts'))).toBe(true);
+  });
+
+  it('leaves a pi extension AgentSync did not write alone, and says so', async () => {
+    const t = setup();
+    t.write('.pi/agent/extensions/agentsync.ts', 'export default function () {}\n');
+
+    const result = await t.cli('init', '--yes', '--json', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    expect(readFileSync(t.path('.pi/agent/extensions/agentsync.ts'), 'utf8')).toBe('export default function () {}\n');
+    expect(result.json()).toMatchObject({ hooks: [], hooksLeftAlone: ['~/.pi/agent/extensions/agentsync.ts'] });
+    expect(result.stderr).toContain('~/.pi/agent/extensions/agentsync.ts');
+  });
+
   it('with --no-hooks and --no-skill installs neither', async () => {
     const t = setup();
     mkdirSync(t.path('.claude'));

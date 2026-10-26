@@ -36,7 +36,7 @@ function Machines() {
       {machines.length === 0 ? (
         <div className="empty">
           <h2>No Machines yet</h2>
-          <p>Run this on a computer you use with Claude Code or Codex. It opens a sign-in link to approve the computer.</p>
+          <p>Run this on a computer you use with Claude Code, Codex or pi. It opens a sign-in link to approve the computer.</p>
           <div style={{ width: '100%' }}><Command command={installCommand()} label="Install command" /></div>
           <Link to="/setup">More ways to add a Machine, including a prompt for your agent</Link>
         </div>

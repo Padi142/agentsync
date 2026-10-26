@@ -25,7 +25,7 @@ function Setup() {
         <section className="setup-path" aria-labelledby="agent-path">
           <h2 id="agent-path">Ask your agent</h2>
           <p>
-            Paste this into Claude Code or Codex on the computer you're adding. It installs the CLI, asks you to approve
+            Paste this into Claude Code, Codex or pi on the computer you're adding. It installs the CLI, asks you to approve
             the sign-in, and tells you what it set up.
           </p>
           <CopyBlock label="Agent setup prompt" title="Setup prompt" text={prompt.replaceAll('<SERVER_URL>', server)} />
@@ -47,7 +47,7 @@ function Setup() {
             </li>
           </ol>
           <p className="muted">
-            After that, every agent session fetches the latest Template when it starts, and a change applies from the session after. <Link to="/docs/$page" params={{ page: 'cli' }}>See every command</Link>
+            After that, every agent session fetches the latest Template when it starts. Claude Code and Codex get a change from the session after; pi gets it in that session. <Link to="/docs/$page" params={{ page: 'cli' }}>See every command</Link>
           </p>
         </section>
       </div>

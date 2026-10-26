@@ -1,6 +1,7 @@
 import { isAbsolute } from 'node:path';
 import type { SyncPayload } from '@agentsync/contract';
 import { render, validate } from '@agentsync/template';
+import { findAgent } from '../agents.js';
 import type { Context, Outcome } from '../context.js';
 import { CliError, describeError, EXIT, isCancelled } from '../exit.js';
 import { handOff } from '../handoff.js';
@@ -225,8 +226,12 @@ async function hookSync(ctx: Context): Promise<Outcome> {
     const others = written.filter((result) => result.agent !== agent);
     if (own.length) {
       const paths = own.map((result) => result.path).join(', ');
+      const update = `updated ${paths} to Template revision ${payload.template.revision}`;
+      // pi reads its instructions after the hook; Claude Code and Codex read them before it.
       parts.push(
-        `updated ${paths} to Template revision ${payload.template.revision}. This session loaded the previous version; read ${paths} for the current instructions`,
+        findAgent(agent)?.readsAfterHook
+          ? update
+          : `${update}. This session loaded the previous version; read ${paths} for the current instructions`,
       );
     }
     if (others.length) parts.push(`updated ${others.map((result) => result.path).join(', ')}`);
