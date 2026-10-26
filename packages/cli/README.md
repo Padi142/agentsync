@@ -6,10 +6,18 @@ this Machine's Variables into every Target, such as `~/.claude/CLAUDE.md`,
 runs when each agent's session starts.
 See `GLOSSARY.md` at the repo root for the terms.
 
+It isn't published to npm yet (and the `agentsync` name there belongs to an unrelated
+package). Until it is, build it from this repository and link it onto your `PATH`:
+
 ```sh
-npm install -g agentsync
+git clone https://github.com/Padi142/agentsync.git ~/agentsync
+cd ~/agentsync
+pnpm install && pnpm build
+(cd packages/cli && npm link)
 agentsync init --server https://your-agentsync-server
 ```
+
+Keep the clone: the hooks run the CLI from it. Update with `git pull && pnpm install && pnpm build`.
 
 Run `agentsync --help` for the commands, and `agentsync help <command>` for one command's flags.
 

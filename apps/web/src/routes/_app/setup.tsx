@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import prompt from '../../../../../packages/cli/setup-prompt.md?raw';
 import { Command, CopyBlock } from '../../components/Copy';
 import { Icon } from '../../components/Icon';
-import { serverUrl } from '../../commands';
+import { installCommand, serverUrl } from '../../commands';
 
 export const Route = createFileRoute('/_app/setup')({ component: Setup });
 
@@ -25,7 +25,7 @@ function Setup() {
         <section className="setup-path" aria-labelledby="agent-path">
           <h2 id="agent-path">Ask your agent</h2>
           <p>
-            Paste this into Claude Code, Codex or pi on the computer you're adding. It installs the CLI, asks you to approve
+            Paste this into Claude Code, Codex or pi on the computer you're adding. It builds the CLI from the repository, asks you to approve
             the sign-in, and tells you what it set up.
           </p>
           <CopyBlock label="Agent setup prompt" title="Setup prompt" text={prompt.replaceAll('<SERVER_URL>', server)} />
@@ -35,8 +35,12 @@ function Setup() {
           <h2 id="cli-path">Or run it yourself</h2>
           <ol className="steps">
             <li>
-              <p>Install the CLI and register the computer. Needs Node.js 22.12 or later.</p>
-              <Command command={`npm install -g agentsync && agentsync init --server ${server}`} label="Install command" />
+              <p>
+                Build the CLI and register the computer. Needs Node.js 22.12 or later, pnpm and git. The CLI isn't on npm
+                yet, so this clones the repository to <code>~/agentsync</code>, builds it, and links <code>agentsync</code> onto
+                your PATH. Keep the folder: the hooks run the CLI from it.
+              </p>
+              <Command command={installCommand(server)} label="Install command" />
             </li>
             <li>
               <p>Open the sign-in link it prints and approve the code.</p>

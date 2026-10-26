@@ -1,8 +1,15 @@
 # The CLI
 
+The CLI isn't published to npm yet. Until it is, build it from the repository (Node.js 22.12+, pnpm and git) and link it onto your PATH:
+
 ```sh
-npm install -g agentsync
+git clone https://github.com/Padi142/agentsync.git ~/agentsync
+cd ~/agentsync
+pnpm install && pnpm build
+(cd packages/cli && npm link)
 ```
+
+Keep the clone: the hooks run the CLI from it. To update, run `git pull && pnpm install && pnpm build` in it.
 
 `agentsync --help` lists the commands, and `agentsync help <command>` shows one command's flags.
 

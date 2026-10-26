@@ -24,14 +24,15 @@ async function open(path: string) {
 afterEach(cleanup);
 
 describe('Setup page', () => {
-  it("gives the agent prompt and the install one-liner, pointed at this server", async () => {
+  it("gives the agent prompt and the clone-and-build one-liner, pointed at this server", async () => {
     await open('/setup');
     const origin = window.location.origin;
     const prompt = await screen.findByLabelText('Agent setup prompt');
     expect(prompt.textContent).toContain(`agentsync init --yes --json --no-wait --server ${origin}`);
     expect(prompt.textContent).not.toContain('<SERVER_URL>');
-    expect(screen.getByLabelText('Install command').textContent)
-      .toBe(`npm install -g agentsync && agentsync init --server ${origin}`);
+    const install = screen.getByLabelText('Install command').textContent;
+    expect(install).toMatch(/^git clone https:\/\/github\.com\/Padi142\/agentsync\.git ~\/agentsync && .*pnpm build && \(cd packages\/cli && npm link\) && /);
+    expect(install).toMatch(new RegExp(`agentsync init --server ${origin}$`));
     expect(screen.getAllByRole('button', { name: /^Copy/ })).toHaveLength(2);
   });
 
@@ -39,6 +40,6 @@ describe('Setup page', () => {
     await open('/machines');
     expect((await screen.findByRole('link', { name: /More ways to add a Machine/ })).getAttribute('href')).toBe('/setup');
     expect(screen.getByLabelText('Install command').textContent)
-      .toBe(`npm install -g agentsync && agentsync init --server ${window.location.origin}`);
+      .toMatch(new RegExp(`^git clone .* && agentsync init --server ${window.location.origin}$`));
   });
 });
