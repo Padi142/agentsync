@@ -1,7 +1,7 @@
-import { appendFileSync, mkdirSync, statSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createTwoFilesPatch } from 'diff';
-import { readText, writeText } from './files.js';
+import { readText } from './files.js';
 import type { Io } from './io.js';
 import { configDir } from './paths.js';
 
@@ -12,13 +12,21 @@ import { configDir } from './paths.js';
  */
 export type ChangeAction = 'created' | 'updated' | 'replaced';
 
+/** The revisions a Target was Rendered from. */
+export interface Revisions {
+  template: number;
+  variables: number;
+}
+
 export interface TargetChange {
   /** As stored, e.g. `~/.claude/CLAUDE.md`. */
   path: string;
   agent: string;
   action: ChangeAction;
-  /** The hunks of a unified diff from what was on disk to what AgentSync wrote. */
-  diff: string;
+  /** What the Target was last written from, or `null` if AgentSync has no record of it. */
+  previous: Revisions | null;
+  /** The hunks of a unified diff from what was on disk to what AgentSync wrote; `null` if it was too large to keep. */
+  diff: string | null;
 }
 
 /** One sync that wrote at least one Target on this Machine. */
@@ -34,30 +42,31 @@ export interface HistoryEntry {
   changes: TargetChange[];
 }
 
-/** Past this size the log keeps only its newer half, so it never grows without bound. */
-const MAX_BYTES = 1024 * 1024;
+/** A diff that takes longer than this, or comes out larger, is not kept: a hook has seconds to finish. */
+const DIFF_TIMEOUT_MS = 300;
+const MAX_DIFF_CHARS = 64 * 1024;
 
 /**
  * The log of Target writes: one JSON line per sync that changed something, oldest first. It is
- * appended to rather than rewritten, so agents starting at once do not lose each other's lines.
+ * only ever appended to, so agents starting at once never lose each other's lines. Entries are
+ * written only when a Target changes and their diffs are capped, so it grows slowly.
  */
 export const historyFile = (io: Io) => join(configDir(io), 'history.jsonl');
 
 /** Only the hunks: the entry already says which file it is. */
-export function changeDiff(path: string, before: string | null, after: string): string {
-  const patch = createTwoFilesPatch(path, path, before ?? '', after, '', '', { context: 3 });
+export function changeDiff(path: string, before: string | null, after: string): string | null {
+  const patch = createTwoFilesPatch(path, path, before ?? '', after, '', '', { context: 3, timeout: DIFF_TIMEOUT_MS });
+  if (patch === undefined) return null;
   const hunks = patch.indexOf('@@');
-  return hunks < 0 ? '' : patch.slice(hunks);
+  const diff = hunks < 0 ? '' : patch.slice(hunks);
+  return diff.length > MAX_DIFF_CHARS ? null : diff;
 }
 
 export function appendHistory(io: Io, entry: HistoryEntry): void {
   const file = historyFile(io);
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  appendFileSync(file, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
-  if (statSync(file).size > MAX_BYTES) {
-    const lines = readText(file)!.split('\n').filter(Boolean);
-    writeText(file, `${lines.slice(Math.floor(lines.length / 2)).join('\n')}\n`);
-  }
+  // The leading newline ends a line a crash may have cut short, so this entry stays readable.
+  appendFileSync(file, `\n${JSON.stringify(entry)}\n`, { mode: 0o600 });
 }
 
 /** Every entry, oldest first. A line that does not parse (say, cut off by a crash) is skipped. */

@@ -27,7 +27,8 @@ describe('sync --hook', () => {
     t.registered();
     t.server.putTemplate('one\n');
 
-    const result = await t.cli('sync', '--hook', 'claude');
+    // --json must not add a second document: the hook's JSON is all of stdout.
+    const result = await t.cli('sync', '--hook', 'claude', '--json');
 
     expect(result.code).toBe(0);
     expect(read(t.path('.claude/CLAUDE.md'))).toBe('one\n');
@@ -108,7 +109,7 @@ describe('sync --hook', () => {
 
     const result = await t.cli('sync', '--hook', 'claude');
     expect(result.code).toBe(0);
-    expect(result.stdout).toMatch(/^AgentSync: /);
+    expect(hookJson(result.stdout).model).toMatch(/^AgentSync: /);
   });
 
   it('does not claim it kept the instructions when it failed after writing a Target', async () => {

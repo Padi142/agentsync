@@ -7,7 +7,7 @@ import { init } from './commands/init.js';
 import { conflict } from './commands/conflict.js';
 import { edit } from './commands/edit.js';
 import { history } from './commands/history.js';
-import { sync } from './commands/sync.js';
+import { hookOutput, sync } from './commands/sync.js';
 import { logout } from './commands/logout.js';
 import { rename } from './commands/rename.js';
 import { status } from './commands/status.js';
@@ -234,14 +234,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
     if (flags.overwrite && flags.keep) throw usage('Pass either --overwrite or --keep, not both.');
     const ctx = new Context(io, flags, args);
     const { code = EXIT.ok, data = {} } = await command(ctx);
-    if (flags.json) io.out(JSON.stringify({ ok: code === EXIT.ok, ...data }, null, 2));
+    // A hook prints its own output, which must be all of stdout.
+    if (flags.json && flags.hook === undefined) io.out(JSON.stringify({ ok: code === EXIT.ok, ...data }, null, 2));
     return code;
   } catch (error) {
     const code = exitCodeFor(error);
     const message = describeError(error);
     if (flags.hook !== undefined) {
       // Hooks fail open: an agent session must start whatever happens here.
-      io.out(`AgentSync: ${message}`);
+      io.out(hookOutput(flags.hook, `AgentSync: ${message}`));
       return EXIT.ok;
     }
     if (flags.json) {

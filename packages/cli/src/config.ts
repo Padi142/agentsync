@@ -2,6 +2,7 @@ import { chmodSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { readJson, removeFile, writeJson } from './files.js';
 import type { Handler } from './hooks.js';
+import type { Revisions } from './history.js';
 import type { Io } from './io.js';
 import type { Owned } from './owned.js';
 import { configDir } from './paths.js';
@@ -39,6 +40,8 @@ export interface Config {
   /** The same for each pi extension AgentSync wrote as a hook. */
   extensions?: Owned;
   written: Record<string, string>;
+  /** The Template and Variables revisions each Target in `written` was Rendered from, for the history. */
+  writtenFrom?: Record<string, Revisions>;
 }
 
 export const configFile = (io: Io) => join(configDir(io), 'config.json');

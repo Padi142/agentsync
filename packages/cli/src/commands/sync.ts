@@ -6,7 +6,7 @@ import type { Context, Outcome } from '../context.js';
 import { CliError, describeError, EXIT, isCancelled } from '../exit.js';
 import { readText } from '../files.js';
 import { handOff } from '../handoff.js';
-import { appendHistory, changeDiff, type TargetChange } from '../history.js';
+import { appendHistory, changeDiff, type Revisions, type TargetChange } from '../history.js';
 import { expandHome } from '../paths.js';
 import { machineClient } from '../session.js';
 import { backupPath, checkTarget, writeTarget } from '../targets.js';
@@ -123,10 +123,13 @@ export async function applySync(
   ctx: Context,
   payload: SyncPayload,
   trigger: 'sync' | 'init' = 'sync',
-): Promise<Outcome & { results: TargetResult[] }> {
+): Promise<Outcome & { results: TargetResult[]; historyError?: string }> {
   const { template } = payload;
   const results: TargetResult[] = [];
-  const changes: TargetChange[] = [];
+  /** Each write, with its text before and after: diffed only once the config is saved. */
+  const changes: (Omit<TargetChange, 'diff'> & { before: string | null; after: string })[] = [];
+  const revisions: Revisions = { template: template.revision, variables: payload.variables.revision };
+  let historyError: string | undefined;
   const data = {
     templateRevision: template.revision,
     openConflicts: payload.openConflicts,
@@ -148,11 +151,16 @@ export async function applySync(
       try {
         const lastWritten = ctx.config.written[target.path];
         const check = checkTarget({ path, rendered, ...(lastWritten === undefined ? {} : { lastWritten }) });
+        const remember = () => {
+          ctx.config.written[target.path] = rendered;
+          (ctx.config.writtenFrom ??= {})[target.path] = revisions;
+        };
         const write = (action: TargetChange['action']) => {
           const before = readText(path);
+          const previous = ctx.config.writtenFrom?.[target.path] ?? null;
           writeTarget(path, rendered, { backup: action === 'replaced' });
-          ctx.config.written[target.path] = rendered;
-          changes.push({ path: target.path, agent: target.agent, action, diff: changeDiff(target.path, before, rendered) });
+          remember();
+          changes.push({ path: target.path, agent: target.agent, action, previous, before, after: rendered });
         };
 
         if (check.status === 'missing' || check.status === 'stale') {
@@ -160,7 +168,7 @@ export async function applySync(
           result.status = 'written';
           ctx.detail(`Wrote ${target.path}`);
         } else if (check.status === 'current') {
-          ctx.config.written[target.path] = rendered;
+          remember();
         } else {
           result.diff = check.diff!;
           let choice: DriftChoice | null = ctx.flags.overwrite ? 'overwrite' : ctx.flags.keep ? 'keep' : null;
@@ -200,23 +208,27 @@ export async function applySync(
     }
     throw error;
   } finally {
-    if (changes.length) {
-      try {
-        appendHistory(ctx.io, {
-          at: new Date().toISOString(),
-          trigger: ctx.flags.hook === undefined ? trigger : 'hook',
-          ...(ctx.flags.hook === undefined ? {} : { hookAgent: ctx.flags.hook }),
-          templateRevision: template.revision,
-          variablesRevision: payload.variables.revision,
-          changes,
-        });
-      } catch (error) {
-        // The Targets are written; a history that cannot be kept must not fail the sync.
-        ctx.warn(`Could not add this sync to the history: ${describeError(error)}`);
+    try {
+      // Remember what was written even if something later fails, or the next sync sees false Drift.
+      ctx.save();
+    } finally {
+      if (changes.length) {
+        try {
+          appendHistory(ctx.io, {
+            at: new Date().toISOString(),
+            trigger: ctx.flags.hook === undefined ? trigger : 'hook',
+            ...(ctx.flags.hook === undefined ? {} : { hookAgent: ctx.flags.hook }),
+            templateRevision: revisions.template,
+            variablesRevision: revisions.variables,
+            changes: changes.map(({ before, after, ...change }) => ({ ...change, diff: changeDiff(change.path, before, after) })),
+          });
+        } catch (error) {
+          // The Targets are written; a history that cannot be kept must not fail the sync.
+          historyError = describeError(error);
+          ctx.warn(`Could not add this sync to \`agentsync history\`: ${historyError}`);
+        }
       }
     }
-    // Remember what was written even if something later fails, or the next sync sees false Drift.
-    ctx.save();
   }
 
   data.missingVariables = [...missing].sort();
@@ -229,7 +241,7 @@ export async function applySync(
   summarise(ctx, template.revision, results);
   const failed = results.some((result) => result.status === 'error');
   const drifted = results.some((result) => result.status === 'drift');
-  return { code: failed ? EXIT.error : drifted ? EXIT.drift : EXIT.ok, data, results };
+  return { code: failed ? EXIT.error : drifted ? EXIT.drift : EXIT.ok, data, results, ...(historyError ? { historyError } : {}) };
 }
 
 /**
@@ -248,7 +260,7 @@ async function hookSync(ctx: Context): Promise<Outcome> {
   try {
     const payload = await machineClient(ctx, HOOK_TIMEOUT_MS).machines.sync();
     writing = true;
-    const { results, data } = await applySync(ctx, payload);
+    const { results, data, historyError } = await applySync(ctx, payload);
     const written = results.filter((result) => result.status === 'written');
     const own = written.filter((result) => result.agent === agent);
     const others = written.filter((result) => result.agent !== agent);
@@ -265,11 +277,10 @@ async function hookSync(ctx: Context): Promise<Outcome> {
     }
     if (others.length) parts.push({ model: `updated ${list(others)}`, person: null });
     if (written.length) {
-      parts.push({
-        model: '',
-        person: `updated ${list(written)} to Template revision ${payload.template.revision}; run \`agentsync history\` to see what changed`,
-      });
+      const update = `updated ${list(written)} to Template revision ${payload.template.revision}`;
+      parts.push({ model: '', person: historyError ? update : `${update}; run \`agentsync history\` to see what changed` });
     }
+    if (historyError) both(`could not add this sync to \`agentsync history\`: ${historyError}`);
     for (const result of results.filter((result) => result.status === 'error')) {
       both(`could not write ${result.path}: ${result.error}`);
     }
@@ -290,20 +301,21 @@ async function hookSync(ctx: Context): Promise<Outcome> {
     const kept = texts.filter((text): text is string => Boolean(text));
     return kept.length ? `AgentSync: ${kept.map((text) => text.replace(/\.$/, '')).join('; ')}.` : '';
   };
-  const model = line(parts.map((part) => part.model));
-  if (!model) return { code: EXIT.ok };
-  const person = line(parts.map((part) => part.person));
-  if (!findAgent(agent)?.hookJson) ctx.io.out(model);
-  else {
-    // The JSON must be all of stdout, or the agent reads it as plain text.
-    ctx.io.out(
-      JSON.stringify({
-        ...(person ? { systemMessage: person } : {}),
-        hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: model },
-      }),
-    );
-  }
+  const output = hookOutput(agent, line(parts.map((part) => part.model)), line(parts.map((part) => part.person)));
+  if (output) ctx.io.out(output);
   return { code: EXIT.ok };
+}
+
+/**
+ * What a hook prints: `model` for the agent, and for an agent that reads JSON from its hooks,
+ * `person` for the person too. The JSON must be all of stdout, or the agent reads it as plain text.
+ */
+export function hookOutput(agent: string, model: string, person = ''): string {
+  if (!model || !findAgent(agent)?.hookJson) return model;
+  return JSON.stringify({
+    ...(person ? { systemMessage: person } : {}),
+    hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: model },
+  });
 }
 
 export async function sync(ctx: Context): Promise<Outcome> {
