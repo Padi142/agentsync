@@ -44,7 +44,7 @@ export interface HistoryEntry {
 
 /** A diff that takes longer than this, or comes out larger, is not kept: a hook has seconds to finish. */
 const DIFF_TIMEOUT_MS = 300;
-const MAX_DIFF_CHARS = 64 * 1024;
+const MAX_DIFF_BYTES = 64 * 1024;
 
 /**
  * The log of Target writes: one JSON line per sync that changed something, oldest first. It is
@@ -59,7 +59,7 @@ export function changeDiff(path: string, before: string | null, after: string): 
   if (patch === undefined) return null;
   const hunks = patch.indexOf('@@');
   const diff = hunks < 0 ? '' : patch.slice(hunks);
-  return diff.length > MAX_DIFF_CHARS ? null : diff;
+  return Buffer.byteLength(diff, 'utf8') > MAX_DIFF_BYTES ? null : diff;
 }
 
 export function appendHistory(io: Io, entry: HistoryEntry): void {
