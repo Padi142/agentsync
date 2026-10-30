@@ -12,7 +12,9 @@
 
 Your other settings and hooks are kept. Codex skips a new hook until you trust it: open Codex and run `/hooks` once. pi loads the extension by itself.
 
-The hook is built to never get in your way. It never prompts, waits at most 2 seconds for the server, keeps your files if the server can't be reached, and always exits successfully. It prints at most one line starting with `AgentSync:`, which the agent sees. That line reports updated files, Drift it skipped, Variables that aren't set, and open Conflicts.
+The hook is built to never get in your way. It never prompts, waits at most 2 seconds for the server, keeps your files if the server can't be reached, and always exits successfully. It tells the agent, in one line starting with `AgentSync:`, about updated files, Drift it skipped, Variables that aren't set, and open Conflicts.
+
+You see it too: when files changed, Claude Code shows a message under the session's header, and Codex shows it as a hook warning, naming the files and the Template revision. pi shows the line as a notice. To see what changed, and what changed it, run `agentsync history`.
 
 ## When a change applies
 

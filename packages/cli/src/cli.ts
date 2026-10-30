@@ -6,7 +6,8 @@ import { palette } from './style.js';
 import { init } from './commands/init.js';
 import { conflict } from './commands/conflict.js';
 import { edit } from './commands/edit.js';
-import { sync } from './commands/sync.js';
+import { history } from './commands/history.js';
+import { hookOutput, sync } from './commands/sync.js';
 import { logout } from './commands/logout.js';
 import { rename } from './commands/rename.js';
 import { status } from './commands/status.js';
@@ -23,6 +24,7 @@ Commands:
   init        Register this Machine (alias: login), set up its Targets and hooks
   sync        Render the Template into every Target on this Machine
   status      Show this Machine, its Targets, and open Conflicts
+  history     Show when AgentSync changed the Targets on this Machine, and why
   edit        Edit the Template in $EDITOR, or save a file as the next revision
   template    Print the Template
   vars        Show or change this Machine's Variables
@@ -78,6 +80,19 @@ Examples:
   status: `Usage: agentsync status [--verbose]
 
 Show this Machine, the Template revision, each Target's state, and open Conflicts. Writes nothing.`,
+  history: `Usage: agentsync history [--agent <id>]... [--limit <n>] [--verbose]
+
+Show every change AgentSync made to this Machine's Targets, newest first: when, what ran
+the sync (an agent's session start, \`agentsync sync\` or \`agentsync init\`), and which
+Template or Variables revision it brought. Reads only this Machine's local log.
+
+  --agent <id>    Only this agent's Targets, e.g. claude
+  --limit <n>     Show the newest n syncs (default: 10)
+  --verbose       Show each change as a diff
+
+Examples:
+  agentsync history
+  agentsync history --agent claude --verbose --limit 1`,
   edit: `Usage: agentsync edit [--file <path> --base <revision>]
 
 Open the Template in $EDITOR and save it as the next revision. If the Template changed
@@ -151,6 +166,7 @@ const COMMANDS: Record<string, Command> = {
   conflict,
   vars,
   status,
+  history,
   rename,
   logout,
 };
@@ -183,6 +199,7 @@ function parse(argv: string[]): { flags: Flags; positionals: string[]; help: boo
       file: { type: 'string' },
       base: { type: 'string' },
       out: { type: 'string' },
+      limit: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -217,14 +234,15 @@ export async function run(argv: string[], io: Io): Promise<number> {
     if (flags.overwrite && flags.keep) throw usage('Pass either --overwrite or --keep, not both.');
     const ctx = new Context(io, flags, args);
     const { code = EXIT.ok, data = {} } = await command(ctx);
-    if (flags.json) io.out(JSON.stringify({ ok: code === EXIT.ok, ...data }, null, 2));
+    // A hook prints its own output, which must be all of stdout.
+    if (flags.json && flags.hook === undefined) io.out(JSON.stringify({ ok: code === EXIT.ok, ...data }, null, 2));
     return code;
   } catch (error) {
     const code = exitCodeFor(error);
     const message = describeError(error);
     if (flags.hook !== undefined) {
       // Hooks fail open: an agent session must start whatever happens here.
-      io.out(`AgentSync: ${message}`);
+      io.out(hookOutput(flags.hook, `AgentSync: ${message}`));
       return EXIT.ok;
     }
     if (flags.json) {

@@ -1,6 +1,6 @@
 ---
 name: agentsync
-description: AgentSync CLI that syncs the user's Global Instructions (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.pi/agent/AGENTS.md) across Machines. Use when changing those global instruction files, when an `AgentSync:` line reports an update, Drift or a Conflict, or when an `agentsync` command exits 3, 4 or 5.
+description: AgentSync CLI that syncs the user's Global Instructions (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.pi/agent/AGENTS.md) across Machines. Use when changing those global instruction files, when the user asks why their instructions or an agent's behavior changed, when an `AgentSync:` line reports an update, Drift or a Conflict, or when an `agentsync` command exits 3, 4 or 5.
 ---
 
 # AgentSync
@@ -62,3 +62,7 @@ The hook (a SessionStart hook, or for pi an extension) runs `agentsync sync --ho
 - **open Conflict**: offer to [resolve it](#resolve-a-conflict).
 - **kept the existing instructions**: the server was unreachable or the Machine is not registered. The files on disk are unchanged.
 - **sync failed; some Targets may have been updated**: it failed after it started writing. Run `agentsync status --json` to see where each Target stands.
+
+## Find out what changed
+
+`agentsync history --json` lists the syncs that changed a Target on this Machine, newest first: the newest 10 by default, more with `--limit <n>`, one agent's Targets with `--agent <id>`. Each entry has `at`, `trigger` (`hook` with `hookAgent`, `sync` or `init`), `templateRevision`, `variablesRevision`, and `changes`: each changed Target's `path`, `action` (`created`, `updated`, or `replaced` for a hand edit overwritten with a backup), `previous` (the `template` and `variables` revisions it was last written from, or `null` if unknown), and the `diff` that was applied (`null` if it was too large to keep). The history starts when this version of AgentSync was installed. When the user asks why an agent behaves differently, show them the recent changes to its Target and when they arrived.

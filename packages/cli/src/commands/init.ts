@@ -276,6 +276,6 @@ export async function init(ctx: Context): Promise<Outcome> {
     ctx.warn(`Left ${file} alone: AgentSync did not write it, or it was changed since. Remove it to get the agentsync skill.`);
   }
 
-  const { code, data } = await applySync(ctx, await client.machines.sync());
+  const { code, data } = await applySync(ctx, await client.machines.sync(), 'init');
   return { code: code ?? EXIT.ok, data: { machineId, nickname: machine.nickname, hostname: machine.hostname, imported, hooks, hooksLeftAlone, skills, skillsLeftAlone, ...data } };
 }
