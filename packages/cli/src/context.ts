@@ -29,6 +29,7 @@ export interface Flags {
   file?: string;
   base?: string;
   out?: string;
+  limit?: string;
 }
 
 /** How long a wait must last before a spinner appears, so quick requests do not flash one. */

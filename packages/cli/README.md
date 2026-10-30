@@ -32,6 +32,7 @@ Run `agentsync --help` for the commands, and `agentsync help <command>` for one 
 | `vars` | Shows the Machine's Variables, or changes them with `--var KEY=VALUE` and `--unset KEY`. |
 | `conflict list \| get <id> \| resolve <id> <file>` | Works with open Conflicts. `resolve` refuses leftover markers and warns about lone `=======` lines. |
 | `status` | Shows each Target's state and open Conflicts, without writing. |
+| `history` | Shows each change AgentSync made to this Machine's Targets: when, what ran it, which revision, and (`--verbose`) the diff. Local only. |
 | `rename <nickname>` | Changes the Machine's nickname (also `init --nickname` on a registered Machine). Writes no Target; name-dependent Template output changes on the next `sync`. |
 | `logout` | Revokes the Machine and removes its token, plus the hooks and skill files AgentSync installed that nobody changed. Targets stay. |
 
@@ -122,10 +123,12 @@ skill: by a SHA-256 of what AgentSync wrote. A file that differs is left alone w
 
 Hook mode fails open. It never prompts, waits at most 2 seconds for the server, keeps the
 existing files when it cannot reach the server, always exits 0, and prints at most one
-`AgentSync: …` line. Claude Code and Codex add a SessionStart hook's stdout to the
-session's context. The pi extension shows the line as a notice and appends it to the system
-prompt. Either way the agent sees it. It reports updated Targets, skipped Drift, unset
-Variables and open Conflicts (with a link).
+`AgentSync: …` line for the agent. It reports updated Targets, skipped Drift, unset
+Variables and open Conflicts (with a link). For Claude Code and Codex the line is wrapped in
+SessionStart JSON: `hookSpecificOutput.additionalContext` carries it to the model, and
+`systemMessage` tells the person what changed and points at `agentsync history` (left out
+when only the model needs to know, e.g. the server was unreachable). The pi extension shows
+the line as a notice and appends it to the system prompt.
 
 ### Does a change apply to the current session? Not for Claude Code or Codex; yes for pi
 

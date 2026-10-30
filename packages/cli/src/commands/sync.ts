@@ -4,7 +4,9 @@ import { render, validate } from '@agentsync/template';
 import { findAgent } from '../agents.js';
 import type { Context, Outcome } from '../context.js';
 import { CliError, describeError, EXIT, isCancelled } from '../exit.js';
+import { readText } from '../files.js';
 import { handOff } from '../handoff.js';
+import { appendHistory, changeDiff, type TargetChange } from '../history.js';
 import { expandHome } from '../paths.js';
 import { machineClient } from '../session.js';
 import { backupPath, checkTarget, writeTarget } from '../targets.js';
@@ -114,11 +116,17 @@ export function assertValid(text: string): void {
 
 /**
  * Render the Template into every Target and write the ones that changed. Drift is resolved by
- * `--overwrite`/`--keep`, by asking at a terminal, or left in place (exit code 3).
+ * `--overwrite`/`--keep`, by asking at a terminal, or left in place (exit code 3). Every write
+ * goes into this Machine's history, with what ran the sync (`trigger`, or the hook).
  */
-export async function applySync(ctx: Context, payload: SyncPayload): Promise<Outcome & { results: TargetResult[] }> {
+export async function applySync(
+  ctx: Context,
+  payload: SyncPayload,
+  trigger: 'sync' | 'init' = 'sync',
+): Promise<Outcome & { results: TargetResult[] }> {
   const { template } = payload;
   const results: TargetResult[] = [];
+  const changes: TargetChange[] = [];
   const data = {
     templateRevision: template.revision,
     openConflicts: payload.openConflicts,
@@ -140,13 +148,15 @@ export async function applySync(ctx: Context, payload: SyncPayload): Promise<Out
       try {
         const lastWritten = ctx.config.written[target.path];
         const check = checkTarget({ path, rendered, ...(lastWritten === undefined ? {} : { lastWritten }) });
-        const write = (backup: boolean) => {
-          writeTarget(path, rendered, { backup });
+        const write = (action: TargetChange['action']) => {
+          const before = readText(path);
+          writeTarget(path, rendered, { backup: action === 'replaced' });
           ctx.config.written[target.path] = rendered;
+          changes.push({ path: target.path, agent: target.agent, action, diff: changeDiff(target.path, before, rendered) });
         };
 
         if (check.status === 'missing' || check.status === 'stale') {
-          write(false);
+          write(check.status === 'missing' ? 'created' : 'updated');
           result.status = 'written';
           ctx.detail(`Wrote ${target.path}`);
         } else if (check.status === 'current') {
@@ -156,7 +166,7 @@ export async function applySync(ctx: Context, payload: SyncPayload): Promise<Out
           let choice: DriftChoice | null = ctx.flags.overwrite ? 'overwrite' : ctx.flags.keep ? 'keep' : null;
           if (!choice && ctx.canAsk) choice = await askAboutDrift(ctx, target.path, check.diff!);
           if (choice === 'overwrite') {
-            write(true);
+            write('replaced');
             result.status = 'overwritten';
             ctx.say(`Replaced ${target.path} with the Template; the hand edit is in ${backupPath(target.path)}`);
           } else if (choice === 'keep') {
@@ -190,6 +200,21 @@ export async function applySync(ctx: Context, payload: SyncPayload): Promise<Out
     }
     throw error;
   } finally {
+    if (changes.length) {
+      try {
+        appendHistory(ctx.io, {
+          at: new Date().toISOString(),
+          trigger: ctx.flags.hook === undefined ? trigger : 'hook',
+          ...(ctx.flags.hook === undefined ? {} : { hookAgent: ctx.flags.hook }),
+          templateRevision: template.revision,
+          variablesRevision: payload.variables.revision,
+          changes,
+        });
+      } catch (error) {
+        // The Targets are written; a history that cannot be kept must not fail the sync.
+        ctx.warn(`Could not add this sync to the history: ${describeError(error)}`);
+      }
+    }
     // Remember what was written even if something later fails, or the next sync sees false Drift.
     ctx.save();
   }
@@ -210,11 +235,14 @@ export async function applySync(ctx: Context, payload: SyncPayload): Promise<Out
 /**
  * `sync --hook <agent>`, run by an agent's SessionStart hook. It fails open: it never prompts,
  * waits at most ~2s for the server, keeps the existing files when offline, always exits 0, and
- * prints at most one line, which the agent adds to its context.
+ * prints at most one line, which the agent adds to its context. For an agent that reads JSON from
+ * its hooks, that line goes to the model, and the person is told what changed in the same JSON.
  */
 async function hookSync(ctx: Context): Promise<Outcome> {
   const agent = ctx.flags.hook!;
-  const parts: string[] = [];
+  /** What the model is told, and what the person is told (`null`: nothing). */
+  const parts: { model: string; person: string | null }[] = [];
+  const both = (text: string) => parts.push({ model: text, person: text });
   /** Once Targets may have been written, a failure must not claim the old files were kept. */
   let writing = false;
   try {
@@ -224,33 +252,57 @@ async function hookSync(ctx: Context): Promise<Outcome> {
     const written = results.filter((result) => result.status === 'written');
     const own = written.filter((result) => result.agent === agent);
     const others = written.filter((result) => result.agent !== agent);
+    const list = (results: TargetResult[]) => results.map((result) => result.path).join(', ');
     if (own.length) {
-      const paths = own.map((result) => result.path).join(', ');
-      const update = `updated ${paths} to Template revision ${payload.template.revision}`;
+      const update = `updated ${list(own)} to Template revision ${payload.template.revision}`;
       // pi reads its instructions after the hook; Claude Code and Codex read them before it.
-      parts.push(
-        findAgent(agent)?.readsAfterHook
+      parts.push({
+        model: findAgent(agent)?.readsAfterHook
           ? update
-          : `${update}. This session loaded the previous version; read ${paths} for the current instructions`,
-      );
+          : `${update}. This session loaded the previous version; read ${list(own)} for the current instructions`,
+        person: null,
+      });
     }
-    if (others.length) parts.push(`updated ${others.map((result) => result.path).join(', ')}`);
+    if (others.length) parts.push({ model: `updated ${list(others)}`, person: null });
+    if (written.length) {
+      parts.push({
+        model: '',
+        person: `updated ${list(written)} to Template revision ${payload.template.revision}; run \`agentsync history\` to see what changed`,
+      });
+    }
     for (const result of results.filter((result) => result.status === 'error')) {
-      parts.push(`could not write ${result.path}: ${result.error}`);
+      both(`could not write ${result.path}: ${result.error}`);
     }
     for (const result of results.filter((result) => result.status === 'drift')) {
-      parts.push(`${result.path} has Drift (hand edited), so it was skipped; run \`agentsync sync\` to choose what to do`);
+      both(`${result.path} has Drift (hand edited), so it was skipped; run \`agentsync sync\` to choose what to do`);
     }
     const missing = data!.missingVariables as string[];
-    if (missing.length) parts.push(`Variables not set on this Machine: ${missing.join(', ')}`);
+    if (missing.length) both(`Variables not set on this Machine: ${missing.join(', ')}`);
     if (payload.openConflicts.count > 0) {
-      parts.push(`${payload.openConflicts.count} open Conflict(s), resolve at ${payload.openConflicts.url}`);
+      both(`${payload.openConflicts.count} open Conflict(s), resolve at ${payload.openConflicts.url}`);
     }
   } catch (error) {
-    const outcome = writing ? 'sync failed; some Targets may have been updated' : 'kept the existing instructions';
-    parts.push(`${outcome}: ${describeError(error)}`);
+    // Offline, nothing changed, so only the model hears about it.
+    if (writing) both(`sync failed; some Targets may have been updated: ${describeError(error)}`);
+    else parts.push({ model: `kept the existing instructions: ${describeError(error)}`, person: null });
   }
-  if (parts.length) ctx.io.out(`AgentSync: ${parts.map((part) => part.replace(/\.$/, '')).join('; ')}.`);
+  const line = (texts: (string | null)[]) => {
+    const kept = texts.filter((text): text is string => Boolean(text));
+    return kept.length ? `AgentSync: ${kept.map((text) => text.replace(/\.$/, '')).join('; ')}.` : '';
+  };
+  const model = line(parts.map((part) => part.model));
+  if (!model) return { code: EXIT.ok };
+  const person = line(parts.map((part) => part.person));
+  if (!findAgent(agent)?.hookJson) ctx.io.out(model);
+  else {
+    // The JSON must be all of stdout, or the agent reads it as plain text.
+    ctx.io.out(
+      JSON.stringify({
+        ...(person ? { systemMessage: person } : {}),
+        hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: model },
+      }),
+    );
+  }
   return { code: EXIT.ok };
 }
 

@@ -20,6 +20,11 @@ export interface Agent {
   hookKind: 'json' | 'pi-extension';
   /** The agent reads its Global Instructions after the hook ran, so the starting session gets an update. */
   readsAfterHook: boolean;
+  /**
+   * The hook may print a JSON object: `systemMessage` is shown to the person and
+   * `additionalContext` goes to the model. Otherwise its plain stdout goes to the model only.
+   */
+  hookJson: boolean;
 }
 
 export const AGENTS: readonly Agent[] = [
@@ -38,6 +43,7 @@ export const AGENTS: readonly Agent[] = [
     },
     hookKind: 'json',
     readsAfterHook: false,
+    hookJson: true,
   },
   {
     id: 'codex',
@@ -53,6 +59,7 @@ export const AGENTS: readonly Agent[] = [
     },
     hookKind: 'json',
     readsAfterHook: false,
+    hookJson: true,
   },
   {
     id: 'pi',
@@ -70,6 +77,8 @@ export const AGENTS: readonly Agent[] = [
     },
     hookKind: 'pi-extension',
     readsAfterHook: true,
+    // The extension shows the line to the person itself.
+    hookJson: false,
   },
 ];
 

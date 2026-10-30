@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
 const read = (path: string) => readFileSync(path, 'utf8');
+/** Claude Code and Codex get JSON: `systemMessage` for the person, `additionalContext` for the model. */
+const hookJson = (stdout: string) => {
+  const output = JSON.parse(stdout);
+  expect(output.hookSpecificOutput.hookEventName).toBe('SessionStart');
+  return { person: output.systemMessage as string | undefined, model: output.hookSpecificOutput.additionalContext as string };
+};
 
 describe('sync --hook', () => {
   it('says nothing when everything is up to date', async () => {
@@ -16,7 +22,7 @@ describe('sync --hook', () => {
     expect(result).toMatchObject({ code: 0, stdout: '', stderr: '' });
   });
 
-  it('prints one line when it updates the running agent’s Target, pointing at the new file', async () => {
+  it('tells the model to read the updated Target, and the person what changed', async () => {
     const t = setup();
     t.registered();
     t.server.putTemplate('one\n');
@@ -26,7 +32,11 @@ describe('sync --hook', () => {
     expect(result.code).toBe(0);
     expect(read(t.path('.claude/CLAUDE.md'))).toBe('one\n');
     expect(result.stdout.trim().split('\n')).toHaveLength(1);
-    expect(result.stdout).toContain('read ~/.claude/CLAUDE.md');
+    const { person, model } = hookJson(result.stdout);
+    expect(model).toContain('read ~/.claude/CLAUDE.md');
+    expect(person).toBe(
+      'AgentSync: updated ~/.claude/CLAUDE.md to Template revision 1; run `agentsync history` to see what changed.',
+    );
   });
 
   it('for pi, which reads its instructions after the hook, only says what it updated', async () => {
@@ -51,7 +61,10 @@ describe('sync --hook', () => {
 
     expect(result.code).toBe(0);
     expect(read(t.path('.claude/CLAUDE.md'))).toBe('one\n');
-    expect(result.stdout).toMatch(/^AgentSync: kept the existing instructions: Could not reach/);
+    // Nothing changed, so only the model hears about it.
+    const { person, model } = hookJson(result.stdout);
+    expect(model).toMatch(/^AgentSync: kept the existing instructions: Could not reach/);
+    expect(person).toBeUndefined();
   });
 
   it('skips a Target with Drift without prompting, even at a terminal', async () => {
@@ -65,7 +78,7 @@ describe('sync --hook', () => {
 
     expect(result.code).toBe(0);
     expect(read(t.path('.claude/CLAUDE.md'))).toBe('hand edit\n');
-    expect(result.stdout).toContain('~/.claude/CLAUDE.md has Drift');
+    expect(hookJson(result.stdout).person).toContain('~/.claude/CLAUDE.md has Drift');
   });
 
   it('mentions open Conflicts with a link', async () => {
@@ -81,7 +94,10 @@ describe('sync --hook', () => {
     const result = await t.cli('sync', '--hook', 'codex');
 
     expect(result.code).toBe(0);
-    expect(result.stdout).toBe(`AgentSync: 1 open Conflict(s), resolve at ${t.server.url}/conflicts.\n`);
+    expect(hookJson(result.stdout)).toEqual({
+      person: `AgentSync: 1 open Conflict(s), resolve at ${t.server.url}/conflicts.`,
+      model: `AgentSync: 1 open Conflict(s), resolve at ${t.server.url}/conflicts.`,
+    });
   });
 
   it('exits 0 even when this Machine is not registered or its config is broken', async () => {
@@ -105,8 +121,10 @@ describe('sync --hook', () => {
 
       expect(result.code).toBe(0);
       expect(read(t.path('.claude/CLAUDE.md'))).toBe('one\n');
-      expect(result.stdout).toMatch(/^AgentSync: sync failed; some Targets may have been updated: /);
-      expect(result.stdout).not.toContain('kept the existing instructions');
+      const { person, model } = hookJson(result.stdout);
+      expect(model).toMatch(/^AgentSync: sync failed; some Targets may have been updated: /);
+      expect(model).not.toContain('kept the existing instructions');
+      expect(person).toMatch(/^AgentSync: sync failed; some Targets may have been updated: /);
     } finally {
       chmodSync(t.path('.config/agentsync'), 0o700);
     }

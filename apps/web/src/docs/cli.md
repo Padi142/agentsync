@@ -20,6 +20,7 @@ Keep the clone: the hooks run the CLI from it. To update, run `git pull && pnpm 
 | `agentsync init` | Registers this computer, installs the hooks and the agent skill, then syncs. Safe to run again. |
 | `agentsync sync` | Writes the Template into each Target now. |
 | `agentsync status` | Shows each Target's state and open Conflicts, without writing anything. |
+| `agentsync history` | Shows each time AgentSync changed a Target on this Machine: when, what ran it (an agent's session start or a command), and which Template revision it brought. `--verbose` adds the diffs. |
 | `agentsync edit` | Opens the Template in `$EDITOR` and saves it. |
 | `agentsync template` | Prints the Template. `--out <path>` writes it to a file. |
 | `agentsync vars` | Lists this Machine's Variables. `--var KEY=VALUE` sets one, `--unset KEY` removes one. |
@@ -59,4 +60,4 @@ Scripts and agents can branch on these:
 
 ## Where things live
 
-The Machine token and settings are in `~/.config/agentsync/config.json` (or `$XDG_CONFIG_HOME/agentsync`, or `$AGENTSYNC_CONFIG_DIR`), readable only by you.
+The Machine token and settings are in `~/.config/agentsync/config.json` (or `$XDG_CONFIG_HOME/agentsync`, or `$AGENTSYNC_CONFIG_DIR`), readable only by you. Next to it, `history.jsonl` records every change AgentSync made to a Target on this Machine, with its diff; `agentsync history` reads it.
