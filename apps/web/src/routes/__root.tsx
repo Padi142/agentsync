@@ -10,7 +10,7 @@ import {
 import type { ReactNode } from 'react';
 import { clearProfile } from '@databuddy/sdk';
 import { Analytics, useIdentify } from '../analytics';
-import { BrandMark, Icon } from '../components/Icon';
+import { BrandMark, GitHubMark, Icon } from '../components/Icon';
 import { loginHref } from '../login';
 import { ErrorPage } from '../components/ErrorPage';
 import { rpc } from '../rpc';
@@ -62,7 +62,10 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 function Frame({ children }: { children: ReactNode }) {
   return (
     <>
-      <header className="topbar"><Brand /></header>
+      <header className="topbar">
+        <Brand />
+        <div className="topbar-end"><GitHubLink /></div>
+      </header>
       <main>{children}</main>
     </>
   );
@@ -74,6 +77,16 @@ const Brand = () => (
     <span>AgentSync</span>
   </Link>
 );
+
+function GitHubLink() {
+  return (
+    <a className="github-link" href="https://github.com/Padi142/agentsync" target="_blank" rel="noopener noreferrer"
+      aria-label="AgentSync on GitHub (opens in a new tab)" title="AgentSync on GitHub">
+      <GitHubMark />
+      <span>GitHub</span>
+    </a>
+  );
+}
 
 function Layout() {
   const { user, openConflicts } = Route.useRouteContext();
@@ -96,6 +109,7 @@ function Layout() {
           <Link to="/docs">Docs</Link>
         </nav>
         <div className="topbar-end">
+          <GitHubLink />
           {user ? (
             <>
               {/* On the Template's own views, its Conflicts tab shows the count. */}

@@ -239,6 +239,33 @@ p {
   min-width: 0;
 }
 
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0 6px;
+  flex: none;
+  border-radius: var(--radius);
+  color: var(--graphite);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .github-link:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+}
+
+.github-link:active {
+  background: var(--hover);
+}
+
 /* Opened from the account button; the top layer puts it under the top bar's right end. */
 .account-menu {
   position: fixed;
@@ -2745,7 +2772,7 @@ fieldset.variables-table {
 
 @media (max-width: 640px) {
   .topbar {
-    gap: 12px;
+    gap: 8px;
     padding: 0 max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
   }
 
@@ -2753,12 +2780,25 @@ fieldset.variables-table {
     display: none;
   }
 
+  .github-link span {
+    display: none;
+  }
+
+  .topbar-end {
+    gap: 6px;
+  }
+
+  .nav {
+    gap: 0;
+  }
+
   .conflict-pill {
     display: none;
   }
 
   .nav a {
-    padding: 0 8px;
+    padding: 0 6px;
+    font-size: 14px;
   }
 
   .toolbar {
