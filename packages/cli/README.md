@@ -132,7 +132,11 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
   `skills` never copies (`metadata.json`, `.git`, `__pycache__`, `__pypackages__`), and compared
   with the Pin's installed hash from the server. The lock's own hash is never trusted.
 - **Removing.** `skills remove … -g -y -a claude-code codex pi` removes every copy, so AgentSync
-  only asks it to remove its own undrifted copies, and checks the disk afterwards.
+  only asks it to remove its own undrifted copies, and checks the disk afterwards. `skills` keeps
+  the shared `~/.agents/skills` copy while another agent it knows reads that directory (Cursor,
+  say); AgentSync then removes that copy, which it owns, and its lock entry itself.
+- **Failures.** A Skill `skills` reports as failed counts as failed. A copy still at the earlier Pin
+  keeps that record; one `skills` wrote only part of is AgentSync's and the next sync finishes it.
 - **Reporting.** `skills sync` and `init` send a scan and their results to the server; `agentsync
   sync` and the hook only say what `skills sync` would do. The scan
   lists every skill folder with a `SKILL.md` in `~/.agents/skills` and Claude Code's `skills/`

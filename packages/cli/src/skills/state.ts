@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, statSync, unlinkSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { CliError, EXIT } from '../exit.js';
 import { readJson, removeFile, writeJson } from '../files.js';
@@ -20,6 +20,8 @@ export interface ManagedSkill {
   sources: string[];
   /** The directories whose `<name>` folder AgentSync wrote or adopted. A folder anywhere else is never touched. */
   places: Place[];
+  /** A `skills add` of this Pin failed partway: the copies are AgentSync's but mixed, so the next sync retries. */
+  incomplete?: true;
 }
 
 /**
@@ -54,31 +56,50 @@ export function deleteSkillsState(io: Io): void {
 export const recordOf = (managed: Readonly<Record<string, ManagedSkill>>, name: string): ManagedSkill | undefined =>
   Object.hasOwn(managed, name) ? managed[name] : undefined;
 
-/** A `skills sync` that died this long ago no longer holds the lock. */
-const STALE_LOCK_MS = 15 * 60 * 1000;
+/** A lock older than this, from a process that can't be checked, no longer counts. */
+const STALE_LOCK_MS = 30 * 60 * 1000;
+
+/** Whether the process that wrote `file` (its PID inside) is still running. */
+function lockHeld(file: string): boolean {
+  let pid: number;
+  let age: number;
+  try {
+    pid = Number.parseInt(readFileSync(file, 'utf8'), 10);
+    age = Date.now() - statSync(file).mtimeMs;
+  } catch {
+    return false; // It went away meanwhile.
+  }
+  if (!Number.isInteger(pid) || pid <= 0) return age < STALE_LOCK_MS;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 /**
- * Run `work` holding the Skills lock, so two `skills sync` (or `init`) runs never plan against each
- * other's half-finished changes.
+ * Run `work` holding the Skills lock (a file with this process's PID), so two `skills sync` (or `init`)
+ * runs never plan against each other's half-finished changes. A lock left by a process that no longer
+ * runs is taken over.
  */
 export async function withSkillsLock<T>(io: Io, work: () => Promise<T>): Promise<T> {
   const dir = configDir(io);
   const file = join(dir, 'skills.lock');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const take = () => {
+    const fd = openSync(file, 'wx', 0o600);
+    writeSync(fd, String(process.pid));
+    return fd;
+  };
   let fd: number;
   try {
-    fd = openSync(file, 'wx', 0o600);
+    fd = take();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    let stale = false;
-    try {
-      stale = Date.now() - statSync(file).mtimeMs > STALE_LOCK_MS;
-    } catch {
-      stale = true; // It went away meanwhile.
-    }
-    if (!stale) throw new CliError('Another `agentsync skills sync` is running on this Machine. Try again when it has finished.', EXIT.error);
+    if (lockHeld(file)) throw new CliError('Another `agentsync skills sync` is running on this Machine. Try again when it has finished.', EXIT.error);
     removeFile(file);
-    fd = openSync(file, 'wx', 0o600);
+    fd = take(); // Two runs racing for a dead lock: only one creates the new file.
   }
   try {
     return await work();

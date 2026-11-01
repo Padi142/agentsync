@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
-  desiredSkillSchema, gitShaSchema, skillNameSchema, type ContractClient, type DesiredSkill, type SkillSyncResult, type SyncPayload,
+  desiredSkillSchema, gitShaSchema, RESERVED_SKILL_NAME, skillNameSchema, type ContractClient, type DesiredSkill, type SkillSyncResult, type SyncPayload,
 } from '@agentsync/contract';
 import { findAgent } from '../agents.js';
 import type { Context, Outcome } from '../context.js';
@@ -8,7 +10,7 @@ import { describeError, EXIT, usage } from '../exit.js';
 import { machineClient } from '../session.js';
 import { pendingCounts, planSkills, requiredPlaces, type SkillStep } from '../skills/plan.js';
 import { addSkills, removeSkills } from '../skills/runner.js';
-import { scanSkills, type Scan } from '../skills/scan.js';
+import { forgetLockEntry, scanSkills, skillDir, type Scan } from '../skills/scan.js';
 import { readSkillsState, recordOf, updateSkillsState, withSkillsLock, type ManagedSkill, type Place } from '../skills/state.js';
 
 /** The hook reports an unchanged scan again after this long, so the dashboard knows the Machine checked in. */
@@ -48,13 +50,20 @@ async function report(ctx: Context, client: ContractClient, scan: Scan, results?
 function checkedDesired(payload: SyncPayload) {
   const valid: DesiredSkill[] = [];
   const invalid: SkillSyncResult[] = [];
+  /** Names the server lists that can't be acted on: whatever is installed under them stays. */
+  const keep = new Set<string>();
   for (const skill of payload.skills) {
-    if (desiredSkillSchema.safeParse(skill).success) valid.push(skill);
-    else if (gitShaSchema.safeParse(skill.commit).success && /^[a-z0-9-]{1,64}$/.test(skill.name)) {
+    // The CLI's own skill is never a Skill, whatever the server says.
+    if (skill.name !== RESERVED_SKILL_NAME && desiredSkillSchema.safeParse(skill).success) {
+      valid.push(skill);
+      continue;
+    }
+    if (typeof skill.name === 'string') keep.add(skill.name);
+    if (gitShaSchema.safeParse(skill.commit).success && /^[a-z0-9-]{1,64}$/.test(skill.name)) {
       invalid.push({ name: skill.name, commit: skill.commit, status: 'failed', error: 'The server sent a Skill this CLI can’t install safely.' });
     }
   }
-  return { valid, invalid };
+  return { valid, invalid, keep };
 }
 
 /**
@@ -67,7 +76,7 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
   const { io } = ctx;
   return withSkillsLock(io, async () => {
     const { managed } = readSkillsState(io);
-    const { valid: desired, invalid } = checkedDesired(payload);
+    const { valid: desired, invalid, keep } = checkedDesired(payload);
     const results: SkillSyncResult[] = [...invalid];
     const result = (name: string, commit: string, status: SkillSyncResult['status'], error?: string) =>
       results.push({ name, commit, status, ...(error ? { error: error.slice(0, 2000) } : {}) });
@@ -75,8 +84,8 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
     const required = requiredPlaces(agents);
     /** Plan `names` again from the disk as it is now. */
     const replan = async (names: string[]) => {
-      const now = await scanSkills(io, managed, names);
-      return planSkills(desired.filter((skill) => names.includes(skill.name)), now.folders, managed, required, overwrite)
+      const now = await scanSkills(io, managed, names, { only: true });
+      return planSkills(desired.filter((skill) => names.includes(skill.name)), now.folders, managed, required, overwrite, keep)
         .filter((step) => names.includes(step.name));
     };
     const settle = (step: SkillStep) => {
@@ -95,7 +104,7 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
     };
 
     try {
-      const steps = planSkills(desired, (await scanSkills(io, managed, desired.map((skill) => skill.name))).folders, managed, required, overwrite);
+      const steps = planSkills(desired, (await scanSkills(io, managed, desired.map((skill) => skill.name))).folders, managed, required, overwrite, keep);
       for (const step of steps) settle(step);
 
       const removals = steps.filter((step) => step.action === 'remove').map((step) => step.name);
@@ -105,13 +114,21 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
         const names = still.filter((step) => step.action === 'remove').map((step) => step.name);
         if (names.length) {
           await ctx.during(`Removing ${names.join(', ')}…`, () => removeSkills(ctx, names));
-          const after = await scanSkills(io, {}, names);
+          const after = await scanSkills(io, {}, names, { only: true });
           for (const name of names) {
-            const commit = recordOf(managed, name)!.commit;
-            if (after.folders.get(name)?.present.length) result(name, commit, 'failed', 'skills remove left it on disk.');
+            const record = recordOf(managed, name)!;
+            let left = after.folders.get(name)?.present ?? [];
+            // `skills` keeps the shared `~/.agents/skills` copy while another agent it knows (Cursor, say)
+            // reads that directory. It's AgentSync's, checked above: finish the removal here.
+            if (left.length && left.every((place) => record.places.includes(place))) {
+              for (const place of left) await rm(join(skillDir(io, place), name), { recursive: true, force: true });
+              await forgetLockEntry(io, name);
+              left = (await scanSkills(io, {}, [name], { only: true })).folders.get(name)?.present ?? [];
+            }
+            if (left.length) result(name, record.commit, 'failed', 'skills remove left it on disk.');
             else {
               delete managed[name];
-              result(name, commit, 'removed');
+              result(name, record.commit, 'removed');
             }
           }
         }
@@ -147,13 +164,21 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
           outcome = error instanceof Error ? error : new Error(String(error));
         }
         const wrote = requiredPlaces(targets);
-        const after = await scanSkills(io, {}, names);
+        const after = await scanSkills(io, {}, names, { only: true });
         for (const step of go) {
           const folder = after.folders.get(step.name);
           const said = outcome instanceof Error ? { ok: false as const, error: describeError(outcome) } : outcome.get(step.name);
           const placed = wrote.filter((place) => folder?.present.includes(place));
-          // Whatever `skills` wrote is AgentSync's now, matching or not; a mismatch then reads as Drift.
-          if (placed.length) managed[step.name] = recordFor(step.desired, placed);
+          const before = recordOf(managed, step.name);
+          const present = folder?.present ?? [];
+          if (folder?.hash === step.desired.installedHash) {
+            managed[step.name] = recordFor(step.desired, present);
+          } else if (before && present.every((place) => before.places.includes(place)) && folder?.hash === before.installedHash) {
+            // Nothing was written: the copy is still the earlier Pin, and stays recorded as that.
+          } else if (present.length) {
+            // `skills` wrote part of it: AgentSync's, and the next sync finishes it without --overwrite.
+            managed[step.name] = { ...recordFor(step.desired, [...new Set([...(before?.places ?? []), ...placed])]), incomplete: true };
+          }
           if (said && !said.ok) result(step.name, commit, 'failed', said.error);
           else if (placed.length !== wrote.length) result(step.name, commit, 'failed', 'skills add didn’t write every agent’s copy.');
           else if (folder?.hash !== step.desired.installedHash) result(step.name, commit, 'failed', 'The installed folder does not match its Pin.');
@@ -227,9 +252,9 @@ const describeStep = {
 /** The plan for this Machine, as `skills sync` would see it now (without `--overwrite`). */
 async function currentPlan(ctx: Context, payload: SyncPayload) {
   const { managed } = readSkillsState(ctx.io);
-  const desired = checkedDesired(payload).valid;
+  const { valid: desired, keep } = checkedDesired(payload);
   const { folders } = await scanSkills(ctx.io, managed, desired.map((skill) => skill.name));
-  return planSkills(desired, folders, managed, requiredPlaces(skillsAgents(payload)), false).filter((step) => step.action !== 'forget');
+  return planSkills(desired, folders, managed, requiredPlaces(skillsAgents(payload)), false, keep).filter((step) => step.action !== 'forget');
 }
 
 /** `skills status`: each Skill on this Machine against its Pin, without changing anything. */
@@ -294,7 +319,7 @@ export async function pendingSkills(ctx: Context, payload: SyncPayload) {
 export async function hookSkills(ctx: Context, payload: Promise<SyncPayload>, deadline: number): Promise<string | null> {
   try {
     const { managed, report: last } = readSkillsState(ctx.io);
-    const scan = await scanSkills(ctx.io, managed, [], deadline);
+    const scan = await scanSkills(ctx.io, managed, [], { deadline });
     const due = !last || last.hash !== scanHash(scan) || Date.now() - last.at >= REPORT_EVERY_MS;
     const remaining = deadline - Date.now();
     const sent = due && remaining > 0
@@ -303,9 +328,9 @@ export async function hookSkills(ctx: Context, payload: Promise<SyncPayload>, de
     let line: string | null = null;
     try {
       const resolved = await payload;
-      const desired = checkedDesired(resolved).valid;
+      const { valid: desired, keep } = checkedDesired(resolved);
       // Names the listing didn't see are simply absent: they count as to install.
-      line = pendingText(planSkills(desired, scan.folders, managed, requiredPlaces(skillsAgents(resolved)), false));
+      line = pendingText(planSkills(desired, scan.folders, managed, requiredPlaces(skillsAgents(resolved)), false, keep));
     } catch {
       // The Template part reports why the server could not be reached.
     }

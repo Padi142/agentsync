@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Target } from '@agentsync/contract';
@@ -48,10 +48,13 @@ function fakeSkills(home: string) {
     if (command === 'remove') {
       const names = rest.slice(0, rest.findIndex((arg) => arg.startsWith('-')));
       const current = lock();
+      // Like `skills`, keep the shared ~/.agents/skills copy (and its lock entry) while another agent it
+      // knows, but wasn't asked about, reads that directory: here, Cursor.
+      const shared = existsSync(join(home, '.cursor'));
       for (const name of names) {
-        rmSync(join(home, '.agents', 'skills', name), { recursive: true, force: true });
+        if (!shared) rmSync(join(home, '.agents', 'skills', name), { recursive: true, force: true });
         rmSync(join(home, '.claude', 'skills', name), { recursive: true, force: true });
-        delete current.skills[name];
+        if (!shared) delete current.skills[name];
       }
       saveLock(current);
       return { code: 0, stdout: '', stderr: '' };

@@ -301,3 +301,58 @@ describe('plain sync and Skills', () => {
     expect(t.skills.calls).toEqual([]);
   });
 });
+
+describe('skills sync after something went wrong', () => {
+  it('retries a failed update, instead of calling the untouched copy hand edited', async () => {
+    const t = await machineWithSkills();
+    await t.cli('skills', 'sync');
+    // The new Pin can't be installed (say, the network is down): `skills` skips it.
+    t.server.state.skills[0] = { ...t.server.state.skills[0]!, commit: sha('9'), installedHash: sha('e') };
+
+    expect(statuses(await t.cli('skills', 'sync', '--json'))).toMatchObject({ animate: 'failed' });
+    expect(statuses(await t.cli('skills', 'sync', '--json'))).toMatchObject({ animate: 'failed' });
+    expect((await t.cli('skills', 'status', '--json')).json().skills[0]).toMatchObject({ name: 'animate', state: 'update' });
+  });
+
+  it('finishes a removal `skills` leaves half done because another agent reads ~/.agents/skills', async () => {
+    const t = await machineWithSkills();
+    await t.cli('skills', 'sync');
+    t.write('.cursor/settings.json', '{}');
+    t.server.state.skills = [];
+
+    const result = await t.cli('skills', 'sync', '--json');
+
+    expect(statuses(result)).toEqual({ animate: 'removed', polish: 'removed' });
+    expect(existsSync(t.path('.agents/skills/animate'))).toBe(false);
+    expect(JSON.parse(readFileSync(t.path('.agents/.skill-lock.json'), 'utf8')).skills).toEqual({});
+  });
+
+  it('treats a copy from a lock entry that isn’t GitHub as someone else’s', async () => {
+    const t = await machineWithSkills();
+    await t.cli('skills', 'sync');
+    const lock = JSON.parse(readFileSync(t.path('.agents/.skill-lock.json'), 'utf8'));
+    lock.skills.animate = { source: './my-animate', sourceType: 'local' };
+    t.write('.agents/.skill-lock.json', JSON.stringify(lock));
+    t.write('.agents/skills/animate/SKILL.md', 'my local animate');
+
+    expect(statuses(await t.cli('skills', 'sync', '--json', '--overwrite'))).toMatchObject({ animate: 'blocked' });
+    expect(readFileSync(t.path('.agents/skills/animate/SKILL.md'), 'utf8')).toBe('my local animate');
+  });
+
+  it('never installs a Skill over its own agentsync skill', async () => {
+    const t = await machineWithSkills();
+    t.server.state.skills = [{ ...t.server.state.skills[0]!, name: 'agentsync' }];
+
+    await t.cli('skills', 'sync', '--json');
+
+    expect(t.skills.calls).toEqual([]);
+  });
+
+  it('takes over a lock left by a run that died, but not one a running sync holds', async () => {
+    const t = await machineWithSkills();
+    t.write('.config/agentsync/skills.lock', String(process.pid));
+    expect((await t.cli('skills', 'sync')).stderr).toContain('Another `agentsync skills sync` is running');
+    t.write('.config/agentsync/skills.lock', '999999999');
+    expect((await t.cli('skills', 'sync')).code).toBe(0);
+  });
+});

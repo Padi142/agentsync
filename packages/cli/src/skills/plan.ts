@@ -11,9 +11,10 @@ import { recordOf, type ManagedSkill, type Place } from './state.js';
  * - `unchanged`: AgentSync's copy is the Pin, everywhere it is needed.
  * - `remove`: AgentSync's undrifted (or `--overwrite`) copy of a Skill this Machine should no longer have.
  * - `forget`: AgentSync's copy is gone already; drop the record.
- * - `drifted`: AgentSync's copy was edited by hand, so it waits for `--overwrite`.
+ * - `drifted`: AgentSync's copy was edited by hand, so it waits for `--overwrite`. (A copy its own
+ *   failed install left mixed is not drifted: `update` finishes it.)
  * - `blocked`: a folder AgentSync doesn't own holds the name, in some directory, or the `skills` lock
- *   says it came from another source. Never touched, even with `--overwrite`.
+ *   says it came from another source (or not from GitHub). Never touched, even with `--overwrite`.
  */
 export type SkillStep =
   | {
@@ -25,7 +26,7 @@ export type SkillStep =
   }
   | { name: string; action: 'remove' | 'forget' | 'drifted' | 'blocked'; record: ManagedSkill };
 
-const absent: Folder = { present: [], skill: false, hash: null, lockSource: null };
+const absent: Folder = { present: [], skill: false, hash: null, lockSource: null, lockOther: false };
 
 /** The directories a Skill must be in for these `skills` agents: Claude Code reads its own, Codex and pi `~/.agents/skills`. */
 export function requiredPlaces(agents: readonly string[]): Place[] {
@@ -43,12 +44,15 @@ export function planSkills(
   managed: Readonly<Record<string, ManagedSkill>>,
   required: readonly Place[],
   overwrite: boolean,
+  /** Names the server still lists but this CLI can't act on: never removed. */
+  keep: ReadonlySet<string> = new Set(),
 ): SkillStep[] {
   const steps: SkillStep[] = [];
-  const wanted = new Set(desired.map((skill) => skill.name));
+  const wanted = new Set([...desired.map((skill) => skill.name), ...keep]);
   /** Someone else's: a folder in a directory AgentSync never wrote to, or a lock entry from another source. */
   const foreign = (folder: Folder, record: ManagedSkill) =>
     folder.present.some((place) => !record.places.includes(place)) ||
+    folder.lockOther ||
     (folder.lockSource !== null && !record.sources.includes(folder.lockSource));
 
   for (const skill of desired) {
@@ -62,7 +66,9 @@ export function planSkills(
       const adoptable = folder.lockSource !== null && skill.sources.includes(folder.lockSource) && folder.hash === skill.installedHash;
       step(adoptable && complete ? 'adopt' : 'blocked');
     } else if (foreign(folder, record)) step('blocked');
-    else if (folder.hash === skill.installedHash) step(complete ? 'unchanged' : 'update');
+    else if (folder.hash === skill.installedHash) step(complete && !record.incomplete ? 'unchanged' : 'update');
+    // AgentSync's own install stopped partway: finish it.
+    else if (record.incomplete) step('update');
     else if (folder.hash !== null && folder.hash === record.installedHash) step('update');
     else step(overwrite ? 'replace' : 'drifted');
   }
@@ -71,7 +77,7 @@ export function planSkills(
     const folder = folders.get(name) ?? absent;
     if (!folder.present.length) steps.push({ name, action: 'forget', record });
     else if (foreign(folder, record)) steps.push({ name, action: 'blocked', record });
-    else if (overwrite || (folder.hash !== null && folder.hash === record.installedHash)) steps.push({ name, action: 'remove', record });
+    else if (overwrite || record.incomplete || (folder.hash !== null && folder.hash === record.installedHash)) steps.push({ name, action: 'remove', record });
     else steps.push({ name, action: 'drifted', record });
   }
   return steps;
