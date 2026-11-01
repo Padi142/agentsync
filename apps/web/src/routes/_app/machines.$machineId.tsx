@@ -11,16 +11,18 @@ import { useDraft } from '../../draft';
 import { OS_NAMES } from '../../format';
 import { useOwnNavigate } from '../../navigation';
 import { rpc } from '../../rpc';
+import { describeState } from '../../skills';
 
 export const Route = createFileRoute('/_app/machines/$machineId')({
   loader: async ({ params: { machineId } }) => {
-    const [machine, variables, history, template] = await Promise.all([
+    const [machine, variables, history, template, skills] = await Promise.all([
       rpc.machines.get({ machineId }),
       rpc.variables.get({ machineId }),
       rpc.variables.history({ machineId }),
       rpc.template.get(),
+      rpc.skills.overview(),
     ]);
-    return { machine, variables, history, template };
+    return { machine, variables, history, template, skills };
   },
   component: MachineRoute,
 });
@@ -140,6 +142,7 @@ function MachinePage() {
               <p className="muted">No Targets. Run <code>agentsync init</code> on {machine.nickname} to detect its agents.</p>
             )}
           </section>
+          <MachineSkills />
           <VariablesHistory setNotice={setNotice} />
         </div>
 
@@ -158,6 +161,7 @@ function MachinePage() {
             <Command command="agentsync sync" note="Write the latest Template now, instead of at the next agent session." />
             <Command command="agentsync status" note="Show each file's state and any open Conflicts." />
             <Command command="agentsync vars" note={<>List this Machine's Variables. Add <code>--var NAME=value</code> to set one.</>} />
+            <Command command="agentsync skills sync" note="Install, update and remove this Machine's Skills." />
           </section>
           <section className="danger-zone">
             <h2>Delete Machine</h2>
@@ -169,6 +173,51 @@ function MachinePage() {
         </aside>
       </div>
     </div>
+  );
+}
+
+/** The Skills on this Machine: each one set for it, or still to be removed, with its state and fix. */
+function MachineSkills() {
+  const { machine, skills } = Route.useLoaderData();
+  const checkedIn = skills.machines.find((m) => m.id === machine.id)?.checkedInAt ?? null;
+  const here = skills.skills.flatMap((skill) => {
+    const state = skill.machines.find((m) => m.machineId === machine.id);
+    return state && state.status !== 'not-set' ? [{ skill, state }] : [];
+  });
+  const found = skills.found.filter((f) => (f.kind === 'github' ? f.machines.some((m) => m.machineId === machine.id) : f.machineIds.includes(machine.id)));
+  return (
+    <section className="section">
+      <div className="section-head">
+        <h2>Skills</h2>
+        <p>{checkedIn ? <>Checked in <Ago date={checkedIn} /></> : 'Not checked in yet'}</p>
+      </div>
+      {here.length ? (
+        <ul className="sk-machine-skills">
+          {here.map(({ skill, state }) => {
+            const shown = describeState(skill, state);
+            return (
+              <li key={skill.id}>
+                <span className="sk-dot" data-state={shown.dot} aria-hidden="true" />
+                <span className="sk-machine-label">
+                  <span>{skill.name} <span className="muted">· {shown.label}</span></span>
+                  {shown.detail ? <small>{shown.detail}</small> : null}
+                </span>
+                {state.status === 'drifted' ? <Command command="agentsync skills sync --overwrite" />
+                  : state.status === 'failed' || state.status === 'pending' ? <Command command="agentsync skills sync" /> : <span />}
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="muted">No Skills are set for {machine.nickname}. <Link to="/skills">Add one on the Skills page</Link>.</p>
+      )}
+      {found.length ? (
+        <p className="sk-note" style={{ marginTop: 12 }}>
+          Also here: {found.map((f, i) => <span key={`${f.kind}:${f.name}`}>{i ? ', ' : ''}<code>{f.name}</code></span>)}.{' '}
+          {found.some((f) => f.kind === 'github') ? <Link to="/skills">Add them on the Skills page</Link> : null}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

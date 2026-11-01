@@ -17,6 +17,7 @@ const machine = (id: string, name: string, editor: string) => ({
   variables: { machineId: id, variables: { editor }, revision: 1 },
   history: [],
   template: { revision: 0, text: '', updatedAt: null },
+  skills: { settings: { autoUpdate: false }, skills: [], found: [], machines: [] },
 });
 
 afterEach(cleanup);

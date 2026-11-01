@@ -23,6 +23,7 @@ const { rpc } = vi.hoisted(() => {
         rollback: vi.fn(),
       },
       machines: { list: vi.fn(async () => [machine]), get: vi.fn(async () => machine) },
+      skills: { overview: vi.fn(async () => ({ settings: { autoUpdate: false }, skills: [], found: [], machines: [] })) },
       variables: {
         get: vi.fn(async () => ({ machineId: 'b', variables: { editor: 'vim' }, revision: 1 })),
         history: vi.fn(async () => []),
