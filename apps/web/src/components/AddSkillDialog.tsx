@@ -1,4 +1,4 @@
-import type { SkillCandidate, SkillSearchResult } from '@agentsync/contract';
+import { repoNameSchema, type SkillCandidate, type SkillSearchResult } from '@agentsync/contract';
 import { safe } from '@orpc/client';
 import { useEffect, useRef, useState } from 'react';
 import { rpc } from '../rpc';
@@ -15,11 +15,12 @@ const SEARCH_DELAY_MS = 250;
  * Add a Skill: search skills.sh, pick one to see the version that would be pinned and its audits,
  * then add it for every Machine. `taken` are the names already in the account.
  */
-export function AddSkillDialog({ open, onClose, taken, actions }: {
+export function AddSkillDialog({ open, onClose, taken, actions, onCollection }: {
   open: boolean;
   onClose: () => void;
   taken: ReadonlySet<string>;
   actions: SkillActions;
+  onCollection: (repo: string) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -32,6 +33,7 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
   const [addFailed, setAddFailed] = useState(false);
   /** Counts openings, so an Add that finishes after the dialog was closed and opened again leaves the new one alone. */
   const session = useRef(0);
+  const repository = repoNameSchema.safeParse(query.trim().replace(/^https:\/\/github\.com\//, '').replace(/\/$/, ''));
 
   useEffect(() => {
     const element = dialog.current;
@@ -83,7 +85,7 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
   };
 
   return (
-    <dialog ref={dialog} className="sk-dialog" aria-label="Add a Skill" onClose={onClose}
+    <dialog ref={dialog} className="sk-dialog" aria-label="Add skills" onClose={onClose}
       onClick={(event) => event.target === dialog.current && onClose()}>
       {picked ? (
         <div className="sk-preview">
@@ -108,6 +110,9 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
                     <a className="sk-note" href={`https://skills.sh/${candidate.repo.fullName}`} target="_blank" rel="noopener noreferrer">Audit details</a>
                   </div>
                   {addFailed && actions.status?.tone === 'error' ? <p className="status-line" data-tone="error" role="status">{actions.status.text}</p> : null}
+                  <button type="button" className="sk-browse-collection" disabled={!!actions.busy} onClick={() => onCollection(candidate.repo.fullName)}>
+                    <Icon name="collection" /><span>Browse the whole collection<strong>{candidate.repo.fullName}</strong></span><Icon name="chevron" />
+                  </button>
                 </>
               )}
           </div>
@@ -115,10 +120,13 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
       ) : (
         <>
           <div className="sk-dialog-head">
-            <input ref={input} type="search" placeholder="Search skills.sh" aria-label="Search skills.sh" autoComplete="off"
+            <input ref={input} type="search" placeholder="Search skills or enter owner/repo" aria-label="Search skills.sh or enter a repository" autoComplete="off"
               value={query} onChange={(event) => setQuery(event.target.value)} />
             <button type="button" className="icon-button" aria-label="Close" onClick={onClose}><Icon name="close" /></button>
           </div>
+          {repository.success ? <div className="sk-repository-result"><button type="button" className="sk-browse-collection" onClick={() => onCollection(repository.data)}>
+            <Icon name="collection" /><span>Browse collection<strong>{repository.data}</strong></span><Icon name="chevron" />
+          </button></div> : null}
           <ul className="sk-results">
             {results === null ? null : results.length === 0 ? (
               <li className="sk-empty">{searchError || `No skills match “${query.trim()}”`}</li>

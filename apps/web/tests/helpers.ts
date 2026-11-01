@@ -36,7 +36,7 @@ export async function createTestEnv() {
 /** Delete every row, children first. */
 export async function resetDb(env: Env) {
   for (const table of [
-    'skill_folder_version', 'skill_settings', 'machine_skill_report', 'skill_pin_move', 'skill_machine', 'skill',
+    'skill_folder_version', 'skill_exclusion', 'skill_settings', 'machine_skill_report', 'skill_pin_move', 'skill_machine', 'skill',
     'device_authorization', 'conflict', 'machine_variables_revision', 'machine_variables',
     'machine_credential', 'machine', 'template_revision', 'template', 'user',
   ]) {

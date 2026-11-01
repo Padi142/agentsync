@@ -6,13 +6,13 @@ import {
 import {
   assignedSkillRows, cacheFolderVersion, cachedFolderVersion, chosenMachines, deleteSkill, getReport, getSettings,
   auditsOf, getSkillRow, insertSkill, listSkillRows, movePin, nameFolderVersion, noAudits, storedAudits, pinHashes, pinHistory, putSettings, reportsFor, saveCheck,
-  saveReport, setAssignment, setAutoUpdate, staleSkillRows, touchCheck, type SkillRow,
+  saveReport, setAssignment, setAutoUpdate, staleSkillRows, touchCheck, listExclusions, setExclusions, type SkillRow,
 } from '../db/skills';
 import { listMachines } from '../db/machines';
 import type { FolderVersion } from '../db/schema';
 import type { Env } from '../env';
 import { isAudited, mayAutoUpdate } from './audits';
-import { findSkillFolder, frontmatterName } from './discovery';
+import { findSkillFolder, frontmatterName, skillFolders } from './discovery';
 import { github, NotFoundError, type Commit, type GitHub, type Repo } from './github';
 import { installedFolderHash, UnsupportedSkillFolder } from './hash';
 import { fetchAudits, searchSkills } from './skillssh';
@@ -104,7 +104,8 @@ export function skillsService(env: Env) {
     const head = await gh.commit(repo.fullName, repo.defaultBranch);
     const tree = await gh.tree(repo.fullName, head.sha);
     if (tree.truncated) throw new UnsupportedSkillFolder('The repository is too large to search.');
-    const path = await findSkillFolder(gh, repo.fullName, head.sha, tree.tree, name);
+    const path = await findSkillFolder(gh, repo.fullName, head.sha, tree.tree, name,
+      async (folder) => (await cachedFolderVersion(env, repo.id, head.sha, folder))?.skillName);
     if (path === null) throw new NotFoundError(`${repo.fullName} has no skill named ${name}.`);
     if (path.length > 500) throw new UnsupportedSkillFolder('The skill’s folder path is too long.');
     const history = await gh.folderHistory(repo.fullName, head.sha, path);
@@ -233,7 +234,7 @@ export function skillsService(env: Env) {
 
   return {
     async overview(userId: string): Promise<SkillsOverview> {
-      const [rows, settings] = await Promise.all([listSkillRows(env, userId), getSettings(env, userId)]);
+      const [rows, settings, ignored] = await Promise.all([listSkillRows(env, userId), getSettings(env, userId), listExclusions(env, userId)]);
       const { skills, reports, machines } = await present(rows, userId);
       const names = new Set(rows.map((row) => row.name));
       const github = new Map<string, Extract<FoundSkill, { kind: 'github' }>>();
@@ -258,6 +259,7 @@ export function skillsService(env: Env) {
       return {
         settings,
         skills,
+        ignored,
         found: [...github.values(), ...local.values()],
         machines: machines.map((machine) => ({
           id: machine.id, nickname: machine.nickname, checkedInAt: reports.get(machine.id)?.reportedAt ?? null,
@@ -266,6 +268,37 @@ export function skillsService(env: Env) {
     },
 
     search: (query: string) => searchSkills(query),
+
+    async collection(input: { repo: string; offset: number; commit?: string | undefined }) {
+      const repo = await publicRepo(input.repo);
+      const commit = input.commit ?? (await gh.commit(repo.fullName, repo.defaultBranch)).sha;
+      const tree = await gh.tree(repo.fullName, commit);
+      if (tree.truncated) throw new UnsupportedSkillFolder('The repository is too large to search.');
+      const folders = await skillFolders(tree.tree, (path) => gh.raw(repo.fullName, commit, path));
+      const page = folders.slice(input.offset, input.offset + 20);
+      const names: string[] = [];
+      for (const folder of page) {
+        const text = await gh.raw(repo.fullName, commit, folder ? `${folder}/SKILL.md` : 'SKILL.md');
+        const name = skillNameSchema.safeParse(text === null ? null : frontmatterName(text));
+        let installedHash: string | null = null;
+        try {
+          installedHash = await installedFolderHash(tree.tree, folder);
+        } catch (error) {
+          if (!(error instanceof UnsupportedSkillFolder)) throw error;
+        }
+        await cacheFolderVersion(env, {
+          repoId: repo.id, commit, path: folder,
+          treeSha: folder ? tree.tree.find((item) => item.path === folder)!.sha : tree.sha,
+          installedHash, skillName: text === null ? '' : frontmatterName(text) ?? '',
+        });
+        await nameFolderVersion(env, repo.id, commit, folder, text === null ? '' : frontmatterName(text) ?? '');
+        if (installedHash && name.success && name.data !== RESERVED_SKILL_NAME) names.push(name.data);
+      }
+      const next = input.offset + page.length;
+      return { repo: repo.fullName, commit, names: [...new Set(names)], next: next < folders.length ? next : null };
+    },
+
+    setIgnored: (userId: string, repo: string, names: string[], ignored: boolean) => setExclusions(env, userId, repo, names, ignored),
 
     async inspect(repoName: string, name: string): Promise<SkillCandidate> {
       const { repo, path, version } = await resolveLatest(repoName, name);
@@ -303,6 +336,10 @@ export function skillsService(env: Env) {
       const aliases = input.repo.toLowerCase() === repo.fullName.toLowerCase() ? [] : [input.repo.toLowerCase()];
       const row = await insertSkill(env, { userId, name: input.name, repo: { id: repo.id, fullName: repo.fullName }, aliases, path, pin, audits });
       if (!row) throw new NameTakenError(`A Skill named ${input.name} is already in the account.`);
+      // An explicit Add restores a previously excluded skill, including an old repository alias.
+      for (const source of new Set([input.repo, repo.fullName])) {
+        await setExclusions(env, userId, source, [input.name], false);
+      }
       if (pin === latest) return presentOne(row);
       // Near a Worker request's limit, leave the newer versions to the next update check (soon: never checked).
       if (gh.usage.requests > ADD_REQUEST_BUDGET) return presentOne(row);

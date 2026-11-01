@@ -2,7 +2,7 @@ import type { Audits, ScannedSkill, SkillAssignment, SkillSyncResult } from '@ag
 import { and, asc, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
 import { createDb } from './index';
 import {
-  machine, machineSkillReport, skill, skillFolderVersion, skillMachine, skillPinMove, skillSettings,
+  machine, machineSkillReport, skill, skillExclusion, skillFolderVersion, skillMachine, skillPinMove, skillSettings,
   type FolderVersion, type StoredAudits,
 } from './schema';
 import type { Env } from '../env';
@@ -231,6 +231,35 @@ export async function putSettings(env: Pick<Env, 'DB'>, userId: string, settings
   await createDb(env).insert(skillSettings).values({ userId, ...settings })
     .onConflictDoUpdate({ target: skillSettings.userId, set: settings }).run();
   return settings;
+}
+
+export function listExclusions(env: Pick<Env, 'DB'>, userId: string) {
+  return createDb(env).select({ repo: skillExclusion.repo, name: skillExclusion.name }).from(skillExclusion)
+    .where(eq(skillExclusion.userId, userId)).orderBy(asc(skillExclusion.repo), asc(skillExclusion.name)).all();
+}
+
+/** Save collection exclusions. Already-added skills keep their pins, assignments and history. */
+export async function setExclusions(env: Pick<Env, 'DB'>, userId: string, repo: string, names: string[], ignored: boolean) {
+  const db = createDb(env);
+  const source = repo.toLowerCase();
+  const unique = [...new Set(names)];
+  if (!unique.length) return;
+  if (!ignored) {
+    const remove = (names: string[]) => db.delete(skillExclusion).where(and(eq(skillExclusion.userId, userId), eq(skillExclusion.repo, source), inArray(skillExclusion.name, names)));
+    // D1 allows at most 100 bound parameters per statement.
+    const remaining = Array.from({ length: Math.ceil(unique.length / 90) - 1 }, (_, i) => unique.slice((i + 1) * 90, (i + 2) * 90));
+    await db.batch([remove(unique.slice(0, 90)), ...remaining.map(remove)]);
+    return;
+  }
+  const rows = await listSkillRows(env, userId);
+  const managed = new Set(rows.filter((row) => [row.repoFullName.toLowerCase(), ...row.repoAliases].includes(source)).map((row) => row.name));
+  const [first, ...rest] = unique.filter((name) => !managed.has(name));
+  if (first === undefined) return;
+  // One statement per exclusion avoids SQLite's bind limit for large collections.
+  await db.batch([
+    db.insert(skillExclusion).values({ userId, repo: source, name: first }).onConflictDoNothing(),
+    ...rest.map((name) => db.insert(skillExclusion).values({ userId, repo: source, name }).onConflictDoNothing()),
+  ]);
 }
 
 /** A folder's hashes at a commit, if a previous call fetched them. */

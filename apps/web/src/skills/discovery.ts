@@ -130,9 +130,17 @@ export function frontmatterName(text: string): string | null {
  * `skills`' own walk order whose SKILL.md declares exactly that name, since `skills` keeps the first
  * skill of a name and drops later ones.
  */
-export async function findSkillFolder(gh: GitHub, fullName: string, commit: string, tree: GitTreeItem[], name: string) {
+export async function findSkillFolder(gh: GitHub, fullName: string, commit: string, tree: GitTreeItem[], name: string,
+  cachedName?: (folder: string) => Promise<string | null | undefined>) {
   const read = (path: string) => gh.raw(fullName, commit, path);
-  for (const folder of (await skillFolders(tree, read)).slice(0, MAX_READS)) {
+  let reads = 0;
+  for (const folder of await skillFolders(tree, read)) {
+    const cached = await cachedName?.(folder);
+    if (cached !== undefined && cached !== null) {
+      if (cached === name) return folder;
+      continue;
+    }
+    if (reads++ >= MAX_READS) break;
     const text = await read(join(folder, 'SKILL.md'));
     // Exact: `skills` names the installed folder after the frontmatter as written.
     if (text !== null && frontmatterName(text) === name) return folder;

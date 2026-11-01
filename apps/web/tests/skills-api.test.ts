@@ -333,3 +333,72 @@ describe('Finding the folder', () => {
     expect((await browser().skills.add({ repo: 'two/names', name: 'demo' })).path).toBe('skills/a');
   });
 });
+
+describe('Skill collections', () => {
+  it('browses every page at one commit and can add a skill beyond the direct lookup budget', async () => {
+    gh.repo('team/collection', Object.fromEntries(Array.from({ length: 35 }, (_, i) => {
+      const name = `skill-${String(i).padStart(2, '0')}`;
+      return [`skills/${name}/SKILL.md`, skillMd(name)];
+    })));
+    const first = await browser().skills.collection({ repo: 'team/collection' });
+    expect(first.names).toHaveLength(20);
+    expect(first.next).toBe(20);
+    gh.commit('team/collection', { 'skills/skill-34/SKILL.md': null });
+    const second = await browser().skills.collection({ repo: 'team/collection', commit: first.commit, offset: first.next! });
+    expect(second.names).toHaveLength(15);
+    expect(second.names).toContain('skill-34');
+    expect(second.next).toBeNull();
+    // Browse HEAD again so the current tree's names are cached for the normal Add path.
+    const current = await browser().skills.collection({ repo: 'team/collection' });
+    await browser().skills.collection({ repo: 'team/collection', commit: current.commit, offset: current.next! });
+    expect((await browser().skills.add({ repo: 'team/collection', name: 'skill-33' })).name).toBe('skill-33');
+  }, 15_000); // The fixture reads 70 real git blobs while exercising both immutable repository snapshots.
+
+  it('does not offer private, unsafe or unsupported skills in a collection', async () => {
+    gh.repo('team/collection', {
+      'skills/good/SKILL.md': skillMd('good'),
+      'skills/invalid/SKILL.md': skillMd('-bad-name'),
+      'skills/linked/SKILL.md': skillMd('linked'),
+      'skills/linked/x.md': { link: 'SKILL.md' },
+    });
+    expect((await browser().skills.collection({ repo: 'team/collection' })).names).toEqual(['good']);
+    gh.repo('team/private', { 'SKILL.md': skillMd('private') }, { private: true });
+    await expect(browser().skills.collection({ repo: 'team/private' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('keeps exclusions across scans, scopes them by account and source, and restores them on explicit Add', async () => {
+    skillRepo();
+    const { client } = await registerMachine();
+    await client.skills.report({ scan: [{ name: 'animate', source: 'emil/skills', ref: null, hash: 'a'.repeat(40), managed: false }] });
+    await browser().skills.setIgnored({ repo: 'EMIL/skills', names: ['animate'], ignored: true });
+    await client.skills.report({ scan: [] });
+    expect((await browser().skills.overview()).ignored).toEqual([{ repo: 'emil/skills', name: 'animate' }]);
+    expect((await browser('bob').skills.overview()).ignored).toEqual([]);
+    await browser('bob').skills.setIgnored({ repo: 'emil/skills', names: ['other'], ignored: true });
+    await browser().skills.setIgnored({ repo: 'other/skills', names: ['animate'], ignored: true });
+    await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
+    expect((await browser().skills.overview()).ignored).toEqual([{ repo: 'other/skills', name: 'animate' }]);
+    expect((await browser('bob').skills.overview()).ignored).toEqual([{ repo: 'emil/skills', name: 'other' }]);
+  });
+
+  it('preserves added skills, pins and assignments when a collection exclusion includes them', async () => {
+    skillRepo();
+    const { client } = await registerMachine();
+    const animate = await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
+    await browser().skills.add({ repo: 'emil/skills', name: 'other' });
+    await browser().skills.setIgnored({ repo: 'emil/skills', names: ['animate'], ignored: true });
+    expect((await client.machines.sync()).skills.map((skill) => skill.name)).toEqual(['animate', 'other']);
+    expect((await browser().skills.overview()).skills.find((skill) => skill.id === animate.id)).toEqual(animate);
+    await browser().skills.setIgnored({ repo: 'emil/skills', names: ['animate'], ignored: false });
+    expect((await browser().skills.overview()).ignored).toEqual([]);
+    expect((await client.machines.sync()).skills.map((skill) => skill.name)).toEqual(['animate', 'other']);
+  });
+
+  it('rejects collection changes and browsing from Machine tokens and unauthenticated clients', async () => {
+    const { client } = await registerMachine();
+    for (const caller of [client, rpcClient(env)]) {
+      await expect(caller.skills.collection({ repo: 'emil/skills' })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      await expect(caller.skills.setIgnored({ repo: 'emil/skills', names: ['animate'], ignored: true })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    }
+  });
+});

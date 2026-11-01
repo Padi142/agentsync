@@ -275,6 +275,7 @@ export const skillsOverviewSchema = z.object({
   settings: skillSettingsSchema,
   skills: z.array(skillSchema),
   found: z.array(foundSkillSchema),
+  ignored: z.array(z.object({ repo: repoNameSchema, name: skillNameSchema })),
   /** When each Machine last reported its Skills; `null` if it never has. */
   machines: z.array(z.object({ id, nickname: machineNicknameSchema, checkedInAt: z.date().nullable() })),
 });
@@ -538,6 +539,15 @@ const skills = {
     .input(z.object({ repo: repoNameSchema, name: skillNameSchema }))
     .output(skillCandidateSchema)
     .errors(skillErrors),
+  /** Browse a repository at one commit, in pages that fit the Worker's request budget. */
+  collection: sessionProcedure
+    .input(z.object({ repo: repoNameSchema, offset: z.number().int().min(0).default(0), commit: gitShaSchema.optional() }))
+    .output(z.object({ repo: repoNameSchema, commit: gitShaSchema, names: z.array(skillNameSchema), next: z.number().int().nullable() }))
+    .errors(skillErrors),
+  /** Exclude unadded skills from collection adds, or restore them. Already-added skills are preserved. */
+  setIgnored: sessionProcedure
+    .input(z.object({ repo: repoNameSchema, names: z.array(skillNameSchema).min(1).max(500), ignored: z.boolean() }))
+    .output(z.void()),
   /**
    * Add a Skill, assigned to every Machine. With `machineId` (a Found Skill), pin the commit that
    * Machine already has, so nothing is reinstalled; otherwise the newest on the default branch.

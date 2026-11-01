@@ -1,6 +1,28 @@
 import { ORPCError, safe } from '@orpc/client';
 import { useRouter } from '@tanstack/react-router';
 import { useState } from 'react';
+import { rpc } from './rpc';
+
+type ActionMessage = { text: string; tone: 'success' | 'error' };
+
+/** Each add has its own Worker budget. Keep successes and report failures so a collection can be retried. */
+export async function addSkills(inputs: { repo: string; name: string; machineId?: string }[], onProgress?: (done: number) => void) {
+  const failed: { name: string; error: string }[] = [];
+  let added = 0;
+  for (const input of inputs) {
+    const [error] = await safe(rpc.skills.add(input));
+    if (error) failed.push({ name: input.name, error: skillErrorText(error) });
+    else added++;
+    onProgress?.(added + failed.length);
+  }
+  return { added, failed };
+}
+
+export function collectionMessage({ added, failed }: Awaited<ReturnType<typeof addSkills>>): ActionMessage {
+  return failed.length
+    ? { text: `${added} added. ${failed.length} couldn’t be added: ${failed.map(({ name }) => name).join(', ')}. Open the collection to retry.`, tone: 'error' }
+    : { text: `${added} ${added === 1 ? 'skill' : 'skills'} added. Machines install them on their next skills sync.`, tone: 'success' };
+}
 
 /** What a failed Skills call means for the person. */
 export function skillErrorText(error: unknown): string {
@@ -25,16 +47,20 @@ export function useSkillActions() {
   const [status, setStatus] = useState<{ text: string; tone: 'success' | 'error'; at: number } | null>(null);
   const say = (text: string, tone: 'success' | 'error' = 'success') => setStatus({ text, tone, at: Date.now() });
   /** `beforeReload` runs after success and before the data reloads, e.g. to fade out a row that leaves. */
-  async function run<T>(key: string, work: () => Promise<T>, done: (result: T) => string, beforeReload?: () => Promise<void>): Promise<boolean> {
+  async function run<T>(key: string, work: () => Promise<T>, done: (result: T) => string | ActionMessage, beforeReload?: () => Promise<void>): Promise<boolean> {
     if (busy) return false;
     setBusy(key);
     try {
       const [error, result] = await safe(work());
       if (error) {
         say(skillErrorText(error), 'error');
+        // A bulk action may have saved earlier batches before a later request failed.
+        await router.invalidate({ sync: true });
         return false;
       }
-      say(done(result as T));
+      const message = done(result as T);
+      if (typeof message === 'string') say(message);
+      else say(message.text, message.tone);
       await beforeReload?.();
       // Stay busy until the page shows the new data, so the next change starts from it, not from stale state.
       await router.invalidate({ sync: true });

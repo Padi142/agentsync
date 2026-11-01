@@ -220,6 +220,10 @@ export const router = os.router({
       skillCall(errors, () => skillsService(context.env).search(input.query))),
     inspect: os.skills.inspect.use(auth).handler(({ context, input, errors }) =>
       skillCall(errors, () => skillsService(context.env).inspect(input.repo, input.name))),
+    collection: os.skills.collection.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).collection(input))),
+    setIgnored: os.skills.setIgnored.use(auth).handler(({ context, input }) =>
+      skillsService(context.env).setIgnored(context.userId, input.repo, input.names, input.ignored)),
     add: os.skills.add.use(auth).handler(({ context, input, errors }) =>
       skillCall(errors, () => skillsService(context.env).add(context.userId, input))),
     assign: os.skills.assign.use(auth).handler(({ context, input, errors }) =>

@@ -200,6 +200,8 @@ export function fakeServer() {
       overview: os.skills.overview.handler(sessionOnly),
       search: os.skills.search.handler(sessionOnly),
       inspect: os.skills.inspect.handler(sessionOnly),
+      collection: os.skills.collection.handler(sessionOnly),
+      setIgnored: os.skills.setIgnored.handler(sessionOnly),
       add: os.skills.add.handler(sessionOnly),
       assign: os.skills.assign.handler(sessionOnly),
       update: os.skills.update.handler(sessionOnly),

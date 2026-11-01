@@ -261,6 +261,13 @@ export const skillSettings = sqliteTable('skill_settings', {
   autoUpdate: integer('auto_update', { mode: 'boolean' }).notNull(),
 });
 
+/** Account-wide collection exclusions, kept even when a Machine stops reporting the skill. */
+export const skillExclusion = sqliteTable('skill_exclusion', {
+  userId: text('user_id').notNull().references(() => user.id, { onDelete: 'cascade' }),
+  repo: text('repo').notNull(),
+  name: text('name').notNull(),
+}, (table) => [primaryKey({ columns: [table.userId, table.repo, table.name] })]);
+
 /** Each Machine's last scan and the results of its last `skills sync`. Dropped with the Machine. */
 export const machineSkillReport = sqliteTable('machine_skill_report', {
   machineId: text('machine_id')
@@ -296,5 +303,5 @@ export const schema = {
   user, session, account, verification,
   template, templateRevision, machine, machineCredential,
   machineVariables, machineVariablesRevision, conflict, deviceAuthorization,
-  skill, skillMachine, skillPinMove, skillSettings, machineSkillReport, skillFolderVersion,
+  skill, skillMachine, skillPinMove, skillSettings, skillExclusion, machineSkillReport, skillFolderVersion,
 };

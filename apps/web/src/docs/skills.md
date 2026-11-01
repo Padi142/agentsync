@@ -2,9 +2,17 @@
 
 A **Skill** is an agent skill (a folder with a `SKILL.md`) from a public GitHub repository, which you add on the Skills page. AgentSync pins each one to an exact commit and installs it on your Machines with the official [`skills`](https://skills.sh) CLI.
 
+## Collections and individual skills
+
+The Skills page groups skills by their GitHub repository, such as `emilkowalski/skill`. Collections start collapsed. Open one to see compact skill rows, or use **Expand all**. Search matches both repository slugs and skill names and reveals matching rows.
+
+**Add collection** reads the repository's full skill list. All available skills are selected except ones you previously ignored. Uncheck any skills you don't want, then add the selection. Existing skills keep their pins and Machine assignments. Skills found on a Machine are added at that Machine's version; new ones use the newest version. New upstream skills aren't added automatically; open **Manage collection** to review them.
+
+Within an expanded collection, select individual discovered skills and use **Add selected** or **Ignore selected**. **Ignore** excludes a skill from collection adds and from **Needs you**. Exclusions are saved to your account, including when a Machine stops reporting the skill. The **Ignored** view lets you restore them. Already-added skills keep their pins and Machine assignments; use **Remove** in a skill's details to remove it.
+
 ## Adding one
 
-**Add a Skill** searches [skills.sh](https://skills.sh). Pick one to see the version AgentSync would pin, the newest commit that changed its folder on the repository's default branch, and its audits from Gen, Socket and Snyk. A High or Critical verdict is a warning, not a block.
+**Add skills** searches [skills.sh](https://skills.sh). Pick one to see the version AgentSync would pin, the newest commit that changed its folder on the repository's default branch, and its audits from Gen, Socket and Snyk. A High or Critical verdict is a warning, not a block. You can add that skill or browse its whole collection.
 
 A new Skill goes to every Machine, including ones you register later. Open it to choose Machines instead.
 

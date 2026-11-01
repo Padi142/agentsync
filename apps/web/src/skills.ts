@@ -89,6 +89,36 @@ export type Entry =
   | { key: string; type: 'skill'; skill: Skill; asks: Ask[] }
   | { key: string; type: 'found'; found: GitHubFound; asks: Ask[] };
 
+export type CollectionEntry = Entry | { key: string; type: 'ignored'; name: string; repo: string; asks: [] };
+export interface SkillCollection {
+  key: string;
+  repo: string;
+  entries: CollectionEntry[];
+}
+
+export const entryName = (entry: CollectionEntry) => entry.type === 'skill' ? entry.skill.name : entry.type === 'found' ? entry.found.name : entry.name;
+export const entryRepo = (entry: CollectionEntry) => entry.type === 'skill' ? entry.skill.repo.fullName : entry.type === 'found' ? entry.found.source : entry.repo;
+
+/** One collection per repository; exclusions stay visible even after the source Machine disappears. */
+export function collectionsOf(overview: SkillsOverview): SkillCollection[] {
+  const ignored = new Set(overview.ignored.map(({ repo, name }) => `${repo.toLowerCase()}:${name}`));
+  const entries: CollectionEntry[] = [
+    ...entriesOf(overview).filter((entry) => !ignored.has(`${entryRepo(entry).toLowerCase()}:${entryName(entry)}`)),
+    ...overview.ignored.map(({ repo, name }): CollectionEntry => ({ key: `ignored:${repo}:${name}`, type: 'ignored', repo, name, asks: [] })),
+  ];
+  const groups = new Map<string, SkillCollection>();
+  for (const entry of entries) {
+    const repo = entryRepo(entry);
+    const key = repo.toLowerCase();
+    const group = groups.get(key) ?? { key, repo, entries: [] };
+    group.entries.push(entry);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => a.key.localeCompare(b.key)).map((group) => ({
+    ...group, entries: group.entries.sort((a, b) => entryName(a).localeCompare(entryName(b))),
+  }));
+}
+
 /** Every Skill and addable Found Skill, those that need the person first, by the kind of their first ask. */
 export function entriesOf(overview: SkillsOverview): Entry[] {
   const rank = (asks: Ask[]) => (asks.length ? ORDER.indexOf(asks[0]!.kind) : ORDER.length);
