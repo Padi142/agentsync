@@ -3,8 +3,8 @@
 The CLI isn't published to npm yet. Until it is, build it from the repository (Node.js 22.20+, pnpm and git) and link it onto your PATH:
 
 ```sh
-git clone https://github.com/Padi142/agentsync.git ~/agentsync
-cd ~/agentsync
+git clone https://github.com/Padi142/agentsync.git <INSTALL_DIR>
+cd <INSTALL_DIR>
 pnpm install && pnpm build
 (cd packages/cli && npm link)
 ```

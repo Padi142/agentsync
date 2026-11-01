@@ -13,13 +13,13 @@ AgentSync keeps your global agent instructions, such as `~/.claude/CLAUDE.md`, `
 The CLI isn't published to npm yet, so for now you build it from the repository. You need Node.js 22.20 or later, [pnpm](https://pnpm.io/installation) and git. On the computer you want to add, run:
 
 ```sh
-git clone https://github.com/Padi142/agentsync.git ~/agentsync
-cd ~/agentsync
+git clone https://github.com/Padi142/agentsync.git <INSTALL_DIR>
+cd <INSTALL_DIR>
 pnpm install && pnpm build
 (cd packages/cli && npm link)
 ```
 
-`npm link` puts the `agentsync` command on your PATH. If npm's global folder needs root on your system, run it with `sudo`. Keep the `~/agentsync` folder: the hooks run the CLI from it. To update the CLI later, run `git pull && pnpm install && pnpm build` there.
+`npm link` puts the `agentsync` command on your PATH. If npm's global folder needs root on your system, run it with `sudo`. To clone somewhere else, click the folder in the command and change it. Keep that folder: the hooks run the CLI from it. To update the CLI later, run `git pull && pnpm install && pnpm build` there.
 
 Then register the computer:
 

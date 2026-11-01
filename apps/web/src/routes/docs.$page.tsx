@@ -28,7 +28,7 @@ function DocPage() {
   const next = DOCS[index + 1];
   return (
     <article className="docs-article">
-      <Markdown anchors>{doc.body.replaceAll('<SERVER_URL>', serverUrl())}</Markdown>
+      <Markdown docs>{doc.body.replaceAll('<SERVER_URL>', serverUrl())}</Markdown>
       <nav className="docs-pager" aria-label="More docs">
         {previous ? (
           <Link to="/docs/$page" params={{ page: previous.slug }}><span>Previous</span>{previous.title}</Link>

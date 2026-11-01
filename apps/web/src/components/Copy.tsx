@@ -30,12 +30,20 @@ export function CopyButton({ text, label = 'Copy', className = 'copy-button', ch
   );
 }
 
-/** One shell command. Its `$` prompt is drawn by CSS, so it's never copied or selected. */
-export function Command({ command, label, note }: { command: string; label?: string; note?: ReactNode }) {
+/**
+ * One shell command. Its `$` prompt is drawn by CSS, so it's never copied or selected. `children`,
+ * if given, is shown in place of `command`, e.g. with an editable part; `command` is still what's copied.
+ */
+export function Command({ command, label, note, children }: {
+  command: string;
+  label?: string;
+  note?: ReactNode;
+  children?: ReactNode;
+}) {
   return (
     <div className="command">
       <div className="command-line">
-        <code aria-label={label}>{command}</code>
+        <code aria-label={label}>{children ?? command}</code>
         <CopyButton text={command} label={`Copy ${label ? label.toLowerCase() : 'command'}`} />
       </div>
       {note ? <p className="command-note">{note}</p> : null}

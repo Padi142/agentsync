@@ -1,13 +1,15 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import prompt from '../../../../../packages/cli/setup-prompt.md?raw';
-import { Command, CopyBlock } from '../../components/Copy';
+import { CopyBlock } from '../../components/Copy';
+import { InstallCommand } from '../../components/InstallDir';
 import { Icon } from '../../components/Icon';
-import { installCommand, serverUrl } from '../../commands';
+import { fillInstallDir, serverUrl, useInstallDir } from '../../commands';
 
 export const Route = createFileRoute('/_app/setup')({ component: Setup });
 
 function Setup() {
   const server = serverUrl();
+  const dir = useInstallDir();
   return (
     <div className="page">
       <Link className="back-link" to="/machines"><Icon name="back" size={14} />Machines</Link>
@@ -28,7 +30,7 @@ function Setup() {
             Paste this into Claude Code, Codex or pi on the computer you're adding. It builds the CLI from the repository, asks you to approve
             the sign-in, and tells you what it set up.
           </p>
-          <CopyBlock label="Agent setup prompt" title="Setup prompt" text={prompt.replaceAll('<SERVER_URL>', server)} />
+          <CopyBlock label="Agent setup prompt" title="Setup prompt" text={fillInstallDir(prompt.replaceAll('<SERVER_URL>', server), dir)} />
         </section>
 
         <section className="setup-path" aria-labelledby="cli-path">
@@ -37,10 +39,10 @@ function Setup() {
             <li>
               <p>
                 Build the CLI and register the computer. Needs Node.js 22.12 or later, pnpm and git. The CLI isn't on npm
-                yet, so this clones the repository to <code>~/agentsync</code>, builds it, and links <code>agentsync</code> onto
-                your PATH. Keep the folder: the hooks run the CLI from it.
+                yet, so this clones the repository, builds it, and links <code>agentsync</code> onto your PATH. Click the
+                folder to clone somewhere else, and keep it: the hooks run the CLI from it.
               </p>
-              <Command command={installCommand(server)} label="Install command" />
+              <InstallCommand server={server} />
             </li>
             <li>
               <p>Open the sign-in link it prints and approve the code.</p>

@@ -743,6 +743,36 @@ kbd {
   color: var(--faint);
 }
 
+/* The install folder inside a command: an input that reads as part of the line. */
+.install-dir {
+  box-sizing: content-box;
+  min-width: 1ch;
+  margin: 0 -2px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 1px dashed var(--ditto);
+  border-radius: 3px 3px 0 0;
+  background: transparent;
+  color: var(--ditto-ink);
+  font: inherit;
+  font-variation-settings: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  transition: background-color 120ms;
+}
+
+.install-dir:focus {
+  outline: none;
+  border-bottom-style: solid;
+  background: var(--ditto-wash);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .install-dir:hover {
+    background: var(--ditto-wash);
+  }
+}
+
 .command-note {
   color: var(--graphite);
   font-size: 13px;

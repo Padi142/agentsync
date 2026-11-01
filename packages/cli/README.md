@@ -99,7 +99,8 @@ and without `--yes`, `--json` or `--hook`. Prompts and spinners go to stderr; re
 - **Agents running `init`.** An agent's shell shows output only once a command exits, so
   `init --no-wait` prints the device code and exits, and the next `init` resumes polling.
   `setup-prompt.md` is the text the web app's Setup page gives to an agent. Replace every
-  `<SERVER_URL>` in it with the server's origin.
+  `<SERVER_URL>` in it with the server's origin, and every `<INSTALL_DIR>` with the folder to
+  clone into.
 - **Hand-off.** At a terminal, Drift and Conflicts can be handed to an agent: the CLI
   starts `claude`, `codex` or `pi` with a prompt. Your choice is remembered per Machine.
 

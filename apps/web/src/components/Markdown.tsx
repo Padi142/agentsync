@@ -3,8 +3,10 @@ import type { Element, ElementContent, Root, RootContent, Text } from 'hast';
 import type { ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { fillInstallDir, useInstallDir } from '../commands';
 import type { MarkedRange } from '../preview';
 import { CopyButton } from './Copy';
+import { withInstallDirInput } from './InstallDir';
 
 type Position = NonNullable<Text['position']>;
 
@@ -96,27 +98,48 @@ const components: Components = {
   table: ({ children }) => <div className="table-scroll"><table>{children}</table></div>,
 };
 
-/** Docs headings get ids, so they can be linked to. */
-const anchored: Components = {
+/** A docs code block copies with the reader's install folder filled in. */
+function DocsCodeBlock({ text, children }: { text: string; children: ReactNode }) {
+  const dir = useInstallDir();
+  return (
+    <div className="code-block">
+      <pre>{children}</pre>
+      <CopyButton text={fillInstallDir(text, dir)} label="Copy code" />
+    </div>
+  );
+}
+
+/**
+ * Docs headings get ids, so they can be linked to. `<INSTALL_DIR>` in docs code is the install
+ * folder, which the reader can edit in place.
+ */
+const docsComponents: Components = {
   ...components,
+  pre: ({ node, children }) => (
+    <DocsCodeBlock text={textOf(node?.children[0]).replace(/\n$/, '')}>{children}</DocsCodeBlock>
+  ),
+  code: ({ className, children }) => (
+    <code className={className}>{typeof children === 'string' ? withInstallDirInput(children) : children}</code>
+  ),
   h2: ({ children }) => <h2 id={slug(childrenText(children))}>{children}</h2>,
   h3: ({ children }) => <h3 id={slug(childrenText(children))}>{children}</h3>,
 };
 
 /**
  * GitHub-flavored Markdown as React elements. Raw HTML in the source is shown as text, never
- * run. `ranges` marks text that came from Variables (see `renderMarked`).
+ * run. `ranges` marks text that came from Variables (see `renderMarked`). `docs` turns on what
+ * docs pages need (see `docsComponents`).
  */
-export function Markdown({ children, ranges = [], anchors = false, className = 'prose' }: {
+export function Markdown({ children, ranges = [], docs = false, className = 'prose' }: {
   children: string;
   ranges?: MarkedRange[];
-  anchors?: boolean;
+  docs?: boolean;
   className?: string;
 }) {
   return (
     <div className={className}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkHtmlAsText]} rehypePlugins={[[rehypeMarks, ranges]]}
-        components={anchors ? anchored : components}>
+        components={docs ? docsComponents : components}>
         {children}
       </ReactMarkdown>
     </div>

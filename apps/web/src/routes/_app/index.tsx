@@ -5,14 +5,14 @@ import { createFileRoute, Link, useBlocker, useRouter } from '@tanstack/react-ro
 import { useEffect, useRef, useState } from 'react';
 import { track } from '../../analytics';
 import { CodeEditor, type EditorHandle, type LineMark } from '../../components/CodeEditor';
-import { Command, CopyButton } from '../../components/Copy';
+import { CopyButton } from '../../components/Copy';
+import { InstallCommand } from '../../components/InstallDir';
 import { Icon } from '../../components/Icon';
 import { InsertMenu, InsertPalette, insertables } from '../../components/Insert';
 import { Select } from '../../components/Select';
 import { Markdown, MarkedText } from '../../components/Markdown';
 import { TemplateBar } from '../../components/TemplateBar';
 import { Ago } from '../../components/Time';
-import { installCommand } from '../../commands';
 import { useDraft } from '../../draft';
 import { useOwnNavigate } from '../../navigation';
 import { renderMarked, type MarkedRender } from '../../preview';
@@ -258,7 +258,7 @@ function Preview({ machines, machine, example, onMachine, agents, agent, onAgent
           <div className="preview-empty">
             <p>Nothing to preview yet. Write your instructions on the left; they show up here as {machine.nickname} gets them.</p>
             {example ? (
-              <Command command={installCommand()} label="Install command"
+              <InstallCommand
                 note="Already have instructions on a computer? Run this there: on your first Machine, its existing file becomes the Template." />
             ) : null}
           </div>

@@ -1,9 +1,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { z } from 'zod';
-import { Command } from '../../components/Copy';
+import { InstallCommand } from '../../components/InstallDir';
 import { Icon } from '../../components/Icon';
 import { Ago } from '../../components/Time';
-import { installCommand } from '../../commands';
 import { OS_NAMES } from '../../format';
 import { rpc } from '../../rpc';
 
@@ -37,7 +36,7 @@ function Machines() {
         <div className="empty">
           <h2>No Machines yet</h2>
           <p>Run this on a computer you use with Claude Code, Codex or pi. It opens a sign-in link to approve the computer.</p>
-          <div style={{ width: '100%' }}><Command command={installCommand()} label="Install command" /></div>
+          <div style={{ width: '100%' }}><InstallCommand /></div>
           <Link to="/setup">More ways to add a Machine, including a prompt for your agent</Link>
         </div>
       ) : (
