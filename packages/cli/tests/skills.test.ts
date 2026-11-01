@@ -301,6 +301,19 @@ describe('skills sync only touches what AgentSync owns', () => {
   });
 });
 
+describe('skills found on the Machine', () => {
+  it('says how many skills AgentSync does not manage, and where to add them', async () => {
+    const t = setup();
+    t.registered(both);
+    t.write('.agents/skills/mine/SKILL.md', 'mine');
+    t.write('.claude/skills/theirs/SKILL.md', 'theirs');
+
+    const result = await t.cli('skills', 'sync');
+
+    expect(result.stdout).toMatch(/Found 2 skills on this Machine that AgentSync doesn't manage\. Add the ones you want everywhere at https?:\/\/[^ ]+\/skills/);
+  });
+});
+
 describe('plain sync and Skills', () => {
   it('says what `skills sync` would do, and installs nothing', async () => {
     const t = await machineWithSkills();
