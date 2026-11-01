@@ -356,3 +356,24 @@ describe('skills sync after something went wrong', () => {
     expect((await t.cli('skills', 'sync')).code).toBe(0);
   });
 });
+
+describe('finishing a removal', () => {
+  it('leaves the shared copy if it was edited after skills sync looked at it', async () => {
+    const t = await machineWithSkills();
+    await t.cli('skills', 'sync');
+    t.write('.cursor/settings.json', '{}');
+    t.server.state.skills = [];
+    // An edit lands while `skills remove` runs.
+    const run = t.skills.run;
+    t.skills.run = async (args) => {
+      const done = await run(args);
+      if (args[0] === 'remove') t.write('.agents/skills/animate/SKILL.md', 'edited meanwhile');
+      return done;
+    };
+
+    const result = await t.cli('skills', 'sync', '--json');
+
+    expect(statuses(result)).toMatchObject({ animate: 'failed', polish: 'removed' });
+    expect(readFileSync(t.path('.agents/skills/animate/SKILL.md'), 'utf8')).toBe('edited meanwhile');
+  });
+});

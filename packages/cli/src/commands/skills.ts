@@ -114,13 +114,17 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
         const names = still.filter((step) => step.action === 'remove').map((step) => step.name);
         if (names.length) {
           await ctx.during(`Removing ${names.join(', ')}…`, () => removeSkills(ctx, names));
-          const after = await scanSkills(io, {}, names, { only: true });
+          // Hashed against AgentSync's records, so a copy edited since the plan is never deleted below.
+          const after = await scanSkills(io, managed, names, { only: true });
           for (const name of names) {
             const record = recordOf(managed, name)!;
-            let left = after.folders.get(name)?.present ?? [];
+            const leftover = after.folders.get(name);
+            let left = leftover?.present ?? [];
             // `skills` keeps the shared `~/.agents/skills` copy while another agent it knows (Cursor, say)
-            // reads that directory. It's AgentSync's, checked above: finish the removal here.
-            if (left.length && left.every((place) => record.places.includes(place))) {
+            // reads that directory. If it's still AgentSync's unedited copy, finish the removal here.
+            const ours = left.every((place) => record.places.includes(place)) && !leftover?.lockOther &&
+              (overwrite || record.incomplete || leftover?.hash === record.installedHash);
+            if (left.length && ours) {
               for (const place of left) await rm(join(skillDir(io, place), name), { recursive: true, force: true });
               await forgetLockEntry(io, name);
               left = (await scanSkills(io, {}, [name], { only: true })).folders.get(name)?.present ?? [];

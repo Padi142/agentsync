@@ -99,7 +99,13 @@ export async function withSkillsLock<T>(io: Io, work: () => Promise<T>): Promise
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     if (lockHeld(file)) throw new CliError('Another `agentsync skills sync` is running on this Machine. Try again when it has finished.', EXIT.error);
     removeFile(file);
-    fd = take(); // Two runs racing for a dead lock: only one creates the new file.
+    try {
+      fd = take();
+    } catch (raced) {
+      // Another run took the dead lock first.
+      if ((raced as NodeJS.ErrnoException).code !== 'EEXIST') throw raced;
+      throw new CliError('Another `agentsync skills sync` is running on this Machine. Try again when it has finished.', EXIT.error);
+    }
   }
   try {
     return await work();
