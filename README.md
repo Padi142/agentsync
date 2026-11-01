@@ -152,7 +152,6 @@ account (`pnpm --filter @agentsync/web exec wrangler login`, or set
 `CLOUDFLARE_API_TOKEN`). From the repository root:
 
 ```sh
-pnpm db:migrate:remote
 pnpm run deploy
 ```
 
@@ -162,7 +161,8 @@ each run checks the few Skills not checked for a day). Under `pnpm dev`, run it 
 
 Remote migrations target the deployed database; local development continues to
 use its own D1 database. `pnpm run deploy` builds the shared packages and web app,
-then uploads the generated Worker and static assets.
+applies pending remote migrations, then uploads the generated Worker and static assets.
+Deployment stops if a migration fails, so new code cannot ship ahead of its schema.
 
 `WORKOS_API_KEY`, a separate deployment `WORKOS_COOKIE_PASSWORD` and `GITHUB_TOKEN` are
 stored as Worker secrets. Later deployments preserve them. To set or rotate one:
