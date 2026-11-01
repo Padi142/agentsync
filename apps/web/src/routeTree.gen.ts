@@ -15,6 +15,7 @@ import { Route as SigninRouteImport } from './routes/signin'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppHistoryRouteImport } from './routes/_app/history'
 import { Route as AppSetupRouteImport } from './routes/_app/setup'
+import { Route as AppSkillsRouteImport } from './routes/_app/skills'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as DocsPageRouteImport } from './routes/docs.$page'
 import { Route as AppConflictsIndexRouteImport } from './routes/_app/conflicts.index'
@@ -49,6 +50,11 @@ const AppHistoryRoute = AppHistoryRouteImport.update({
 const AppSetupRoute = AppSetupRouteImport.update({
   id: '/setup',
   path: '/setup',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSkillsRoute = AppSkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
   getParentRoute: () => AppRoute,
 } as any)
 const DocsIndexRoute = DocsIndexRouteImport.update({
@@ -88,6 +94,7 @@ export interface FileRoutesByFullPath {
   '/signin': typeof SigninRoute
   '/history': typeof AppHistoryRoute
   '/setup': typeof AppSetupRoute
+  '/skills': typeof AppSkillsRoute
   '/docs/$page': typeof DocsPageRoute
   '/docs/': typeof DocsIndexRoute
   '/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByTo {
   '/signin': typeof SigninRoute
   '/history': typeof AppHistoryRoute
   '/setup': typeof AppSetupRoute
+  '/skills': typeof AppSkillsRoute
   '/docs/$page': typeof DocsPageRoute
   '/': typeof AppIndexRoute
   '/docs': typeof DocsIndexRoute
@@ -114,6 +122,7 @@ export interface FileRoutesById {
   '/signin': typeof SigninRoute
   '/_app/history': typeof AppHistoryRoute
   '/_app/setup': typeof AppSetupRoute
+  '/_app/skills': typeof AppSkillsRoute
   '/docs/$page': typeof DocsPageRoute
   '/_app/': typeof AppIndexRoute
   '/docs/': typeof DocsIndexRoute
@@ -130,6 +139,7 @@ export interface FileRouteTypes {
     | '/signin'
     | '/history'
     | '/setup'
+    | '/skills'
     | '/docs/$page'
     | '/docs/'
     | '/conflicts/$conflictId'
@@ -141,6 +151,7 @@ export interface FileRouteTypes {
     | '/signin'
     | '/history'
     | '/setup'
+    | '/skills'
     | '/docs/$page'
     | '/'
     | '/docs'
@@ -155,6 +166,7 @@ export interface FileRouteTypes {
     | '/signin'
     | '/_app/history'
     | '/_app/setup'
+    | '/_app/skills'
     | '/docs/$page'
     | '/_app/'
     | '/docs/'
@@ -214,6 +226,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSetupRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/skills': {
+      id: '/_app/skills'
+      path: '/skills'
+      fullPath: '/skills'
+      preLoaderRoute: typeof AppSkillsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/docs/': {
       id: '/docs/'
       path: '/'
@@ -262,6 +281,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppHistoryRoute: typeof AppHistoryRoute
   AppSetupRoute: typeof AppSetupRoute
+  AppSkillsRoute: typeof AppSkillsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppConflictsConflictIdRoute: typeof AppConflictsConflictIdRoute
   AppMachinesMachineIdRoute: typeof AppMachinesMachineIdRoute
@@ -272,6 +292,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppHistoryRoute: AppHistoryRoute,
   AppSetupRoute: AppSetupRoute,
+  AppSkillsRoute: AppSkillsRoute,
   AppIndexRoute: AppIndexRoute,
   AppConflictsConflictIdRoute: AppConflictsConflictIdRoute,
   AppMachinesMachineIdRoute: AppMachinesMachineIdRoute,

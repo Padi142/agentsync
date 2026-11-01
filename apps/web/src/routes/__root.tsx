@@ -104,6 +104,7 @@ function Layout() {
               <Link to="/" activeOptions={{ exact: true }}
                 className={isTemplatePath(path) ? 'active' : undefined}>Template</Link>
               <Link to="/machines">Machines</Link>
+              <Link to="/skills">Skills</Link>
             </>
           ) : null}
           <Link to="/docs">Docs</Link>

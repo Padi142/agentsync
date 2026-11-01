@@ -27,8 +27,10 @@ Keep the clone: the hooks run the CLI from it. To update, run `git pull && pnpm 
 | `agentsync conflict list` | Lists open Conflicts. |
 | `agentsync conflict get <id>` | Prints a Conflict's marked text. `--out <path>` writes it to a file. |
 | `agentsync conflict resolve <id> <file>` | Saves a merged file as the next Template revision. |
+| `agentsync skills sync` | Installs, updates and removes this Machine's [Skills](/docs/skills). `--overwrite` replaces ones edited by hand. |
+| `agentsync skills status` | Shows where each Skill stands on this Machine, without changing anything. |
 | `agentsync rename <nickname>` | Renames this Machine. |
-| `agentsync logout` | Deletes this Machine and removes the hooks and skill AgentSync installed. Targets stay. |
+| `agentsync logout` | Deletes this Machine and removes the hooks and skill AgentSync installed. Targets and installed Skills stay. |
 
 ## Flags for every command
 
@@ -53,7 +55,7 @@ Scripts and agents can branch on these:
 | `0` | OK |
 | `1` | Error |
 | `2` | Wrong usage |
-| `3` | Drift: a Target was edited by hand |
+| `3` | Drift: a Target was edited by hand. For `skills sync`, a Skill was blocked by your own folder or edited by hand |
 | `4` | Conflict: the Template changed while you edited it |
 | `5` | Not signed in: not registered, deleted, or registration denied or expired |
 | `130` | Cancelled with Ctrl+C |

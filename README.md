@@ -11,12 +11,15 @@ repositories, pinned to a commit; see `docs/adr/0002-…`). The `agentsync` CLI
 (`packages/cli`) Renders the Template into each agent's Global Instructions and keeps
 them current from Claude Code and Codex `SessionStart` hooks and a pi extension.
 
-The web UI has three sections. **Template** edits the Template (live syntax
+The web UI has four sections. **Template** edits the Template (live syntax
 errors, Cmd/Ctrl+S) beside a per-Machine, per-agent preview that renders the
 Markdown and underlines text that came from a Variable, with History (rollback) and
 Conflicts (`/conflicts`) as views of it. **Machines** manages each Machine's nickname,
 Variables and their history, with copyable CLI commands, and **Add a Machine** (`/setup`)
 gives the install command and agent setup prompt (from `packages/cli/setup-prompt.md`).
+**Skills** (`/skills`) adds skills from skills.sh, pins them, assigns them to Machines, and
+shows updates with their audits and changed files, each Machine's state, and skills found on
+Machines.
 **Docs** (`/docs`, public) is written as Markdown in `apps/web/src/docs/`. Pages load
 their data in the browser through the oRPC client (the root route sets
 `ssr: false`); the server renders only the document shell. Device approval

@@ -2918,3 +2918,501 @@ fieldset.variables-table {
 @keyframes fade {
   from { opacity: 0; }
 }
+
+/* ---------- Skills ---------- */
+
+.sk-head-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.sk-head-end .muted {
+  font-size: 13px;
+}
+
+/* The line that answers the last action, under the header; it keeps its height so nothing jumps. */
+.sk-status {
+  min-height: 22px;
+  margin: -14px 0 14px;
+}
+
+.sk-src {
+  font-family: var(--mono);
+  font-variation-settings: var(--code);
+  font-size: 12px;
+  color: var(--graphite);
+  overflow-wrap: anywhere;
+}
+
+.sk-note {
+  margin: 0;
+  color: var(--graphite);
+  font-size: 13px;
+}
+
+.sk-filter {
+  margin-bottom: 16px;
+}
+
+.sk-count {
+  margin-left: 6px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* One state per dot: installed green, pending an outline, failed red, blocked or hand edited amber. */
+.sk-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--rule-strong);
+}
+
+.sk-dot[data-state='installed'] { background: var(--green); }
+.sk-dot[data-state='pending'] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--graphite); }
+.sk-dot[data-state='failed'] { background: var(--red); }
+.sk-dot[data-state='blocked'],
+.sk-dot[data-state='drifted'] { background: var(--amber); }
+.sk-dot[data-state='newer'] { background: var(--ink); }
+.sk-dot[data-state='none'] { height: 2px; border-radius: 1px; }
+.sk-dot[data-state='found'] { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faint); }
+
+.sk-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--graphite);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sk-dot-group {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: 4px;
+}
+
+/* A row, and its one-click action beside it. */
+.sk-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 12px;
+}
+
+.sk-line-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sk-row,
+.sk-row-static {
+  grid-template-columns: minmax(180px, 1.2fr) minmax(110px, 0.6fr) minmax(0, 1.2fr) 16px;
+}
+
+button.sk-row {
+  width: calc(100% + 16px);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sk-row-static {
+  display: grid;
+  align-items: center;
+  gap: 4px 24px;
+  padding: 16px 0;
+}
+
+.sk-row .row-chevron {
+  transition: transform 200ms var(--ease-out);
+}
+
+.sk-rows > li[data-open] .sk-row .row-chevron {
+  transform: rotate(90deg);
+}
+
+.sk-reason {
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--graphite);
+  font-size: 13px;
+  text-align: right;
+}
+
+.sk-reason[data-tone='update'] { color: var(--ink); font-weight: 600; }
+.sk-reason[data-tone='warn'] { color: var(--amber); }
+.sk-reason[data-tone='error'] { color: var(--red); }
+
+/* A resolved row fades before the rest of the list slides up to close the gap. */
+.sk-rows > li[data-leaving] {
+  opacity: 0;
+  transform: scale(0.98);
+  transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out);
+  pointer-events: none;
+}
+
+.sk-local {
+  margin-top: 20px;
+}
+
+/* ---------- Skills: an opened row ---------- */
+
+.sk-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 32px;
+  padding: 6px 0 24px;
+}
+
+.sk-detail h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.sk-detail-head {
+  margin-bottom: 10px;
+}
+
+.sk-detail-head h3 {
+  margin: 0;
+}
+
+.sk-machines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+}
+
+.sk-machines li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 14px;
+}
+
+.sk-machines li[data-check] {
+  grid-template-columns: auto 8px minmax(0, 1fr) auto;
+}
+
+.sk-machine-label {
+  display: grid;
+  min-width: 0;
+}
+
+.sk-machine-label .muted {
+  font-size: 13px;
+}
+
+.sk-machine-label small {
+  color: var(--graphite);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sk-machine-fix .command-line {
+  min-height: 0;
+}
+
+.sk-side {
+  display: grid;
+  gap: 20px;
+  align-content: start;
+}
+
+.sk-update {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--sheet);
+}
+
+.sk-update-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.sk-verdicts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sk-verdict {
+  display: inline-flex;
+  gap: 5px;
+  padding: 0 7px;
+  border-radius: 4px;
+  background: var(--hover);
+  color: var(--graphite);
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.sk-verdict b { font-weight: 600; color: var(--ink); }
+.sk-verdict[data-risk='medium'],
+.sk-verdict[data-risk='medium'] b { background: var(--amber-wash); color: var(--amber); }
+.sk-verdict[data-risk='high'],
+.sk-verdict[data-risk='critical'],
+.sk-verdict[data-risk='high'] b,
+.sk-verdict[data-risk='critical'] b { background: var(--red-wash); color: var(--red); }
+
+.sk-files {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+
+.sk-files li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sk-files code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.sk-files span {
+  color: var(--graphite);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sk-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--graphite);
+}
+
+.sk-history {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--graphite);
+  font-size: 13px;
+}
+
+.sk-history code {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.sk-source {
+  margin-top: 8px;
+}
+
+/* ---------- Skills: Add a Skill ---------- */
+
+.sk-dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: 0 16px 48px rgba(26, 27, 37, 0.18);
+}
+
+.sk-dialog[open] {
+  animation: sk-pop 180ms var(--ease-out);
+}
+
+.sk-dialog::backdrop {
+  background: rgba(26, 27, 37, 0.28);
+}
+
+@keyframes sk-pop {
+  from { opacity: 0; transform: scale(0.97); }
+}
+
+.sk-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px 12px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.sk-dialog-head input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+}
+
+.sk-dialog-head input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.sk-dialog-head strong {
+  flex: 1;
+}
+
+.sk-results {
+  max-height: 340px;
+  overflow: auto;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+
+.sk-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sk-result:hover:not(:disabled) {
+    background: var(--hover);
+  }
+}
+
+.sk-result:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.sk-result-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.sk-result-main strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sk-installs {
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sk-empty {
+  padding: 16px 10px;
+  color: var(--graphite);
+  font-size: 13px;
+}
+
+.sk-preview-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.sk-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ---------- Skills on a Machine's page ---------- */
+
+.sk-machine-skills {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+}
+
+.sk-machine-skills li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 14px;
+}
+
+/* On a phone the reason goes under the title, the action under the row, and the dots away. */
+@media (max-width: 760px) {
+  .sk-line {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .sk-line-action {
+    justify-content: flex-start;
+    padding-bottom: 14px;
+  }
+
+  .sk-line-action:empty {
+    display: none;
+  }
+
+  .sk-row,
+  .sk-row-static {
+    grid-template-columns: minmax(0, 1fr) 16px;
+  }
+
+  .sk-row .sk-dots,
+  .sk-row-static .sk-dots {
+    display: none;
+  }
+
+  .sk-reason {
+    grid-column: 1;
+    grid-row: 2;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .sk-row .row-chevron {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+
+  .sk-detail {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sk-rows > li[data-leaving] {
+    transform: none;
+  }
+}
