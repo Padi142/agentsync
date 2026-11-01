@@ -6,11 +6,11 @@ import type { Env } from './env';
 import { skillsService } from './skills/service';
 
 /**
- * Skills each scheduled run checks for updates. Every run checks those not checked for about a day, so
- * with the trigger every 10 minutes this covers about 576 Skills a day, while one run stays well inside
- * the Worker's subrequest limit (a check takes 3 GitHub and skills.sh calls, up to 13).
+ * Outgoing requests one scheduled run may spend on Skills update checks. A Worker invocation may make
+ * 50 on the Free plan; the rest is headroom. Each run checks the Skills not checked for about a day,
+ * as many as fit, every 10 minutes.
  */
-const SKILLS_PER_RUN = 4;
+const SKILLS_REQUEST_BUDGET = 40;
 
 const isApiPath = (pathname: string) =>
   pathname === '/rpc' ||
@@ -38,8 +38,8 @@ const app = createServerEntry({
 export default {
   ...app,
   scheduled: ((_controller, env, ctx) => {
-    ctx.waitUntil(skillsService(env).checkStale(SKILLS_PER_RUN).then(({ checked, of }) => {
-      if (of) console.log(`[skills] checked ${checked} of ${of} Skills for updates`);
+    ctx.waitUntil(skillsService(env).checkStale(SKILLS_REQUEST_BUDGET).then(({ checked, stale }) => {
+      if (stale) console.log(`[skills] checked ${checked} of ${stale} stale Skills for updates`);
     }));
   }) satisfies ExportedHandlerScheduledHandler<Env>,
 };

@@ -13,6 +13,7 @@ CREATE TABLE `skill` (
 	`name` text NOT NULL,
 	`repo_id` integer NOT NULL,
 	`repo_full_name` text NOT NULL,
+	`repo_aliases` text NOT NULL,
 	`path` text NOT NULL,
 	`pin_commit` text NOT NULL,
 	`pin_tree_sha` text NOT NULL,
@@ -36,6 +37,7 @@ CREATE TABLE `skill_folder_version` (
 	`path` text NOT NULL,
 	`tree_sha` text NOT NULL,
 	`installed_hash` text,
+	`skill_name` text,
 	PRIMARY KEY(`repo_id`, `commit`, `path`)
 );
 --> statement-breakpoint

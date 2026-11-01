@@ -15,8 +15,8 @@ const AGENT_PROJECT_SKILL_DIRS = [
 ];
 const CONTAINERS = ['skills', 'skills/.curated', 'skills/.experimental', 'skills/.system', ...AGENT_PROJECT_SKILL_DIRS];
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '__pycache__']);
-/** Reading SKILL.md files costs a request each, so stop after this many. */
-const MAX_READS = 40;
+/** Reading SKILL.md files costs a request each (a Worker request may make only 50), so stop after this many. */
+const MAX_READS = 30;
 
 const join = (...parts: string[]) => parts.filter(Boolean).join('/');
 const parent = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
@@ -126,14 +126,13 @@ export function frontmatterName(text: string): string | null {
 }
 
 /**
- * The folder of the skill named `name` in the repository at `commit`, or `null`. Folders whose name
- * matches are read first, since most skills live in a folder of their own name.
+ * The folder of the skill named `name` in the repository at `commit`, or `null`: the first folder in
+ * `skills`' own walk order whose SKILL.md declares exactly that name, since `skills` keeps the first
+ * skill of a name and drops later ones.
  */
 export async function findSkillFolder(gh: GitHub, fullName: string, commit: string, tree: GitTreeItem[], name: string) {
   const read = (path: string) => gh.raw(fullName, commit, path);
-  const folders = await skillFolders(tree, read);
-  const ordered = [...folders.filter((dir) => base(dir) === name), ...folders.filter((dir) => base(dir) !== name)];
-  for (const folder of ordered.slice(0, MAX_READS)) {
+  for (const folder of (await skillFolders(tree, read)).slice(0, MAX_READS)) {
     const text = await read(join(folder, 'SKILL.md'));
     // Exact: `skills` names the installed folder after the frontmatter as written.
     if (text !== null && frontmatterName(text) === name) return folder;

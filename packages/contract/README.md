@@ -80,6 +80,11 @@ procedures check that a Machine token's Machine matches `machineId`.
   `skills` CLI writes (it leaves out `SKILL_COPY_EXCLUDES`). Skill Drift
   compares a folder on disk with `installedHash`.
 - Skill names (`skillNameSchema`), `owner/repo` (`repoNameSchema`) and SHAs
-  (`gitShaSchema`) are validated on both sides, and none can start with `-`.
+  (`gitShaSchema`) are validated on both sides, and none can start with `-`. A
+  name is lowercase words joined by single hyphens: what `skills` installs
+  without renaming it.
+- Each desired Skill carries `sources`: the repository's canonical name and the
+  old names GitHub redirects to it. A Machine adopts an existing copy only if
+  its lock names one of them.
 - Variable names and Template syntax are checked by the server with
   `@agentsync/template`. This package does not depend on the grammar.

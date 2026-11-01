@@ -1,4 +1,5 @@
-import type { GitTreeItem } from './hash';
+import { repoNameSchema } from '@agentsync/contract';
+import { UnsupportedSkillFolder, type GitTreeItem } from './hash';
 
 /** GitHub or skills.sh did not answer in time, failed, or GitHub's rate limit is used up. */
 export class UpstreamError extends Error {}
@@ -44,8 +45,12 @@ const encodePath = (path: string) => path.split('/').map(encodeURIComponent).joi
  * without one GitHub allows 60 requests an hour per IP. Every call has a timeout.
  */
 export function github(token: string | undefined) {
+  /** Requests made so far, API and raw: a Worker invocation may only make so many. */
+  const usage = { requests: 0 };
+
   async function api<T>(path: string): Promise<T> {
     let response: Response;
+    usage.requests++;
     try {
       response = await fetch(`https://api.github.com${path}`, {
         headers: {
@@ -69,10 +74,15 @@ export function github(token: string | undefined) {
 
   async function repo(path: string): Promise<Repo> {
     const found = await api<{ id: number; full_name: string; default_branch: string; pushed_at: string; private: boolean }>(path);
+    // GitHub's own name is checked like a person's: one that could be read as a flag never gets stored.
+    if (!repoNameSchema.safeParse(found.full_name).success) {
+      throw new UnsupportedSkillFolder(`AgentSync can't use the repository name ${found.full_name}.`);
+    }
     return { id: found.id, fullName: found.full_name, defaultBranch: found.default_branch, pushedAt: new Date(found.pushed_at), private: found.private };
   }
 
   return {
+    usage,
     /** A repository by name. GitHub follows a rename to the canonical name. */
     repo: (fullName: string) => repo(`/repos/${fullName}`),
     /** A repository by GitHub's ID, whatever it is called now. */
@@ -93,11 +103,12 @@ export function github(token: string | undefined) {
     },
 
     /**
-     * The commits on `branch` that changed `path` (the whole repository for `''`), newest first: the
-     * versions of a folder. Only the branch's own history, so a commit from a fork never shows up here.
+     * The commits reachable from `ref` (a branch, or a SHA already read from it) that changed `path`
+     * (the whole repository for `''`), newest first: the versions of a folder. Only that history, so a
+     * commit from a fork never shows up here.
      */
-    async folderHistory(fullName: string, branch: string, path: string): Promise<Commit[]> {
-      const query = new URLSearchParams({ sha: branch, per_page: '100', ...(path ? { path } : {}) });
+    async folderHistory(fullName: string, ref: string, path: string): Promise<Commit[]> {
+      const query = new URLSearchParams({ sha: ref, per_page: '100', ...(path ? { path } : {}) });
       const commits = await api<{ sha: string; commit: { committer: { date: string } } }[]>(`/repos/${fullName}/commits?${query}`);
       return commits.map((commit) => ({ sha: commit.sha, committedAt: new Date(commit.commit.committer.date) }));
     },
@@ -111,6 +122,7 @@ export function github(token: string | undefined) {
     /** A file's text at a commit from raw.githubusercontent.com (no API quota), or `null` if missing. */
     async raw(fullName: string, commit: string, path: string): Promise<string | null> {
       let response: Response;
+      usage.requests++;
       try {
         response = await fetch(`https://raw.githubusercontent.com/${fullName}/${commit}/${encodePath(path)}`, {
           headers: { 'user-agent': 'agentsync' },

@@ -5,6 +5,8 @@ export interface MachineSkillFacts {
   /** The Skill's assignment includes this Machine. */
   assigned: boolean;
   pin: { commit: string; installedHash: string };
+  /** The `owner/repo` names (lowercase) a lock may record for the Skill's repository. */
+  sources: readonly string[];
   /** The installed hashes of the Skill's earlier Pins. */
   olderHashes: ReadonlySet<string>;
   /** Versions of the folder on the default branch newer than the Pin, as far as the update check has seen. */
@@ -19,8 +21,8 @@ export interface MachineSkillFacts {
 /**
  * Where a Skill stands on a Machine, from the Machine's last report (see `machineSkillStateSchema`).
  * Only AgentSync's own copies (`managed`) can be installed, updated, drifted or removed; any other
- * folder of the name blocks it, except an unmanaged copy from the `skills` lock that is exactly the
- * Pin, which `skills sync` adopts without reinstalling.
+ * folder of the name blocks it, except an unmanaged copy from the `skills` lock, from the Skill's own
+ * repository, that is exactly the Pin: `skills sync` adopts that without reinstalling.
  */
 export function machineSkillState(facts: MachineSkillFacts): MachineSkillState {
   const { assigned, pin, scanned, result } = facts;
@@ -34,7 +36,8 @@ export function machineSkillState(facts: MachineSkillFacts): MachineSkillState {
   }
   const { hash } = scanned;
   if (!scanned.managed) {
-    return scanned.source !== null && hash === pin.installedHash ? { status: 'installed' } : { status: 'blocked' };
+    const sameSource = scanned.source !== null && facts.sources.includes(scanned.source.toLowerCase());
+    return sameSource && hash === pin.installedHash ? { status: 'installed' } : { status: 'blocked' };
   }
   const known = hash === pin.installedHash || (hash !== null && facts.olderHashes.has(hash));
   if (!assigned) return known ? { status: 'pending', change: 'remove' } : { status: 'drifted' };

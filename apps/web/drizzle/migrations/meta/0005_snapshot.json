@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6143dbb5-f995-4199-a947-e95c162dca56",
+  "id": "84e4b4cf-da6e-4e1d-a05a-4633147f80df",
   "prevId": "062018df-ca92-4e0c-a8dc-0f62a765935f",
   "tables": {
     "account": {
@@ -670,6 +670,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "repo_aliases": {
+          "name": "repo_aliases",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "path": {
           "name": "path",
           "type": "text",
@@ -824,6 +831,13 @@
         },
         "installed_hash": {
           "name": "installed_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "skill_name": {
+          "name": "skill_name",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

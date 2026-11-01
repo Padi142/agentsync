@@ -176,7 +176,7 @@ describe('Assignment and what Machines get', () => {
     const desktop = await registerMachine('alice', 'desktop');
     const bobs = await registerMachine('bob', 'bobs');
     const skill = await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
-    const desired = { name: 'animate', repo: 'emil/skills', commit: skill.pin.commit, installedHash: skill.pin.installedHash };
+    const desired = { name: 'animate', repo: 'emil/skills', commit: skill.pin.commit, installedHash: skill.pin.installedHash, sources: ['emil/skills'] };
     expect((await laptop.client.machines.sync()).skills).toEqual([desired]);
     expect((await desktop.client.machines.sync()).skills).toEqual([desired]);
 
@@ -195,7 +195,7 @@ describe('Assignment and what Machines get', () => {
     const { machine, client } = await registerMachine();
     const skill = await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
     const newer = gh.commit('emil/skills', { 'skills/motion/SKILL.md': skillMd('animate', 'v2') });
-    await skillsService(env).checkStale(10, new Date(Date.now() + 25 * 3600_000));
+    await skillsService(env).checkStale(40, new Date(Date.now() + 25 * 3600_000));
     await client.skills.report({ scan: [
       { name: 'animate', source: 'emil/skills', ref: newer, hash: await gh.installedHash('emil/skills', newer, 'skills/motion'), managed: true },
     ] });
@@ -229,7 +229,7 @@ describe('The update check', () => {
 
   it('only offers the update while automatic updates are off', async () => {
     const { skill, newer } = await withUpdate('safe');
-    await skillsService(env).checkStale(10, tomorrow());
+    await skillsService(env).checkStale(40, tomorrow());
     const [shown] = (await browser().skills.overview()).skills;
     expect(shown).toMatchObject({ pin: { commit: skill.pin.commit }, update: { pin: { commit: newer }, audited: true } });
   });
@@ -237,7 +237,7 @@ describe('The update check', () => {
   it('moves the Pin to an audited version rated below High, and records it', async () => {
     const { skill, newer } = await withUpdate('medium');
     await browser().skills.settings({ autoUpdate: true });
-    await skillsService(env).checkStale(10, tomorrow());
+    await skillsService(env).checkStale(40, tomorrow());
     const [shown] = (await browser().skills.overview()).skills;
     expect(shown).toMatchObject({ pin: { commit: newer }, update: null });
     expect((await browser().skills.history({ skillId: skill.id }))[0]).toMatchObject({
@@ -263,9 +263,53 @@ describe('The update check', () => {
       await resetDb(env);
       await browser().skills.settings({ autoUpdate: true });
       const { skill, newer } = await setup();
-      await skillsService(env).checkStale(10, tomorrow());
+      await skillsService(env).checkStale(40, tomorrow());
       const [shown] = (await browser().skills.overview()).skills;
       expect(shown).toMatchObject({ pin: { commit: skill.pin.commit }, update: { pin: { commit: newer } } });
     }
+  });
+});
+
+describe('What a check may offer', () => {
+  const tomorrow = () => new Date(Date.now() + 25 * 3600_000);
+
+  it('never updates automatically to an older version when the newest one can’t be installed', async () => {
+    skillRepo();
+    await browser().skills.settings({ autoUpdate: true });
+    const skill = await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
+    const usable = gh.commit('emil/skills', { 'skills/motion/SKILL.md': skillMd('animate', 'v2') });
+    gh.commit('emil/skills', { 'skills/motion/link.md': { link: 'SKILL.md' } });
+    // Fresh, safe verdicts describe the newest content, which has the symlink.
+    gh.audit('emil/skills', 'animate', 'safe');
+    await skillsService(env).checkStale(40, tomorrow());
+    const [shown] = (await browser().skills.overview()).skills;
+    expect(shown).toMatchObject({ pin: { commit: skill.pin.commit }, update: { pin: { commit: usable }, audited: false } });
+  });
+
+  it('offers no version that stopped being this skill', async () => {
+    skillRepo();
+    const skill = await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
+    gh.commit('emil/skills', { 'skills/motion/SKILL.md': skillMd('renamed') });
+    gh.commit('emil/skills', { 'skills/motion/SKILL.md': null, 'skills/motion/README.md': 'no skill' });
+    await skillsService(env).checkStale(40, tomorrow());
+    const [shown] = (await browser().skills.overview()).skills;
+    expect(shown).toMatchObject({ pin: { commit: skill.pin.commit }, update: null });
+  });
+
+  it('keeps the stored name when GitHub’s new one could be read as a flag', async () => {
+    skillRepo();
+    const { client } = await registerMachine();
+    await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
+    gh.rename('emil/skills', 'emil/-skills');
+    await skillsService(env).checkStale(40, tomorrow());
+    expect((await browser().skills.overview()).skills[0]!.repo.fullName).toBe('emil/skills');
+    expect((await client.machines.sync()).skills[0]!.repo).toBe('emil/skills');
+  });
+});
+
+describe('Finding the folder', () => {
+  it('pins the first folder `skills` walks to that declares the name, as `skills` keeps the first', async () => {
+    gh.repo('two/names', { 'skills/a/SKILL.md': skillMd('demo', 'first'), 'skills/demo/SKILL.md': skillMd('demo', 'second') });
+    expect((await browser().skills.add({ repo: 'two/names', name: 'demo' })).path).toBe('skills/a');
   });
 });

@@ -50,9 +50,12 @@ describe('installedFolderHash', () => {
       'nested/keep.md': 'keep',
       '__pycache__/x.pyc': 'x',
       'only-cache/__pycache__/y.pyc': 'y',
+      // `skills` skips a directory named metadata.json too, with everything in it.
+      'metadata.json-dir/metadata.json/inside.md': 'gone',
+      'metadata.json-dir/kept.md': 'kept',
     });
     const items = listing(git);
-    git('rm', '-q', '-r', 'metadata.json', 'nested/metadata.json', '__pycache__', 'only-cache');
+    git('rm', '-q', '-r', 'metadata.json', 'nested/metadata.json', '__pycache__', 'only-cache', 'metadata.json-dir/metadata.json');
     git('commit', '-qm', 'without');
     expect(await installedFolderHash(items, '')).toBe(git('rev-parse', 'HEAD^{tree}'));
   });

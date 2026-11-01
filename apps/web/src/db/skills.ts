@@ -89,6 +89,8 @@ export interface NewSkill {
   userId: string;
   name: string;
   repo: { id: number; fullName: string };
+  /** Old names (lowercase) GitHub redirected to it. */
+  aliases: string[];
   path: string;
   pin: FolderVersion;
   audits: Audits;
@@ -105,6 +107,7 @@ export async function insertSkill(env: Pick<Env, 'DB'>, details: NewSkill): Prom
     name: details.name,
     repoId: details.repo.id,
     repoFullName: details.repo.fullName,
+    repoAliases: details.aliases,
     path: details.path,
     pinCommit: details.pin.commit,
     pinTreeSha: details.pin.treeSha,
@@ -186,21 +189,26 @@ export async function deleteSkill(env: Pick<Env, 'DB'>, userId: string, skillId:
   return result.meta.changes > 0; // D1 counts the cascaded rows too.
 }
 
-/** What the last update check found. */
+/**
+ * What an update check found, saved only while the Pin is still `pinCommit`: a check that raced a Pin
+ * move describes an old Pin, and its versions could include the new Pin's predecessors. Returns whether it saved.
+ */
 export async function saveCheck(
   env: Pick<Env, 'DB'>,
   skillId: string,
+  pinCommit: string,
   check: { repoFullName: string; newer: FolderVersion[]; updatePushedAt: Date | null; audits: Audits | null },
-) {
-  await createDb(env).update(skill).set({
+): Promise<boolean> {
+  const result = await createDb(env).update(skill).set({
     repoFullName: check.repoFullName, newer: check.newer, updatePushedAt: check.updatePushedAt,
     ...(check.audits ? { audits: storedAudits(check.audits) } : {}), checkedAt: new Date(),
-  }).where(eq(skill.id, skillId)).run();
+  }).where(and(eq(skill.id, skillId), eq(skill.pinCommit, pinCommit))).run();
+  return result.meta.changes === 1;
 }
 
-/** Mark a Skill as checked without changing what is known, e.g. after GitHub failed, so the cron moves on. */
-export async function touchCheck(env: Pick<Env, 'DB'>, skillId: string) {
-  await createDb(env).update(skill).set({ checkedAt: new Date() }).where(eq(skill.id, skillId)).run();
+/** Mark a Skill as checked at `at` without changing what is known, e.g. after GitHub failed, so the cron moves on. */
+export async function touchCheck(env: Pick<Env, 'DB'>, skillId: string, at = new Date()) {
+  await createDb(env).update(skill).set({ checkedAt: at }).where(eq(skill.id, skillId)).run();
 }
 
 /** Skills of every user not checked since `before`, never-checked first. */
@@ -229,6 +237,12 @@ export async function putSettings(env: Pick<Env, 'DB'>, userId: string, settings
 export function cachedFolderVersion(env: Pick<Env, 'DB'>, repoId: number, commit: string, path: string) {
   return createDb(env).select().from(skillFolderVersion)
     .where(and(eq(skillFolderVersion.repoId, repoId), eq(skillFolderVersion.commit, commit), eq(skillFolderVersion.path, path))).get();
+}
+
+/** Record which skill (`''`: none) a cached folder version holds, once its SKILL.md was read. */
+export async function nameFolderVersion(env: Pick<Env, 'DB'>, repoId: number, commit: string, path: string, skillName: string) {
+  await createDb(env).update(skillFolderVersion).set({ skillName })
+    .where(and(eq(skillFolderVersion.repoId, repoId), eq(skillFolderVersion.commit, commit), eq(skillFolderVersion.path, path))).run();
 }
 
 export async function cacheFolderVersion(env: Pick<Env, 'DB'>, row: typeof skillFolderVersion.$inferInsert) {

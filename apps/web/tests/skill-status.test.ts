@@ -17,6 +17,7 @@ const state = (assigned: boolean, found?: ScannedSkill, result?: { commit: strin
   machineSkillState({
     assigned,
     pin,
+    sources: ['owner/repo', 'owner/old-name'],
     olderHashes: new Set([older]),
     newer: [newer],
     scanned: found,
@@ -51,8 +52,11 @@ describe('machineSkillState', () => {
     expect(state(true, scanned(older, { managed: false }))).toEqual({ status: 'blocked' });
   });
 
-  it('counts an unmanaged copy from the lock that matches the Pin as installed: skills sync adopts it', () => {
+  it('counts an unmanaged copy of the Pin from the Skill’s own repository as installed: skills sync adopts it', () => {
     expect(state(true, scanned(pin.installedHash, { managed: false }))).toEqual({ status: 'installed' });
+    expect(state(true, scanned(pin.installedHash, { managed: false, source: 'Owner/Old-Name' }))).toEqual({ status: 'installed' });
+    // The same bytes from another repository, or hand-written, are someone else's.
+    expect(state(true, scanned(pin.installedHash, { managed: false, source: 'someone/else' }))).toEqual({ status: 'blocked' });
     expect(state(true, scanned(pin.installedHash, { managed: false, source: null }))).toEqual({ status: 'blocked' });
   });
 

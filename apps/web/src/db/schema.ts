@@ -192,6 +192,8 @@ export const skill = sqliteTable(
     name: text('name').notNull(),
     repoId: integer('repo_id').notNull(),
     repoFullName: text('repo_full_name').notNull(),
+    /** Old `owner/repo` names (lowercase) that GitHub redirects here, as a Machine's `skills` lock may still record them. */
+    repoAliases: text('repo_aliases', { mode: 'json' }).$type<string[]>().notNull(),
     path: text('path').notNull(),
     pinCommit: text('pin_commit').notNull(),
     pinTreeSha: text('pin_tree_sha').notNull(),
@@ -273,7 +275,8 @@ export const machineSkillReport = sqliteTable('machine_skill_report', {
 
 /**
  * A skill folder's hashes at a commit, from GitHub. Commits are immutable, so rows never change.
- * `installed_hash` is `null` when `skills` could not install the folder faithfully (symlinks, submodules).
+ * `installed_hash` is `null` when `skills` could not install the folder faithfully (symlinks, submodules),
+ * and `skill_name` says which skill, if any, the folder held then.
  */
 export const skillFolderVersion = sqliteTable(
   'skill_folder_version',
@@ -283,6 +286,8 @@ export const skillFolderVersion = sqliteTable(
     path: text('path').notNull(),
     treeSha: text('tree_sha').notNull(),
     installedHash: text('installed_hash'),
+    /** The frontmatter `name` of the folder's SKILL.md at that commit; `null` without a readable one. */
+    skillName: text('skill_name'),
   },
   (table) => [primaryKey({ columns: [table.repoId, table.commit, table.path] }), index('skill_folder_version_hash_idx').on(table.repoId, table.path, table.installedHash)],
 );

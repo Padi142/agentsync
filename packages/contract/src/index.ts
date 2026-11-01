@@ -140,9 +140,11 @@ export const devicePollResultSchema = z.discriminatedUnion('status', [
 
 /**
  * A Skill name: the `name` in its `SKILL.md` frontmatter, which is also its folder and lock key on a
- * Machine. It never starts with `-`, so it can't be read as a flag of the `skills` CLI.
+ * Machine. Lowercase words joined by single hyphens, at most 64 characters: exactly the names the
+ * `skills` CLI installs unchanged (its sanitizer would turn `a--b` or `a-` into another folder). It
+ * never starts with `-`, so it can't be read as a flag either.
  */
-export const skillNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/);
+export const skillNameSchema = z.string().max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 /** The CLI's own skill: no Skill may take its name. */
 export const RESERVED_SKILL_NAME = 'agentsync';
 /** A public GitHub repository as `owner/repo`. Neither part may start with `-` or be `.`/`..`. */
@@ -151,12 +153,13 @@ export const repoNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/
 export const gitShaSchema = z.string().regex(/^[0-9a-f]{40}$/);
 
 /**
- * What `skills` 1.7.4 leaves out when it copies a skill folder: files with these names at any depth,
- * and directories with these names. Both the server (from GitHub's tree) and the CLI (from disk) skip
+ * What `skills` 1.7.4 leaves out when it copies a skill folder, at any depth. Both the server (from GitHub's tree) and the CLI (from disk) skip
  * them when they hash a folder, so the hashes agree. Bump with the `skills` version.
  */
 export const SKILL_COPY_EXCLUDES = {
-  files: ['metadata.json'],
+  /** Entries with these names, of any kind (a directory too). */
+  names: ['metadata.json'],
+  /** Directories with these names. */
   dirs: ['.git', '__pycache__', '__pypackages__'],
 } as const;
 
@@ -325,6 +328,11 @@ export const desiredSkillSchema = z.object({
   repo: repoNameSchema,
   commit: gitShaSchema,
   installedHash: gitShaSchema,
+  /**
+   * The `owner/repo` names (lowercase) a `skills` lock may record for this repository: its canonical
+   * name and old ones GitHub redirects to it. Only a copy from one of these is AgentSync's to adopt.
+   */
+  sources: z.array(repoNameSchema).min(1).max(20),
 });
 
 /**

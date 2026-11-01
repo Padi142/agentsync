@@ -16,7 +16,7 @@ interface Dir {
   dirs: Map<string, Dir>;
 }
 
-const excludedFiles = new Set<string>(SKILL_COPY_EXCLUDES.files);
+const excludedNames = new Set<string>(SKILL_COPY_EXCLUDES.names);
 const excludedDirs = new Set<string>(SKILL_COPY_EXCLUDES.dirs);
 const encoder = new TextEncoder();
 const hex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
@@ -63,10 +63,12 @@ export async function installedFolderHash(tree: GitTreeItem[], folder: string): 
     if (!item.path.startsWith(prefix) || item.type === 'tree') continue;
     const parts = item.path.slice(prefix.length).split('/');
     const name = parts.pop()!;
-    if (parts.some((part) => excludedDirs.has(part))) continue;
+    // An excluded directory takes everything in it along, as `skills` never descends into it.
+    if (parts.some((part) => excludedDirs.has(part) || excludedNames.has(part))) continue;
+    // Left out on copy whatever it is, so it can't make the folder unsupported either.
+    if (excludedNames.has(name) || (item.type === 'commit' && excludedDirs.has(name))) continue;
     if (item.mode === '120000') throw new UnsupportedSkillFolder(`${item.path} is a symlink.`);
     if (item.type === 'commit') throw new UnsupportedSkillFolder(`${item.path} is a submodule.`);
-    if (excludedFiles.has(name)) continue;
     let dir = root;
     for (const part of parts) {
       let child = dir.dirs.get(part);
