@@ -24,9 +24,11 @@ export class NameTakenError extends Error {}
 export class NoMatchingCommitError extends Error {}
 
 /** How many versions of a folder one check looks at (two GitHub requests each, unless cached). */
-const MAX_VERSIONS = 5; // keep CHECK_REQUESTS in step
+const MAX_VERSIONS = 5;
 /** The most requests one update check makes: repository, history, a tree and a SKILL.md per version, audits. */
-export const CHECK_REQUESTS = 3 + 2 * 5;
+export const CHECK_REQUESTS = 3 + 2 * MAX_VERSIONS;
+/** Requests an Add may have made and still look for newer versions (up to 2 × MAX_VERSIONS more), under a Worker's 50. */
+const ADD_REQUEST_BUDGET = 50 - 2 * MAX_VERSIONS - 2;
 /** How far back a Found Skill's copy is looked for (one GitHub call each, unless cached). */
 const MAX_MATCH = 10;
 
@@ -54,7 +56,15 @@ export function skillsService(env: Env) {
   async function folderVersion(repoId: number, fullName: string, commit: Commit, path: string, name: string | null): Promise<FolderVersion | null> {
     let cached = await cachedFolderVersion(env, repoId, commit.sha, path);
     if (!cached) {
-      const tree = await gh.tree(fullName, commit.sha, path);
+      let tree: Awaited<ReturnType<GitHub['tree']>>;
+      try {
+        tree = await gh.tree(fullName, commit.sha, path);
+      } catch (error) {
+        // The commit deleted or moved the folder: a version with no skill in it.
+        if (!(error instanceof NotFoundError)) throw error;
+        await cacheFolderVersion(env, { repoId, commit: commit.sha, path, treeSha: '', installedHash: null, skillName: '' });
+        return null;
+      }
       let installedHash: string | null = null;
       if (!tree.truncated && tree.tree.some((item) => item.path === 'SKILL.md' && item.type === 'blob')) {
         try {
@@ -146,10 +156,13 @@ export function skillsService(env: Env) {
     const sameCandidate = newer[0]?.commit === row.newer[0]?.commit;
     // `null` makes the update "not audited": no push time to compare verdicts with, or not the newest version.
     const updatePushedAt = !newer.length || !newestUsable ? null : sameCandidate && row.updatePushedAt ? row.updatePushedAt : repo.pushedAt;
-    const saved = await saveCheck(env, row.id, row.pinCommit, { repoFullName: repo.fullName, newer, updatePushedAt, audits });
+    // A rename since the last check: Machines' locks may still say the old name.
+    const renamed = repo.fullName.toLowerCase() !== row.repoFullName.toLowerCase();
+    const repoAliases = renamed ? [...new Set([...row.repoAliases, row.repoFullName.toLowerCase()])] : row.repoAliases;
+    const saved = await saveCheck(env, row.id, row.pinCommit, { repoFullName: repo.fullName, repoAliases, newer, updatePushedAt, audits });
     if (!saved) return (await getSkillRow(env, row.userId, row.id)) ?? row;
     const latest = audits ?? auditsOf(row.audits);
-    const checked: SkillRow = { ...row, repoFullName: repo.fullName, newer, updatePushedAt, audits: storedAudits(latest), checkedAt: new Date() };
+    const checked: SkillRow = { ...row, repoFullName: repo.fullName, repoAliases, newer, updatePushedAt, audits: storedAudits(latest), checkedAt: new Date() };
     const allowed = autoUpdate ?? (await getSettings(env, row.userId)).autoUpdate;
     const candidate = newer[0];
     if (allowed && row.autoUpdate && candidate && mayAutoUpdate(latest, updatePushedAt)) {
@@ -291,9 +304,11 @@ export function skillsService(env: Env) {
       const row = await insertSkill(env, { userId, name: input.name, repo: { id: repo.id, fullName: repo.fullName }, aliases, path, pin, audits });
       if (!row) throw new NameTakenError(`A Skill named ${input.name} is already in the account.`);
       if (pin === latest) return presentOne(row);
+      // Near a Worker request's limit, leave the newer versions to the next update check (soon: never checked).
+      if (gh.usage.requests > ADD_REQUEST_BUDGET) return presentOne(row);
       const { newer, newestUsable } = await versionsAfter(repo, path, input.name, pin.commit, history);
       const updatePushedAt = newer.length && newestUsable ? repo.pushedAt : null;
-      if (newer.length && await saveCheck(env, row.id, pin.commit, { repoFullName: repo.fullName, newer, updatePushedAt, audits })) {
+      if (newer.length && await saveCheck(env, row.id, pin.commit, { repoFullName: repo.fullName, repoAliases: aliases, newer, updatePushedAt, audits })) {
         return presentOne({ ...row, newer, updatePushedAt });
       }
       return presentOne(row);

@@ -197,10 +197,10 @@ export async function saveCheck(
   env: Pick<Env, 'DB'>,
   skillId: string,
   pinCommit: string,
-  check: { repoFullName: string; newer: FolderVersion[]; updatePushedAt: Date | null; audits: Audits | null },
+  check: { repoFullName: string; repoAliases: string[]; newer: FolderVersion[]; updatePushedAt: Date | null; audits: Audits | null },
 ): Promise<boolean> {
   const result = await createDb(env).update(skill).set({
-    repoFullName: check.repoFullName, newer: check.newer, updatePushedAt: check.updatePushedAt,
+    repoFullName: check.repoFullName, repoAliases: check.repoAliases, newer: check.newer, updatePushedAt: check.updatePushedAt,
     ...(check.audits ? { audits: storedAudits(check.audits) } : {}), checkedAt: new Date(),
   }).where(and(eq(skill.id, skillId), eq(skill.pinCommit, pinCommit))).run();
   return result.meta.changes === 1;

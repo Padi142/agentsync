@@ -296,6 +296,26 @@ describe('What a check may offer', () => {
     expect(shown).toMatchObject({ pin: { commit: skill.pin.commit }, update: null });
   });
 
+  it('keeps checking a Skill whose folder moved away, and offers nothing past the move', async () => {
+    skillRepo();
+    const skill = await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
+    gh.commit('emil/skills', { 'skills/motion/SKILL.md': null, 'skills/motion/metadata.json': null, 'skills/core/motion/SKILL.md': skillMd('animate') });
+    expect(await skillsService(env).checkStale(40, tomorrow())).toEqual({ checked: 1, stale: 1 });
+    const [shown] = (await browser().skills.overview()).skills;
+    expect(shown).toMatchObject({ pin: { commit: skill.pin.commit }, update: null });
+  });
+
+  it('remembers a repository’s old name after a rename, so Machines whose lock says it still adopt', async () => {
+    skillRepo();
+    const skill = await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
+    gh.rename('emil/skills', 'emil/renamed');
+    await skillsService(env).checkStale(40, tomorrow());
+    const { client } = await registerMachine();
+    expect((await client.machines.sync()).skills[0]).toMatchObject({ repo: 'emil/renamed', sources: ['emil/renamed', 'emil/skills'] });
+    await client.skills.report({ scan: [{ name: 'animate', source: 'emil/skills', ref: null, hash: skill.pin.installedHash, managed: false }] });
+    expect((await browser().skills.overview()).skills[0]!.machines[0]).toMatchObject({ status: 'installed' });
+  });
+
   it('keeps the stored name when GitHub’s new one could be read as a flag', async () => {
     skillRepo();
     const { client } = await registerMachine();
