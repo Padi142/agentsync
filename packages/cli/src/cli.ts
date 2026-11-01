@@ -10,6 +10,7 @@ import { history } from './commands/history.js';
 import { hookOutput, sync } from './commands/sync.js';
 import { logout } from './commands/logout.js';
 import { rename } from './commands/rename.js';
+import { skills } from './commands/skills.js';
 import { status } from './commands/status.js';
 import { template } from './commands/template.js';
 import { vars } from './commands/vars.js';
@@ -29,6 +30,7 @@ Commands:
   template    Print the Template
   vars        Show or change this Machine's Variables
   conflict    List, get, or resolve open Conflicts
+  skills      Install this Machine's Skills (skills sync), or show them (skills status)
   rename      Change this Machine's nickname
   logout      Revoke this Machine and remove its hooks
 
@@ -42,11 +44,12 @@ Common flags:
   --server <url>  The AgentSync server (default: the one this Machine registered with)
 
 Run agentsync help <command> for its flags and examples.
-Exit codes: 0 ok, 1 error, 2 usage, 3 Drift, 4 Conflict, 5 auth, 130 cancelled.`;
+Exit codes: 0 ok, 1 error, 2 usage, 3 Drift (or a blocked Skill), 4 Conflict, 5 auth, 130 cancelled.`;
 
 const COMMAND_HELP: Record<string, string> = {
   init: `Usage: agentsync init [--server <url>] [--nickname <nickname>] [--agent <id>]... [--target <agent>=<path>]...
-                      [--var KEY=VALUE]... [--import <path>] [--no-hooks] [--no-skill] [--no-wait]
+                      [--var KEY=VALUE]... [--import <path>] [--no-hooks] [--no-skill] [--skills | --no-skills]
+                      [--no-wait]
 
 Register this Machine with the browser, then set up its Targets, Variables, hooks and skill,
 and sync. Safe to run again. Alias: login.
@@ -59,6 +62,8 @@ and sync. Safe to run again. Alias: login.
   --var KEY=VALUE            Set a Variable on this Machine
   --import <path>            On the account's first Machine, start the Template from this file
   --no-hooks, --no-skill     Do not install the SessionStart hooks or the agentsync skill
+  --skills, --no-skills      Install the account's Skills for this Machine now, or don't
+                             (default: asked; skipped without a terminal)
   --no-wait                  Print the approval link and exit; run init again once approved
 
 Examples:
@@ -130,6 +135,29 @@ Print a Conflict: the Template with git-style markers around the lines both edit
 Save a merged file as the resolution. It must have no markers left and must parse.
 
   --base <revision>   The Template revision it was merged against (default: the Conflict's)`,
+  skills: `Usage: agentsync skills sync [--overwrite]
+       agentsync skills status
+
+Skills are agent skills picked on the web dashboard, each pinned to a commit of a GitHub
+repository. skills sync is the only command that installs or removes them, with the official
+\`skills\` CLI. It only replaces or removes folders AgentSync installed: a folder of the same
+name that you wrote or installed yourself blocks the Skill, and a Skill edited by hand is left
+alone (exit 3) until --overwrite.
+
+  --overwrite   Replace or remove Skills edited by hand
+
+Examples:
+  agentsync skills sync
+  agentsync skills status --json`,
+  'skills sync': `Usage: agentsync skills sync [--overwrite]
+
+Install, update and remove this Machine's Skills to match their Pins, then tell the server.
+Exit 3 if a Skill is blocked by your own folder or was edited by hand, 1 if an install failed.
+
+  --overwrite   Replace or remove Skills edited by hand`,
+  'skills status': `Usage: agentsync skills status
+
+Show each of this Machine's Skills against its Pin, without changing anything.`,
   rename: `Usage: agentsync rename <nickname>
 
 Change this Machine's nickname: 1 to 100 characters; quote one with spaces. It keeps its
@@ -145,7 +173,7 @@ Examples:
   logout: `Usage: agentsync logout
 
 Revoke this Machine and remove its token, plus the hooks and skill files AgentSync installed
-that nobody changed. Targets stay.`,
+that nobody changed. Targets and installed Skills stay.`,
 };
 COMMAND_HELP.login = COMMAND_HELP.init!;
 
@@ -168,6 +196,7 @@ const COMMANDS: Record<string, Command> = {
   status,
   history,
   rename,
+  skills,
   logout,
 };
 
@@ -195,6 +224,7 @@ function parse(argv: string[]): { flags: Flags; positionals: string[]; help: boo
       hook: { type: 'string' },
       hooks: { type: 'boolean', default: true },
       skill: { type: 'boolean', default: true },
+      skills: { type: 'boolean' },
       wait: { type: 'boolean', default: true },
       file: { type: 'string' },
       base: { type: 'string' },

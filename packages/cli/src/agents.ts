@@ -18,6 +18,8 @@ export interface Agent {
    * `hooksFile`; `pi-extension` writes `hooksFile` whole, as a pi extension.
    */
   hookKind: 'json' | 'pi-extension';
+  /** The agent's name in the `skills` CLI (`-a`), which installs Skills for it. */
+  skillsAgent: 'claude-code' | 'codex' | 'pi';
   /** The agent reads its Global Instructions after the hook ran, so the starting session gets an update. */
   readsAfterHook: boolean;
   /**
@@ -42,6 +44,7 @@ export const AGENTS: readonly Agent[] = [
       return join(this.home(io), 'settings.json');
     },
     hookKind: 'json',
+    skillsAgent: 'claude-code',
     readsAfterHook: false,
     hookJson: true,
   },
@@ -58,6 +61,7 @@ export const AGENTS: readonly Agent[] = [
       return join(this.home(io), 'hooks.json');
     },
     hookKind: 'json',
+    skillsAgent: 'codex',
     readsAfterHook: false,
     hookJson: true,
   },
@@ -76,6 +80,7 @@ export const AGENTS: readonly Agent[] = [
       return join(this.home(io), 'extensions', 'agentsync.ts');
     },
     hookKind: 'pi-extension',
+    skillsAgent: 'pi',
     readsAfterHook: true,
     // The extension shows the line to the person itself.
     hookJson: false,

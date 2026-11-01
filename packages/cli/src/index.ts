@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { accessSync, constants, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir, hostname } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { run } from './cli.js';
 import type { Io } from './io.js';
 import { terminal } from './terminal.js';
@@ -36,6 +37,40 @@ function wait(command: string, args: string[], shell: boolean): Promise<void> {
   });
 }
 
+/** The `skills` CLI this package depends on, at its exact version. Never `npx skills`, which fetches the newest. */
+const skillsBin = () => join(dirname(createRequire(import.meta.url).resolve('skills/package.json')), 'bin', 'cli.mjs');
+/** A `skills add` clones a repository; give up on one that hangs. */
+const SKILLS_TIMEOUT_MS = 5 * 60_000;
+
+/**
+ * Run `skills` with this Node. Telemetry is off (which also stops its own audit fetch: the server
+ * fetches audits), git never prompts, and `core.autocrlf` is off for its clone so the checked-out bytes
+ * match GitHub's and a Pin doesn't read as Drift. The rest of the person's git config (proxies) stays.
+ */
+function runSkills(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  const count = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [skillsBin(), ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: SKILLS_TIMEOUT_MS,
+      env: {
+        ...process.env,
+        DISABLE_TELEMETRY: '1',
+        GIT_TERMINAL_PROMPT: '0',
+        GIT_CONFIG_COUNT: String(count + 1),
+        [`GIT_CONFIG_KEY_${count}`]: 'core.autocrlf',
+        [`GIT_CONFIG_VALUE_${count}`]: 'false',
+      },
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => (stdout += chunk));
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code: code ?? 1, stdout, stderr }));
+  });
+}
+
 const io: Io = {
   home: homedir(),
   env: process.env,
@@ -51,6 +86,7 @@ const io: Io = {
   edit: (file) => wait(`${process.env.VISUAL || process.env.EDITOR || 'vi'} ${quote(file)}`, [], true),
   launchAgent: (agent, prompt) => wait(agent, [prompt], false),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  runSkills,
   get self() {
     return selfCommand();
   },

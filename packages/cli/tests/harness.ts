@@ -1,10 +1,98 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Target } from '@agentsync/contract';
 import { run } from '../src/cli.js';
 import type { Io } from '../src/io.js';
+import { folderHash } from '../src/skills/hash.js';
 import { fakeServer } from './fake-server.js';
+
+type SkillFiles = Record<string, string>;
+
+/**
+ * A fake of the `skills` CLI with the behaviour the prototype measured for 1.7.4: `add` silently
+ * replaces whatever is there, puts the canonical copy in ~/.agents/skills with a Claude Code symlink
+ * (or a plain copy when Claude Code is the only agent), and records the lock; `remove` deletes every
+ * copy and lock entry, managed or not, and always exits 0.
+ */
+function fakeSkills(home: string) {
+  const published = new Map<string, Map<string, SkillFiles>>();
+  const calls: string[][] = [];
+  const lockFile = join(home, '.agents', '.skill-lock.json');
+  const lock = () => {
+    try {
+      return JSON.parse(readFileSync(lockFile, 'utf8')) as { version: 3; skills: Record<string, unknown> };
+    } catch {
+      return { version: 3 as const, skills: {} as Record<string, unknown> };
+    }
+  };
+  const saveLock = (value: ReturnType<typeof lock>) => {
+    mkdirSync(dirname(lockFile), { recursive: true });
+    writeFileSync(lockFile, JSON.stringify(value));
+  };
+  const writeFolder = (dir: string, files: SkillFiles) => {
+    rmSync(dir, { recursive: true, force: true });
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, path)), { recursive: true });
+      writeFileSync(join(dir, path), text);
+    }
+  };
+
+  async function run(args: string[]) {
+    calls.push(args);
+    const [command, ...rest] = args;
+    const agentsAt = rest.indexOf('-a');
+    const agents = agentsAt < 0 ? [] : rest.slice(agentsAt + 1).filter((arg) => !arg.startsWith('-'));
+    if (command === 'remove') {
+      const names = rest.slice(0, rest.findIndex((arg) => arg.startsWith('-')));
+      const current = lock();
+      for (const name of names) {
+        rmSync(join(home, '.agents', 'skills', name), { recursive: true, force: true });
+        rmSync(join(home, '.claude', 'skills', name), { recursive: true, force: true });
+        delete current.skills[name];
+      }
+      saveLock(current);
+      return { code: 0, stdout: '', stderr: '' };
+    }
+    const [source] = rest;
+    const [repo, commit] = source!.split('#');
+    const names = rest.slice(rest.indexOf('--skill') + 1, rest.indexOf('-g'));
+    const current = lock();
+    const results = names.map((name) => {
+      const files = published.get(`${repo}#${commit}`)?.get(name);
+      if (!files) return { name, status: 'skipped', reason: 'No matching skill found in source' };
+      const canonical = join(home, '.agents', 'skills', name);
+      const claude = join(home, '.claude', 'skills', name);
+      if (agents.some((agent) => agent !== 'claude-code')) {
+        writeFolder(canonical, files);
+        if (agents.includes('claude-code')) {
+          rmSync(claude, { recursive: true, force: true });
+          mkdirSync(dirname(claude), { recursive: true });
+          symlinkSync(join('..', '..', '.agents', 'skills', name), claude);
+        }
+      } else {
+        writeFolder(claude, files);
+      }
+      current.skills[name] = { source: repo, sourceType: 'github', ref: commit, skillFolderHash: 'x'.repeat(40) };
+      return { name, status: 'installed', source: repo, ref: commit };
+    });
+    saveLock(current);
+    return { code: results.every((result) => result.status === 'installed') ? 0 : 1, stdout: JSON.stringify(results), stderr: '' };
+  }
+
+  return {
+    calls,
+    run,
+    /** Make `name` installable from `repo` at `commit`, and return its installed hash (the Pin's). */
+    async publish(repo: string, commit: string, name: string, files: SkillFiles) {
+      const key = `${repo}#${commit}`;
+      published.set(key, (published.get(key) ?? new Map()).set(name, files));
+      const dir = mkdtempSync(join(tmpdir(), 'agentsync-pin-'));
+      writeFolder(dir, files);
+      return (await folderHash(dir))!;
+    },
+  };
+}
 
 /**
  * A temporary home directory and a fake server, with `cli()` to run commands against them.
@@ -13,6 +101,7 @@ import { fakeServer } from './fake-server.js';
 export function setup(options: { env?: Record<string, string> } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'agentsync-test-'));
   const server = fakeServer();
+  const skills = fakeSkills(home);
   /** Answers in order: a choice's value, several values separated by commas, or text. */
   const answers: string[] = [];
   const edits: ((file: string) => void)[] = [];
@@ -63,6 +152,7 @@ export function setup(options: { env?: Record<string, string> } = {}) {
       },
       launchAgent: async (agent, prompt) => void launched.push({ agent, prompt }),
       sleep: async (ms) => void sleeps.push(ms),
+      runSkills: (args) => skills.run(args),
       self: 'agentsync',
     };
     const code = await run(args, io);
@@ -89,6 +179,8 @@ export function setup(options: { env?: Record<string, string> } = {}) {
   return {
     home,
     server,
+    /** The fake `skills` CLI: what it was asked to do, and `publish` to make a Skill installable. */
+    skills,
     cli,
     path,
     registered,

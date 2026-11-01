@@ -1,6 +1,6 @@
 # The CLI
 
-The CLI isn't published to npm yet. Until it is, build it from the repository (Node.js 22.12+, pnpm and git) and link it onto your PATH:
+The CLI isn't published to npm yet. Until it is, build it from the repository (Node.js 22.20+, pnpm and git) and link it onto your PATH:
 
 ```sh
 git clone https://github.com/Padi142/agentsync.git ~/agentsync

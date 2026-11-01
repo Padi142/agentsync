@@ -34,7 +34,7 @@ needs no page here: WorkOS AuthKit hosts the `verification_uri`.
 
 ## Local setup
 
-Use Node.js 22.12+ and pnpm.
+Use Node.js 22.20+ and pnpm.
 
 ```sh
 pnpm install

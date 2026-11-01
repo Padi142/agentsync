@@ -10,7 +10,7 @@ AgentSync keeps your global agent instructions, such as `~/.claude/CLAUDE.md`, `
 
 ## Add your first Machine
 
-The CLI isn't published to npm yet, so for now you build it from the repository. You need Node.js 22.12 or later, [pnpm](https://pnpm.io/installation) and git. On the computer you want to add, run:
+The CLI isn't published to npm yet, so for now you build it from the repository. You need Node.js 22.20 or later, [pnpm](https://pnpm.io/installation) and git. On the computer you want to add, run:
 
 ```sh
 git clone https://github.com/Padi142/agentsync.git ~/agentsync

@@ -51,6 +51,11 @@ export interface Io {
   /** Start `agent` (e.g. `claude`) in the terminal with `prompt` and wait until it exits. */
   launchAgent(agent: string, prompt: string): Promise<void>;
   sleep(ms: number): Promise<void>;
+  /**
+   * Run the pinned `skills` CLI with `args` (an argument array, never a shell), with no terminal and
+   * telemetry off, and collect its output.
+   */
+  runSkills(args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
   /** The shell command that runs this CLI, written into agent hooks. */
   self: string;
 }

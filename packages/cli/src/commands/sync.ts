@@ -9,6 +9,7 @@ import { handOff } from '../handoff.js';
 import { appendHistory, changeDiff, type Revisions, type TargetChange } from '../history.js';
 import { expandHome } from '../paths.js';
 import { machineClient } from '../session.js';
+import { hookSkills } from './skills.js';
 import { backupPath, checkTarget, writeTarget } from '../targets.js';
 
 /** How long a hook waits for the server before keeping the existing files. */
@@ -249,6 +250,8 @@ export async function applySync(
  * waits at most ~2s for the server, keeps the existing files when offline, always exits 0, and
  * prints at most one line, which the agent adds to its context. For an agent that reads JSON from
  * its hooks, that line goes to the model, and the person is told what changed in the same JSON.
+ * It also scans Skills, reports the scan when it changed, and says what `skills sync` would do; it
+ * never installs one.
  */
 async function hookSync(ctx: Context): Promise<Outcome> {
   const agent = ctx.flags.hook!;
@@ -257,8 +260,13 @@ async function hookSync(ctx: Context): Promise<Outcome> {
   const both = (text: string) => parts.push({ model: text, person: text });
   /** Once Targets may have been written, a failure must not claim the old files were kept. */
   let writing = false;
+  /** The Skills scan and report run beside the Template sync, inside the same time budget. */
+  let skills: Promise<string | null> = Promise.resolve(null);
   try {
-    const payload = await machineClient(ctx, HOOK_TIMEOUT_MS).machines.sync();
+    const client = machineClient(ctx, HOOK_TIMEOUT_MS);
+    const request = client.machines.sync();
+    skills = hookSkills(ctx, client, request);
+    const payload = await request;
     writing = true;
     const { results, data, historyError } = await applySync(ctx, payload);
     const written = results.filter((result) => result.status === 'written');
@@ -297,6 +305,9 @@ async function hookSync(ctx: Context): Promise<Outcome> {
     if (writing) both(`sync failed; some Targets may have been updated: ${describeError(error)}`);
     else parts.push({ model: `kept the existing instructions: ${describeError(error)}`, person: null });
   }
+  // Never installs anything: it only says what `agentsync skills sync` would do.
+  const pending = await skills;
+  if (pending) both(pending);
   const line = (texts: (string | null)[]) => {
     const kept = texts.filter((text): text is string => Boolean(text));
     return kept.length ? `AgentSync: ${kept.map((text) => text.replace(/\.$/, '')).join('; ')}.` : '';
