@@ -194,18 +194,27 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
     }
 
     let reportError: string | undefined;
+    const scan = await scanSkills(io, managed);
     try {
-      await report(ctx, client, await scanSkills(io, managed), results);
+      await report(ctx, client, scan, results);
     } catch (error) {
       reportError = describeError(error);
     }
-    return { results, reportError };
+    return { results, reportError, scan };
   });
 }
 
 /** AgentSync's record of a Skill it wrote or adopted in `places`. */
 function recordFor(skill: DesiredSkill, places: readonly Place[]): ManagedSkill {
   return { repo: skill.repo, commit: skill.commit, installedHash: skill.installedHash, sources: skill.sources, places: [...places] };
+}
+
+/** Point at the Skills page when this Machine has skills AgentSync doesn't manage: they're added there. */
+function sayFound(ctx: Context, scan: Scan) {
+  const found = scan.items.filter((item) => !item.managed).length;
+  if (found && ctx.config.server) {
+    ctx.say(`Found ${plural(found, 'skill')} on this Machine that AgentSync doesn't manage. Add the ones you want everywhere at ${new URL('/skills', ctx.config.server)}`);
+  }
 }
 
 /** Say what happened to each Skill, and why anything was left alone. */
@@ -225,7 +234,7 @@ function narrate(ctx: Context, results: SkillSyncResult[]) {
 async function skillsSync(ctx: Context): Promise<Outcome> {
   const client = machineClient(ctx);
   const payload = await ctx.during('Fetching your Skills…', () => client.machines.sync());
-  const { results, reportError } = await syncSkills(ctx, client, payload, ctx.flags.overwrite);
+  const { results, reportError, scan } = await syncSkills(ctx, client, payload, ctx.flags.overwrite);
   narrate(ctx, results);
   if (reportError) ctx.warn(`Could not tell the server what changed: ${reportError}`);
   const has = (...statuses: SkillSyncResult['status'][]) => results.some((result) => statuses.includes(result.status));
@@ -235,6 +244,7 @@ async function skillsSync(ctx: Context): Promise<Outcome> {
     ctx.success(changed ? `Skills synced · ${plural(changed, 'change')}`
       : count ? `${count === 1 ? 'The Skill is' : `All ${count} Skills are`} up to date` : 'No Skills are set for this Machine');
   }
+  sayFound(ctx, scan);
   return {
     code: has('failed') ? EXIT.error : has('blocked', 'drifted') ? EXIT.drift : EXIT.ok,
     data: { skills: results, ...(reportError ? { reportError } : {}) },
@@ -371,7 +381,9 @@ export async function initSkills(ctx: Context, client: ContractClient, payload: 
   const inTheWay = steps.filter((step) => step.action === 'blocked' || step.action === 'drifted').length;
   const total = payload.skills.length;
   const skip = async () => {
-    await report(ctx, client, await scanSkills(io, readSkillsState(io).managed)).catch(() => undefined);
+    const scan = await scanSkills(io, readSkillsState(io).managed);
+    await report(ctx, client, scan).catch(() => undefined);
+    sayFound(ctx, scan);
     return { set: total, installed: present, results: [] as SkillSyncResult[] };
   };
   if (!total) return skip();
@@ -393,8 +405,9 @@ export async function initSkills(ctx: Context, client: ContractClient, payload: 
     ctx.say('Run `agentsync skills sync` to install them.');
     return skip();
   }
-  const { results, reportError } = await syncSkills(ctx, client, payload, false);
+  const { results, reportError, scan } = await syncSkills(ctx, client, payload, false);
   narrate(ctx, results);
   if (reportError) ctx.warn(`Could not tell the server what changed: ${reportError}`);
+  sayFound(ctx, scan);
   return { set: total, installed: present, results };
 }
