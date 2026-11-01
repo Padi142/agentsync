@@ -25,6 +25,8 @@ export interface Flags {
   hook?: string;
   hooks: boolean;
   skill: boolean;
+  /** `--skills` installs the account's Skills during `init`, `--no-skills` skips them; unset asks at a terminal. */
+  skills?: boolean;
   wait: boolean;
   file?: string;
   base?: string;

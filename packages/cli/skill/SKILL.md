@@ -1,6 +1,6 @@
 ---
 name: agentsync
-description: AgentSync CLI that syncs the user's Global Instructions (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.pi/agent/AGENTS.md) across Machines. Use when changing those global instruction files, when the user asks why their instructions or an agent's behavior changed, when an `AgentSync:` line reports an update, Drift or a Conflict, or when an `agentsync` command exits 3, 4 or 5.
+description: AgentSync CLI that syncs the user's Global Instructions (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.pi/agent/AGENTS.md) across Machines. Use when changing those global instruction files, when the user asks why their instructions or an agent's behavior changed, when an `AgentSync:` line reports an update, Drift, a Conflict or Skills to install, or when an `agentsync` command exits 3, 4 or 5.
 ---
 
 # AgentSync
@@ -14,7 +14,7 @@ Run every command with `--json --yes`. Stdout is one JSON document (`ok`, the da
 | 0 | ok | |
 | 1 | error | read `error.message` |
 | 2 | usage | fix the command (`agentsync --help`) |
-| 3 | Drift | [Fold Drift into the Template](#fold-drift-into-the-template) |
+| 3 | Drift (for `skills sync`: a Skill blocked or edited by hand) | [Fold Drift into the Template](#fold-drift-into-the-template), or [Skills](#skills) |
 | 4 | Conflict | [Resolve a Conflict](#resolve-a-conflict) |
 | 5 | auth | the Machine is not registered or was revoked: `agentsync init` |
 
@@ -60,8 +60,18 @@ The hook (a SessionStart hook, or for pi an extension) runs `agentsync sync --ho
 - **updated `<path>`**: if the line says this session loaded the previous version (Claude Code, Codex), read `<path>` when the current instructions matter for the task. Without that note (pi), the hook ran before the instructions were read, so this session already has them.
 - **Drift**: the Target was skipped. Offer to [fold it into the Template](#fold-drift-into-the-template).
 - **open Conflict**: offer to [resolve it](#resolve-a-conflict).
+- **N Skills to install, M updates; run `agentsync skills sync`**: Skills set on the dashboard are waiting. The hook never installs them. Tell the user, and run `agentsync skills sync --json` if they want them now (see [Skills](#skills)).
 - **kept the existing instructions**: the server was unreachable or the Machine is not registered. The files on disk are unchanged.
 - **sync failed; some Targets may have been updated**: it failed after it started writing. Run `agentsync status --json` to see where each Target stands.
+
+## Skills
+
+Skills are agent skills the user picks on the AgentSync dashboard from public GitHub repositories. Each is pinned to one commit, and goes to every Machine or to the ones chosen there. Adding, removing, assigning and updating Skills happens only on the dashboard; from here you can only install what is set for this Machine.
+
+- `agentsync skills status --json` lists each Skill with its `state`: `install` or `update` (waiting for `skills sync`), `unchanged`/`adopt` (installed), `remove`, `drifted` (edited by hand), `blocked` (a skill folder of the same name that AgentSync didn't install is in the way). `agentsync sync --json` has the counts in `skills`.
+- `agentsync skills sync --json` installs, updates and removes them with the official `skills` CLI and reports each in `skills` (`installed`, `updated`, `adopted`, `removed`, `unchanged`, `failed` with `error`, `blocked`, `drifted`). It takes a few seconds per repository.
+- Exit 3: something was left alone. A `blocked` Skill has a folder of its name that AgentSync didn't install (`~/.agents/skills/<name>` or `~/.claude/skills/<name>`), or one the `skills` lock says came from another repository; the user moves or renames it, and you never delete it without asking. `--overwrite` doesn't touch it. A `drifted` Skill was edited by hand: ask before running `agentsync skills sync --json --overwrite`, which replaces it (or removes it, if this Machine shouldn't have it).
+- Exit 1: an install failed; `error` says why.
 
 ## Find out what changed
 

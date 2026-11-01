@@ -13,7 +13,7 @@
     "setup-prompt.md"
   ],
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.20"
   },
   "publishConfig": {
     "access": "public"
@@ -39,6 +39,7 @@
     "@orpc/client": "^1.15.0",
     "diff": "^9.0.0",
     "ora": "^9.4.1",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "skills": "1.7.4"
   }
 }

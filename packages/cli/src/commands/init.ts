@@ -14,6 +14,7 @@ import { machineClient } from '../session.js';
 import { installSkill } from '../skill.js';
 import { checkedNickname, nicknameCheck } from '../nickname.js';
 import { changeVariables, parseAssignments } from '../variables.js';
+import { initSkills } from './skills.js';
 import { applySync } from './sync.js';
 
 export function machineOs(platform: NodeJS.Platform): MachineOs {
@@ -206,7 +207,10 @@ async function askForVariables(ctx: Context, client: ContractClient, machineId: 
   if (Object.keys(answers).length) await changeVariables(client, machineId, answers);
 }
 
-/** Register this Machine (if needed), then set up its Variables, Template, hooks and skill, and sync. */
+/**
+ * Register this Machine (if needed), then set up its Variables, Template, hooks and skill, sync, and
+ * offer to install the account's Skills.
+ */
 export async function init(ctx: Context): Promise<Outcome> {
   const server = chooseServer(ctx);
   if (ctx.config.token && ctx.config.server !== server) {
@@ -276,6 +280,13 @@ export async function init(ctx: Context): Promise<Outcome> {
     ctx.warn(`Left ${file} alone: AgentSync did not write it, or it was changed since. Remove it to get the agentsync skill.`);
   }
 
-  const { code, data } = await applySync(ctx, await client.machines.sync(), 'init');
-  return { code: code ?? EXIT.ok, data: { machineId, nickname: machine.nickname, hostname: machine.hostname, imported, hooks, hooksLeftAlone, skills, skillsLeftAlone, ...data } };
+  const payload = await client.machines.sync();
+  const { code, data } = await applySync(ctx, payload, 'init');
+  // Skills come last: a Template problem must not stop the scan, and installs take seconds.
+  const accountSkills = await initSkills(ctx, client, payload);
+  const failed = accountSkills.results.some((result) => result.status === 'failed');
+  return {
+    code: code !== undefined && code !== EXIT.ok ? code : failed ? EXIT.error : EXIT.ok,
+    data: { machineId, nickname: machine.nickname, hostname: machine.hostname, imported, hooks, hooksLeftAlone, skills, skillsLeftAlone, accountSkills, ...data },
+  };
 }
