@@ -8,7 +8,7 @@ import { findAgent } from '../agents.js';
 import type { Context, Outcome } from '../context.js';
 import { describeError, EXIT, usage } from '../exit.js';
 import { machineClient } from '../session.js';
-import { pendingCounts, planSkills, requiredPlaces, type SkillStep } from '../skills/plan.js';
+import { foreign, pendingCounts, planSkills, requiredPlaces, type SkillStep } from '../skills/plan.js';
 import { addSkills, removeSkills } from '../skills/runner.js';
 import { forgetLockEntry, scanSkills, skillDir, type Scan } from '../skills/scan.js';
 import { readSkillsState, recordOf, updateSkillsState, withSkillsLock, type ManagedSkill, type Place } from '../skills/state.js';
@@ -122,8 +122,8 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
             let left = leftover?.present ?? [];
             // `skills` keeps the shared `~/.agents/skills` copy while another agent it knows (Cursor, say)
             // reads that directory. If it's still AgentSync's unedited copy, finish the removal here.
-            const ours = left.every((place) => record.places.includes(place)) && !leftover?.lockOther &&
-              (overwrite || record.incomplete || leftover?.hash === record.installedHash);
+            const ours = leftover !== undefined && !foreign(leftover, record) &&
+              (overwrite || leftover.hash === record.installedHash);
             if (left.length && ours) {
               for (const place of left) await rm(join(skillDir(io, place), name), { recursive: true, force: true });
               await forgetLockEntry(io, name);

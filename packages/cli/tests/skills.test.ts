@@ -287,6 +287,18 @@ describe('skills sync only touches what AgentSync owns', () => {
     expect(result.code).toBe(1);
     expect(result.json().skills.find((s: { name: string }) => s.name === 'animate')).toMatchObject({ status: 'failed', error: 'EACCES: Claude Code link' });
   });
+
+  it('keeps an edit made after a half-finished install, unless --overwrite', async () => {
+    const t = await machineWithSkills();
+    t.skills.failHalfway.add('animate');
+    await t.cli('skills', 'sync');
+    t.write('.agents/skills/animate/SKILL.md', 'mine');
+
+    const result = await t.cli('skills', 'sync', '--json');
+
+    expect(statuses(result).animate).toBe('drifted');
+    expect(readFileSync(t.path('.agents/skills/animate/SKILL.md'), 'utf8')).toBe('mine');
+  });
 });
 
 describe('plain sync and Skills', () => {

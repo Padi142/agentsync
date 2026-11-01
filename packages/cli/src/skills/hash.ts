@@ -21,8 +21,8 @@ export class HashTimeout extends Error {}
 
 async function treeHash(dir: string, deadline?: number): Promise<Buffer | null> {
   const entries: Entry[] = [];
-  if (deadline !== undefined && Date.now() > deadline) throw new HashTimeout();
   for (const name of await readdir(dir)) {
+    if (deadline !== undefined && Date.now() > deadline) throw new HashTimeout();
     // `skills` leaves these out whatever they are, so they never count as a change.
     if (excludedNames.has(name)) continue;
     const path = join(dir, name);

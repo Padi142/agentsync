@@ -33,6 +33,12 @@ export function requiredPlaces(agents: readonly string[]): Place[] {
   return [...(agents.some((agent) => agent !== 'claude-code') ? ['agents' as const] : []), ...(agents.includes('claude-code') ? ['claude' as const] : [])];
 }
 
+/** Someone else's: a folder in a directory AgentSync never wrote to, or a lock entry from another source. */
+export const foreign = (folder: Folder, record: ManagedSkill) =>
+  folder.present.some((place) => !record.places.includes(place)) ||
+  folder.lockOther ||
+  (folder.lockSource !== null && !record.sources.includes(folder.lockSource));
+
 /**
  * Decide what `skills sync` does, from the Skills this Machine should have, what is on disk, AgentSync's
  * record, and the directories its agents need. Only folders AgentSync recorded as its own are ever
@@ -49,11 +55,6 @@ export function planSkills(
 ): SkillStep[] {
   const steps: SkillStep[] = [];
   const wanted = new Set([...desired.map((skill) => skill.name), ...keep]);
-  /** Someone else's: a folder in a directory AgentSync never wrote to, or a lock entry from another source. */
-  const foreign = (folder: Folder, record: ManagedSkill) =>
-    folder.present.some((place) => !record.places.includes(place)) ||
-    folder.lockOther ||
-    (folder.lockSource !== null && !record.sources.includes(folder.lockSource));
 
   for (const skill of desired) {
     const folder = folders.get(skill.name) ?? absent;
@@ -67,8 +68,6 @@ export function planSkills(
       step(adoptable && complete ? 'adopt' : 'blocked');
     } else if (foreign(folder, record)) step('blocked');
     else if (folder.hash === skill.installedHash) step(complete && !record.incomplete ? 'unchanged' : 'update');
-    // AgentSync's own install stopped partway: finish it.
-    else if (record.incomplete) step('update');
     else if (folder.hash !== null && folder.hash === record.installedHash) step('update');
     else step(overwrite ? 'replace' : 'drifted');
   }
@@ -77,7 +76,7 @@ export function planSkills(
     const folder = folders.get(name) ?? absent;
     if (!folder.present.length) steps.push({ name, action: 'forget', record });
     else if (foreign(folder, record)) steps.push({ name, action: 'blocked', record });
-    else if (overwrite || record.incomplete || (folder.hash !== null && folder.hash === record.installedHash)) steps.push({ name, action: 'remove', record });
+    else if (overwrite || (folder.hash !== null && folder.hash === record.installedHash)) steps.push({ name, action: 'remove', record });
     else steps.push({ name, action: 'drifted', record });
   }
   return steps;

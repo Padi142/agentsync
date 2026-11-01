@@ -98,13 +98,30 @@ export async function withSkillsLock<T>(io: Io, work: () => Promise<T>): Promise
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     if (lockHeld(file)) throw new CliError('Another `agentsync skills sync` is running on this Machine. Try again when it has finished.', EXIT.error);
-    removeFile(file);
+    // Take the dead lock over under a second lock, so two runs can't both replace it.
+    const takeover = `${file}.takeover`;
+    let guard: number;
     try {
-      fd = take();
+      guard = openSync(takeover, 'wx', 0o600);
     } catch (raced) {
-      // Another run took the dead lock first.
       if ((raced as NodeJS.ErrnoException).code !== 'EEXIST') throw raced;
+      if (!lockHeld(takeover)) removeFile(takeover); // Left by a run that died mid-takeover; the next try proceeds.
       throw new CliError('Another `agentsync skills sync` is running on this Machine. Try again when it has finished.', EXIT.error);
+    }
+    try {
+      writeSync(guard, String(process.pid));
+      if (lockHeld(file)) throw new CliError('Another `agentsync skills sync` is running on this Machine. Try again when it has finished.', EXIT.error);
+      removeFile(file);
+      try {
+        fd = take();
+      } catch (raced) {
+        // A new run started between the two.
+        if ((raced as NodeJS.ErrnoException).code !== 'EEXIST') throw raced;
+        throw new CliError('Another `agentsync skills sync` is running on this Machine. Try again when it has finished.', EXIT.error);
+      }
+    } finally {
+      closeSync(guard);
+      removeFile(takeover);
     }
   }
   try {
