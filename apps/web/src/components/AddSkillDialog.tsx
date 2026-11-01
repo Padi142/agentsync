@@ -28,6 +28,8 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
   const [searchError, setSearchError] = useState('');
   const [picked, setPicked] = useState<SkillSearchResult | null>(null);
   const [candidate, setCandidate] = useState<SkillCandidate | { error: string } | null>(null);
+  /** The last Add from this preview failed: show why here, not only under the page title behind the dialog. */
+  const [addFailed, setAddFailed] = useState(false);
 
   useEffect(() => {
     const element = dialog.current;
@@ -60,6 +62,7 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
     if (!picked) return;
     let live = true;
     setCandidate(null);
+    setAddFailed(false);
     void safe(rpc.skills.inspect({ repo: picked.source, name: picked.name })).then(([error, found]) => {
       if (live) setCandidate(error ? { error: skillErrorText(error) } : found);
     });
@@ -67,9 +70,11 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
   }, [picked]);
 
   const add = async (found: SkillCandidate) => {
+    setAddFailed(false);
     const ok = await actions.run(`add:${found.name}`, () => rpc.skills.add({ repo: found.repo.fullName, name: found.name }),
       (skill) => `${skill.name} added at ${shortCommit(skill.pin.commit)}. Machines install it on their next skills sync.`);
     if (ok) onClose();
+    else setAddFailed(true);
   };
 
   return (
@@ -97,7 +102,7 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
                     </button>
                     <a className="sk-note" href={`https://skills.sh/${candidate.repo.fullName}`} target="_blank" rel="noopener noreferrer">Audit details</a>
                   </div>
-                  {actions.status?.tone === 'error' ? <p className="status-line" data-tone="error" role="status">{actions.status.text}</p> : null}
+                  {addFailed && actions.status?.tone === 'error' ? <p className="status-line" data-tone="error" role="status">{actions.status.text}</p> : null}
                 </>
               )}
           </div>

@@ -42,4 +42,4 @@ Each Machine reports the skills it has, with names, sources and folder hashes, n
 
 When a Machine has a newer version of a Skill than its pin, from the same repository's default branch, **Use everywhere** moves the pin to it.
 
-Removing a Skill, logging a Machine out or deleting it leaves installed skills where they are.
+Removing a Skill takes it off every Machine at its next `agentsync skills sync`, except copies edited by hand. Logging a Machine out, or deleting it here, leaves its installed skills where they are.

@@ -47,11 +47,9 @@ export function SkillDetail({ skill, overview, actions }: { skill: Skill; overvi
   }, [skill.id, updateCommit]);
 
   const nickname = (id: string) => overview.machines.find((machine) => machine.id === id)?.nickname ?? 'a Machine';
+  // Chosen stays chosen even with every Machine ticked: only "All Machines" also covers Machines registered later.
   const assign = (machineIds: string[], message: string) =>
-    run(`assign:${skill.id}`, () => rpc.skills.assign({
-      skillId: skill.id,
-      assignment: machineIds.length === overview.machines.length ? { to: 'all' } : { to: 'chosen', machineIds },
-    }), () => message);
+    run(`assign:${skill.id}`, () => rpc.skills.assign({ skillId: skill.id, assignment: { to: 'chosen', machineIds } }), () => message);
   const chosenIds = overview.machines.filter((machine) => isAssigned(skill, machine.id)).map((machine) => machine.id);
   const notOn = (machineId: string) => assign(chosenIds.filter((id) => id !== machineId), `${skill.name} comes off ${nickname(machineId)} on its next skills sync`);
   const risky = skill.update ? riskyVerdicts(skill.update.audits) : [];

@@ -166,10 +166,17 @@ function EntryRow({ entry, overview, actions, leaves, open, onToggle }: {
   onToggle: () => void;
 }) {
   const row = useRef<HTMLLIElement>(null);
-  const { run, busy } = actions;
+  const { busy } = actions;
+  const run = actions.run;
   const [first, ...more] = entry.asks;
   const skill = entry.type === 'skill' ? entry.skill : null;
   const fade = () => (leaves ? leave(row.current) : Promise.resolve());
+  /** Run a row action; a row that faded but is still listed after the reload (it has another ask) comes back. */
+  const act: typeof run = async (...args) => {
+    const ok = await run(...args);
+    if (row.current) delete row.current.dataset.leaving;
+    return ok;
+  };
   const nickname = (id: string) => overview.machines.find((machine) => machine.id === id)?.nickname ?? 'a Machine';
 
   let action = null;
@@ -177,14 +184,14 @@ function EntryRow({ entry, overview, actions, leaves, open, onToggle }: {
     const commit = skill.update.pin.commit;
     action = (
       <button type="button" className={`button small${first.risky.length ? ' secondary' : ''}`} disabled={!!busy}
-        onClick={() => run(`update:${skill.id}`, () => rpc.skills.update({ skillId: skill.id, commit }), () => `${skill.name} pinned to ${shortCommit(commit)}`, fade)}>
+        onClick={() => act(`update:${skill.id}`, () => rpc.skills.update({ skillId: skill.id, commit }), () => `${skill.name} pinned to ${shortCommit(commit)}`, fade)}>
         {first.risky.length ? 'Update anyway' : 'Update'}
       </button>
     );
   } else if (first?.kind === 'newer' && skill) {
     action = (
       <button type="button" className="button small secondary" disabled={!!busy}
-        onClick={() => run(`update:${skill.id}`, () => rpc.skills.update({ skillId: skill.id, commit: first.commit }),
+        onClick={() => act(`update:${skill.id}`, () => rpc.skills.update({ skillId: skill.id, commit: first.commit }),
           () => `${skill.name} pinned to ${shortCommit(first.commit)} on every Machine`, fade)}>
         Use everywhere
       </button>
@@ -193,7 +200,7 @@ function EntryRow({ entry, overview, actions, leaves, open, onToggle }: {
     const rest = overview.machines.map((machine) => machine.id).filter((id) => id !== first.machineId && isAssigned(skill, id));
     action = (
       <button type="button" className="button small secondary" disabled={!!busy}
-        onClick={() => run(`assign:${skill.id}`, () => rpc.skills.assign({ skillId: skill.id, assignment: { to: 'chosen', machineIds: rest } }),
+        onClick={() => act(`assign:${skill.id}`, () => rpc.skills.assign({ skillId: skill.id, assignment: { to: 'chosen', machineIds: rest } }),
           () => `${skill.name} comes off ${nickname(first.machineId)} on its next skills sync`, fade)}>
         Not on {nickname(first.machineId)}
       </button>
@@ -202,7 +209,7 @@ function EntryRow({ entry, overview, actions, leaves, open, onToggle }: {
     const { found } = entry;
     action = (
       <button type="button" className="button small secondary" disabled={!!busy}
-        onClick={() => run(`add:${found.name}`, () => rpc.skills.add({ repo: found.source, name: found.name, machineId: first.machineId }),
+        onClick={() => act(`add:${found.name}`, () => rpc.skills.add({ repo: found.source, name: found.name, machineId: first.machineId }),
           (added) => `${added.name} added at ${shortCommit(added.pin.commit)}, the version ${nickname(first.machineId)} has`, fade)}>
         {busy === `add:${found.name}` ? 'Adding…' : 'Add'}
       </button>
