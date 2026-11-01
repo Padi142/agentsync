@@ -57,3 +57,21 @@ _Avoid_: Merge conflict, collision
 **Drift**:
 A hand edit to a Target that differs from what AgentSync last wrote there. Rendered output is never edited in place; changes belong in the Template.
 _Avoid_: Local change, divergence
+
+### Skills
+
+**Skill**:
+An agent skill (a folder with a `SKILL.md`) that a user added to their AgentSync account from a public GitHub repository, with a Pin and the Machines it is assigned to: all Machines (including ones registered later) or a chosen set. Its name is unique in the account. Installed on a Machine only by `agentsync skills sync`, through the official `skills` CLI. Separate from the Template: a Template change never affects Skills.
+_Avoid_: Plugin, package, extension
+
+**Pin**:
+The exact commit a Skill installs, with the git tree hash of its folder at that commit and the hash of the folder as the `skills` CLI installs it (which leaves out a few files, such as `metadata.json`). A Pin moves only when the user updates the Skill, or when an automatic update does; every move is kept in the Skill's history.
+_Avoid_: Version, lock, ref
+
+**Found Skill**:
+A skill a scan saw on a Machine that is not a Skill in the account, e.g. one installed by hand with `npx skills add` or written locally. The dashboard offers to add one from public GitHub, pinned at the commit the Machine already has; a hand-written one is reported by name only.
+_Avoid_: Unmanaged skill, local skill, orphan
+
+**Skill Drift**:
+A managed Skill's folder on a Machine that no longer matches its Pin. If it matches a newer commit of the same repository, the dashboard offers that commit as the new Pin; otherwise it is a hand edit, and `skills sync` replaces it only with `--overwrite`.
+_Avoid_: Outdated skill, modified skill

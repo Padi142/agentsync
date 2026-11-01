@@ -6,7 +6,8 @@ AgentSync is an open source starting point for keeping `AGENTS.md`,
 The web app uses TanStack Start, WorkOS AuthKit, Cloudflare Workers + D1,
 Drizzle, and a typed oRPC API that implements `@agentsync/contract`: the
 Template, Machines and their Variables (with revision history), Conflicts, and
-Machine registration through the WorkOS device flow. The `agentsync` CLI
+Machine registration through the WorkOS device flow, and Skills (agent skills from public GitHub
+repositories, pinned to a commit; see `docs/adr/0002-…`). The `agentsync` CLI
 (`packages/cli`) Renders the Template into each agent's Global Instructions and keeps
 them current from Claude Code and Codex `SessionStart` hooks and a pi extension.
 
@@ -52,6 +53,10 @@ The Cloudflare Worker reads `apps/web/.dev.vars`, not the installer's root
 - `WORKOS_CLIENT_ID` — client ID from that same environment.
 - `WORKOS_COOKIE_PASSWORD` — a random secret of at least 32 characters.
 - `WORKOS_REDIRECT_URI` — the exact application URL ending in `/callback`.
+
+Skills read public GitHub repositories. Set `GITHUB_TOKEN` to a fine-grained GitHub token
+with no permissions (public read only): without one, GitHub allows 60 requests an hour per IP,
+which is not enough to add Skills. It is optional for tests, which fake GitHub.
 
 For this development server, register `http://100.82.53.91:3000/callback`
 as a redirect URI in WorkOS and use the same value in `.dev.vars`.
@@ -125,8 +130,8 @@ pnpm build
 Tests use an isolated local D1 database and mock WorkOS token exchanges and
 device endpoints. They cover callback state/PKCE, refresh and logout, CSRF
 protection, legacy user linking, Template revisions, conflicts and rollback, the
-Conflict lifecycle, device registration, the Machine-token boundary, and
-revocation. To verify the real provider flow, open `/login` while signed out,
+Conflict lifecycle, device registration, the Machine-token boundary,
+revocation, and Skills (against a fake GitHub served from real git repositories). To verify the real provider flow, open `/login` while signed out,
 complete AuthKit sign-in, save the Template, and sign out. This needs valid WorkOS credentials and dashboard URLs.
 
 ## Deployment
@@ -148,16 +153,21 @@ pnpm db:migrate:remote
 pnpm run deploy
 ```
 
+A cron trigger runs the Skills update check every 10 minutes (`triggers` in `wrangler.jsonc`;
+each run checks the few Skills not checked for a day). Under `pnpm dev`, run it with
+`curl "http://<host>:<port>/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*"`.
+
 Remote migrations target the deployed database; local development continues to
 use its own D1 database. `pnpm run deploy` builds the shared packages and web app,
 then uploads the generated Worker and static assets.
 
-`WORKOS_API_KEY` and a separate deployment `WORKOS_COOKIE_PASSWORD` are stored as
-Worker secrets. Later deployments preserve them. To set or rotate either secret:
+`WORKOS_API_KEY`, a separate deployment `WORKOS_COOKIE_PASSWORD` and `GITHUB_TOKEN` are
+stored as Worker secrets. Later deployments preserve them. To set or rotate one:
 
 ```sh
 pnpm --filter @agentsync/web exec wrangler secret put WORKOS_API_KEY
 pnpm --filter @agentsync/web exec wrangler secret put WORKOS_COOKIE_PASSWORD
+pnpm --filter @agentsync/web exec wrangler secret put GITHUB_TOKEN
 ```
 
 The HTTPS callback is registered in WorkOS. Set the application's **Initiate

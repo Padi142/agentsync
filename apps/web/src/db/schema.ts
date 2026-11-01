@@ -1,5 +1,21 @@
-import type { Target, VariableMap } from '@agentsync/contract';
-import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import type { AuditRisk, ScannedSkill, SkillSyncResult, Target, VariableMap } from '@agentsync/contract';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+
+/** A version of a skill folder: a commit that changed it, with its hashes (see `pinSchema`). */
+export interface FolderVersion {
+  commit: string;
+  treeSha: string;
+  installedHash: string;
+  /** Milliseconds since the epoch. */
+  committedAt: number;
+}
+
+/** skills.sh verdicts as JSON keeps them: dates as ISO strings. See `auditsOf` and `storedAudits`. */
+export interface StoredAudits {
+  gen: { risk: AuditRisk; analyzedAt: string } | null;
+  socket: { risk: AuditRisk; analyzedAt: string } | null;
+  snyk: { risk: AuditRisk; analyzedAt: string } | null;
+}
 
 const timestamp = (name: string) =>
   integer(name, { mode: 'timestamp_ms' }).notNull();
@@ -162,8 +178,123 @@ export const deviceAuthorization = sqliteTable('device_authorization', {
   expiresAt: timestamp('expires_at'),
 });
 
+/**
+ * A Skill in a user's account: a folder of a public GitHub repository, pinned to one commit.
+ * `repo_id` is GitHub's, so a renamed repository is still the same source.
+ */
+export const skill = sqliteTable(
+  'skill',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    repoId: integer('repo_id').notNull(),
+    repoFullName: text('repo_full_name').notNull(),
+    /** Old `owner/repo` names (lowercase) that GitHub redirects here, as a Machine's `skills` lock may still record them. */
+    repoAliases: text('repo_aliases', { mode: 'json' }).$type<string[]>().notNull(),
+    path: text('path').notNull(),
+    pinCommit: text('pin_commit').notNull(),
+    pinTreeSha: text('pin_tree_sha').notNull(),
+    pinInstalledHash: text('pin_installed_hash').notNull(),
+    pinCommittedAt: timestamp('pin_committed_at'),
+    /** `all` Machines, or the ones in `skill_machine`. */
+    assignment: text('assignment', { enum: ['all', 'chosen'] }).notNull(),
+    /** `false`: on the ignore list for automatic updates. */
+    autoUpdate: integer('auto_update', { mode: 'boolean' }).notNull(),
+    /**
+     * The versions of the folder on the default branch that are newer than the Pin, newest first, as
+     * the last update check found them. The first is the update candidate.
+     */
+    newer: text('newer', { mode: 'json' }).$type<FolderVersion[]>().notNull(),
+    /** The repository's `pushed_at` when the update check first saw `newer[0]` as the newest version. */
+    updatePushedAt: integer('update_pushed_at', { mode: 'timestamp_ms' }),
+    /** The skills.sh verdicts, refreshed by each update check. */
+    audits: text('audits', { mode: 'json' }).$type<StoredAudits>(),
+    checkedAt: integer('checked_at', { mode: 'timestamp_ms' }),
+    createdAt: timestamp('created_at'),
+  },
+  (table) => [
+    uniqueIndex('skill_user_name_idx').on(table.userId, table.name),
+    index('skill_checked_idx').on(table.checkedAt),
+  ],
+);
+
+/** The Machines a Skill with `assignment = 'chosen'` goes to. */
+export const skillMachine = sqliteTable(
+  'skill_machine',
+  {
+    skillId: text('skill_id')
+      .notNull()
+      .references(() => skill.id, { onDelete: 'cascade' }),
+    machineId: text('machine_id')
+      .notNull()
+      .references(() => machine.id, { onDelete: 'cascade' }),
+  },
+  (table) => [primaryKey({ columns: [table.skillId, table.machineId] }), index('skill_machine_machine_idx').on(table.machineId)],
+);
+
+/** Every move of a Skill's Pin, including the first. */
+export const skillPinMove = sqliteTable(
+  'skill_pin_move',
+  {
+    id: text('id').primaryKey(),
+    skillId: text('skill_id')
+      .notNull()
+      .references(() => skill.id, { onDelete: 'cascade' }),
+    fromCommit: text('from_commit'),
+    toCommit: text('to_commit').notNull(),
+    /** The installed hash of `to_commit`, so a Machine still on an old Pin reads as pending, not drifted. */
+    toInstalledHash: text('to_installed_hash').notNull(),
+    kind: text('kind', { enum: ['added', 'manual', 'automatic'] }).notNull(),
+    audits: text('audits', { mode: 'json' }).$type<StoredAudits>().notNull(),
+    at: timestamp('at'),
+  },
+  (table) => [index('skill_pin_move_skill_idx').on(table.skillId, table.at)],
+);
+
+export const skillSettings = sqliteTable('skill_settings', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+  autoUpdate: integer('auto_update', { mode: 'boolean' }).notNull(),
+});
+
+/** Each Machine's last scan and the results of its last `skills sync`. Dropped with the Machine. */
+export const machineSkillReport = sqliteTable('machine_skill_report', {
+  machineId: text('machine_id')
+    .primaryKey()
+    .references(() => machine.id, { onDelete: 'cascade' }),
+  scan: text('scan', { mode: 'json' }).$type<ScannedSkill[]>().notNull(),
+  /** When the Machine last reported: its last Skills check-in. */
+  reportedAt: timestamp('reported_at'),
+  results: text('results', { mode: 'json' }).$type<SkillSyncResult[]>(),
+  syncedAt: integer('synced_at', { mode: 'timestamp_ms' }),
+});
+
+/**
+ * A skill folder's hashes at a commit, from GitHub. Commits are immutable, so rows never change.
+ * `installed_hash` is `null` when `skills` could not install the folder faithfully (symlinks, submodules),
+ * and `skill_name` says which skill, if any, the folder held then.
+ */
+export const skillFolderVersion = sqliteTable(
+  'skill_folder_version',
+  {
+    repoId: integer('repo_id').notNull(),
+    commit: text('commit').notNull(),
+    path: text('path').notNull(),
+    treeSha: text('tree_sha').notNull(),
+    installedHash: text('installed_hash'),
+    /** The frontmatter `name` of the folder's SKILL.md at that commit; `null` without a readable one. */
+    skillName: text('skill_name'),
+  },
+  (table) => [primaryKey({ columns: [table.repoId, table.commit, table.path] }), index('skill_folder_version_hash_idx').on(table.repoId, table.path, table.installedHash)],
+);
+
 export const schema = {
   user, session, account, verification,
   template, templateRevision, machine, machineCredential,
   machineVariables, machineVariablesRevision, conflict, deviceAuthorization,
+  skill, skillMachine, skillPinMove, skillSettings, machineSkillReport, skillFolderVersion,
 };

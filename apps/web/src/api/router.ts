@@ -13,6 +13,9 @@ import { getTemplate, putTemplate, templateHistory, templateRevisionText } from 
 import { getVariables, putVariables, variablesHistory } from '../db/variables';
 import { pollDeviceFlow, startDeviceFlow } from '../device';
 import type { Env } from '../env';
+import { NotFoundError, UpstreamError } from '../skills/github';
+import { UnsupportedSkillFolder } from '../skills/hash';
+import { NameTakenError, NoMatchingCommitError, skillsService } from '../skills/service';
 
 export interface RPCContext {
   env: Env;
@@ -73,6 +76,29 @@ function templateIssues(text: string, { resolving = false } = {}): TemplateIssue
   return issues;
 }
 
+/** The errors every Skill procedure can throw, by name (see `skillErrors` in the contract). */
+interface SkillErrors {
+  NOT_FOUND: () => Error;
+  UNSUPPORTED_SKILL: (options: { data: { reason: string } }) => Error;
+  SKILL_NAME_TAKEN: () => Error;
+  NO_MATCHING_COMMIT: () => Error;
+  UPSTREAM_UNAVAILABLE: () => Error;
+}
+
+/** Run a Skills service call, turning its failures into the contract's errors. */
+async function skillCall<T>(errors: SkillErrors, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof NotFoundError) throw errors.NOT_FOUND();
+    if (error instanceof UnsupportedSkillFolder) throw errors.UNSUPPORTED_SKILL({ data: { reason: error.message } });
+    if (error instanceof NameTakenError) throw errors.SKILL_NAME_TAKEN();
+    if (error instanceof NoMatchingCommitError) throw errors.NO_MATCHING_COMMIT();
+    if (error instanceof UpstreamError) throw errors.UPSTREAM_UNAVAILABLE();
+    throw error;
+  }
+}
+
 export const router = os.router({
   health: os.health.handler(() => ({ ok: true as const })),
   session: os.session.handler(async ({ context }) => (await context.session()).user),
@@ -127,16 +153,18 @@ export const router = os.router({
     devicePoll: os.machines.devicePoll.handler(({ context, input }) => pollDeviceFlow(context.env, input)),
     sync: os.machines.sync.use(auth).handler(async ({ context }) => {
       const machine = context.machine!; // `sync` accepts only Machine tokens.
-      const [template, variables, openConflicts] = await Promise.all([
+      const [template, variables, openConflicts, skills] = await Promise.all([
         getTemplate(context.env, context.userId),
         getVariables(context.env, machine.id),
         countOpenConflicts(context.env, context.userId),
+        skillsService(context.env).desired(context.userId, machine.id),
       ]);
       return {
         machine,
         template,
         variables,
         openConflicts: { count: openConflicts, url: conflictsUrl(context.env) },
+        skills,
       };
     }),
   },
@@ -184,6 +212,33 @@ export const router = os.router({
       const discarded = await discardConflict(context.env, context.userId, input.conflictId);
       if (!discarded) throw errors.NOT_FOUND();
       return discarded;
+    }),
+  },
+  skills: {
+    overview: os.skills.overview.use(auth).handler(({ context }) => skillsService(context.env).overview(context.userId)),
+    search: os.skills.search.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).search(input.query))),
+    inspect: os.skills.inspect.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).inspect(input.repo, input.name))),
+    add: os.skills.add.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).add(context.userId, input))),
+    assign: os.skills.assign.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).assign(context.userId, input.skillId, input.assignment))),
+    update: os.skills.update.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).update(context.userId, input.skillId, input.commit))),
+    updateAll: os.skills.updateAll.use(auth).handler(({ context }) => skillsService(context.env).updateAll(context.userId)),
+    remove: os.skills.remove.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).remove(context.userId, input.skillId))),
+    setAutoUpdate: os.skills.setAutoUpdate.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).setAutoUpdate(context.userId, input.skillId, input.autoUpdate))),
+    settings: os.skills.settings.use(auth).handler(({ context, input }) => skillsService(context.env).settings(context.userId, input)),
+    history: os.skills.history.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).history(context.userId, input.skillId))),
+    diff: os.skills.diff.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).diff(context.userId, input.skillId, input.base, input.head))),
+    report: os.skills.report.use(auth).handler(async ({ context, input }) => {
+      const machine = context.machine!; // `report` accepts only Machine tokens.
+      await skillsService(context.env).report(machine.id, input.scan, input.results);
     }),
   },
 });
