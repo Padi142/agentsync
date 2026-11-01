@@ -18,6 +18,8 @@ type SkillFiles = Record<string, string>;
 function fakeSkills(home: string) {
   const published = new Map<string, Map<string, SkillFiles>>();
   const calls: string[][] = [];
+  /** Names whose next `add` writes the canonical copy, then fails before Claude Code's link. */
+  const failHalfway = new Set<string>();
   const lockFile = join(home, '.agents', '.skill-lock.json');
   const lock = () => {
     try {
@@ -65,6 +67,7 @@ function fakeSkills(home: string) {
       const claude = join(home, '.claude', 'skills', name);
       if (agents.some((agent) => agent !== 'claude-code')) {
         writeFolder(canonical, files);
+        if (failHalfway.delete(name)) return { name, status: 'failed', error: 'EACCES: Claude Code link' };
         if (agents.includes('claude-code')) {
           rmSync(claude, { recursive: true, force: true });
           mkdirSync(dirname(claude), { recursive: true });
@@ -80,9 +83,18 @@ function fakeSkills(home: string) {
     return { code: results.every((result) => result.status === 'installed') ? 0 : 1, stdout: JSON.stringify(results), stderr: '' };
   }
 
+  /** Rewrite the lock's source for `name`, as if someone had reinstalled it from another repository. */
+  function lockSource(name: string, source: string) {
+    const current = lock();
+    current.skills[name] = { ...(current.skills[name] as object), source };
+    saveLock(current);
+  }
+
   return {
     calls,
     run,
+    failHalfway,
+    lockSource,
     /** Make `name` installable from `repo` at `commit`, and return its installed hash (the Pin's). */
     async publish(repo: string, commit: string, name: string, files: SkillFiles) {
       const key = `${repo}#${commit}`;

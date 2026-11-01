@@ -3,7 +3,7 @@ import { lstat, readdir, readFile, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { SKILL_COPY_EXCLUDES } from '@agentsync/contract';
 
-const excludedFiles = new Set<string>(SKILL_COPY_EXCLUDES.files);
+const excludedNames = new Set<string>(SKILL_COPY_EXCLUDES.names);
 const excludedDirs = new Set<string>(SKILL_COPY_EXCLUDES.dirs);
 
 interface Entry {
@@ -19,6 +19,8 @@ const sortKey = (entry: Entry) => Buffer.from(entry.mode === '40000' ? `${entry.
 async function treeHash(dir: string): Promise<Buffer | null> {
   const entries: Entry[] = [];
   for (const name of await readdir(dir)) {
+    // `skills` leaves these out whatever they are, so they never count as a change.
+    if (excludedNames.has(name)) continue;
     const path = join(dir, name);
     const stat = await lstat(path);
     if (stat.isDirectory()) {
@@ -27,7 +29,7 @@ async function treeHash(dir: string): Promise<Buffer | null> {
       if (sha) entries.push({ mode: '40000', name, sha }); // git has no empty trees
     } else if (stat.isSymbolicLink()) {
       entries.push({ mode: '120000', name, sha: gitObject('blob', Buffer.from(await readlink(path))) });
-    } else if (stat.isFile() && !excludedFiles.has(name)) {
+    } else if (stat.isFile()) {
       entries.push({ mode: stat.mode & 0o100 ? '100755' : '100644', name, sha: gitObject('blob', await readFile(path)) });
     }
   }

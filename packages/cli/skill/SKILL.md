@@ -68,9 +68,9 @@ The hook (a SessionStart hook, or for pi an extension) runs `agentsync sync --ho
 
 Skills are agent skills the user picks on the AgentSync dashboard from public GitHub repositories. Each is pinned to one commit, and goes to every Machine or to the ones chosen there. Adding, removing, assigning and updating Skills happens only on the dashboard; from here you can only install what is set for this Machine.
 
-- `agentsync skills status --json` lists each Skill with its `state`: `install` or `update` (waiting for `skills sync`), `unchanged`/`adopt` (installed), `remove`, `drifted` (edited by hand), `blocked` (a skill folder of the same name that AgentSync didn't install is in the way).
+- `agentsync skills status --json` lists each Skill with its `state`: `install` or `update` (waiting for `skills sync`), `unchanged`/`adopt` (installed), `remove`, `drifted` (edited by hand), `blocked` (a skill folder of the same name that AgentSync didn't install is in the way). `agentsync sync --json` has the counts in `skills`.
 - `agentsync skills sync --json` installs, updates and removes them with the official `skills` CLI and reports each in `skills` (`installed`, `updated`, `adopted`, `removed`, `unchanged`, `failed` with `error`, `blocked`, `drifted`). It takes a few seconds per repository.
-- Exit 3: something was left alone. A `blocked` Skill needs the user's own folder (`~/.agents/skills/<name>` or `~/.claude/skills/<name>`) moved or renamed; never delete it without asking. A `drifted` Skill was edited by hand: ask before running `agentsync skills sync --json --overwrite`, which replaces (or removes) it.
+- Exit 3: something was left alone. A `blocked` Skill has a folder of its name that AgentSync didn't install (`~/.agents/skills/<name>` or `~/.claude/skills/<name>`), or one the `skills` lock says came from another repository; the user moves or renames it, and you never delete it without asking. `--overwrite` doesn't touch it. A `drifted` Skill was edited by hand: ask before running `agentsync skills sync --json --overwrite`, which replaces it (or removes it, if this Machine shouldn't have it).
 - Exit 1: an install failed; `error` says why.
 
 ## Find out what changed

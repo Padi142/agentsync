@@ -5,6 +5,7 @@ import { uninstallHooks } from '../hooks.js';
 import { tildify } from '../paths.js';
 import { machineClient, machineId } from '../session.js';
 import { uninstallSkills } from '../skill.js';
+import { deleteSkillsState, readSkillsState } from '../skills/state.js';
 
 /**
  * Revoke this Machine, then remove its token and the hooks and skill files AgentSync installed
@@ -22,8 +23,9 @@ export async function logout(ctx: Context): Promise<Outcome> {
   const removed = [...hooks.removed, ...skills.removed].map((file) => tildify(file, ctx.io));
   const kept = [...hooks.kept, ...skills.kept].map((file) => tildify(file, ctx.io));
   // Installed Skills stay; only AgentSync's record of them goes with the config.
-  const leftSkills = Object.keys(ctx.config.managedSkills ?? {});
+  const leftSkills = Object.keys(readSkillsState(ctx.io).managed);
   deleteConfig(ctx.io);
+  deleteSkillsState(ctx.io);
   ctx.say('Revoked this Machine. Its Targets were left as they are.');
   if (leftSkills.length) ctx.say(`Left ${leftSkills.join(', ')} installed; AgentSync no longer manages them.`);
   for (const file of removed) ctx.say(`Removed AgentSync from ${file}`);

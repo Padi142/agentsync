@@ -9,7 +9,7 @@ import { handOff } from '../handoff.js';
 import { appendHistory, changeDiff, type Revisions, type TargetChange } from '../history.js';
 import { expandHome } from '../paths.js';
 import { machineClient } from '../session.js';
-import { hookSkills } from './skills.js';
+import { hookSkills, pendingSkills } from './skills.js';
 import { backupPath, checkTarget, writeTarget } from '../targets.js';
 
 /** How long a hook waits for the server before keeping the existing files. */
@@ -260,12 +260,12 @@ async function hookSync(ctx: Context): Promise<Outcome> {
   const both = (text: string) => parts.push({ model: text, person: text });
   /** Once Targets may have been written, a failure must not claim the old files were kept. */
   let writing = false;
-  /** The Skills scan and report run beside the Template sync, inside the same time budget. */
+  /** The Skills scan and report run beside the Template sync, inside the same deadline. */
+  const deadline = Date.now() + HOOK_TIMEOUT_MS;
   let skills: Promise<string | null> = Promise.resolve(null);
   try {
-    const client = machineClient(ctx, HOOK_TIMEOUT_MS);
-    const request = client.machines.sync();
-    skills = hookSkills(ctx, client, request);
+    const request = machineClient(ctx, HOOK_TIMEOUT_MS).machines.sync();
+    skills = hookSkills(ctx, request, deadline);
     const payload = await request;
     writing = true;
     const { results, data, historyError } = await applySync(ctx, payload);
@@ -305,8 +305,8 @@ async function hookSync(ctx: Context): Promise<Outcome> {
     if (writing) both(`sync failed; some Targets may have been updated: ${describeError(error)}`);
     else parts.push({ model: `kept the existing instructions: ${describeError(error)}`, person: null });
   }
-  // Never installs anything: it only says what `agentsync skills sync` would do.
-  const pending = await skills;
+  // Never installs anything: it only says what `agentsync skills sync` would do, if it knows in time.
+  const pending = await Promise.race([skills, ranOut(deadline)]);
   if (pending) both(pending);
   const line = (texts: (string | null)[]) => {
     const kept = texts.filter((text): text is string => Boolean(text));
@@ -315,6 +315,11 @@ async function hookSync(ctx: Context): Promise<Outcome> {
   const output = hookOutput(agent, line(parts.map((part) => part.model)), line(parts.map((part) => part.person)));
   if (output) ctx.io.out(output);
   return { code: EXIT.ok };
+}
+
+/** `null` once `deadline` passes; the timer doesn't keep the process alive. */
+function ranOut(deadline: number): Promise<null> {
+  return new Promise((resolve) => setTimeout(() => resolve(null), Math.max(0, deadline - Date.now())).unref());
 }
 
 /**
@@ -332,5 +337,8 @@ export function hookOutput(agent: string, model: string, person = ''): string {
 export async function sync(ctx: Context): Promise<Outcome> {
   if (ctx.flags.hook !== undefined) return hookSync(ctx);
   const payload = await ctx.during('Fetching the Template…', () => machineClient(ctx).machines.sync());
-  return applySync(ctx, payload);
+  const outcome = await applySync(ctx, payload);
+  // Like the hook, it never installs Skills; it says what `agentsync skills sync` would do.
+  const skills = await pendingSkills(ctx, payload);
+  return { ...outcome, data: { ...outcome.data, ...(skills ? { skills } : {}) } };
 }

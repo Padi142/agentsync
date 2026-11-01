@@ -20,13 +20,6 @@ export interface PendingLogin {
   nickname?: string;
 }
 
-/** A Skill AgentSync installed or adopted, at the Pin it installed. */
-export interface ManagedSkill {
-  repo: string;
-  commit: string;
-  installedHash: string;
-}
-
 /**
  * This Machine's AgentSync state, in one per-user file with mode 0600 because it holds the
  * Machine token. `written` keeps the text last written to each Target (keyed by its stored
@@ -46,13 +39,6 @@ export interface Config {
   skills?: Owned;
   /** The same for each pi extension AgentSync wrote as a hook. */
   extensions?: Owned;
-  /**
-   * The Skills AgentSync installed or adopted here, by name, with the Pin it installed. Only these
-   * folders are ever updated or removed; any other folder of a Skill's name blocks it.
-   */
-  managedSkills?: Record<string, ManagedSkill>;
-  /** The last Skills scan the hook sent: its hash, and when (ms since the epoch), to report only changes and daily. */
-  skillsReport?: { hash: string; at: number };
   written: Record<string, string>;
   /** The Template and Variables revisions each Target in `written` was Rendered from, for the history. */
   writtenFrom?: Record<string, Revisions>;

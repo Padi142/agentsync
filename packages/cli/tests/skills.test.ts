@@ -12,11 +12,16 @@ async function machineWithSkills() {
   const animate = await t.skills.publish('emil/skills', sha('1'), 'animate', { 'SKILL.md': 'animate v1' });
   const polish = await t.skills.publish('emil/skills', sha('1'), 'polish', { 'SKILL.md': 'polish v1' });
   t.server.state.skills = [
-    { name: 'animate', repo: 'emil/skills', commit: sha('1'), installedHash: animate },
-    { name: 'polish', repo: 'emil/skills', commit: sha('1'), installedHash: polish },
+    { name: 'animate', repo: 'emil/skills', commit: sha('1'), installedHash: animate, sources: ['emil/skills'] },
+    { name: 'polish', repo: 'emil/skills', commit: sha('1'), installedHash: polish, sources: ['emil/skills'] },
   ];
   return t;
 }
+
+const stateFile = (t: ReturnType<typeof setup>) => t.path('.config/agentsync/skills.json');
+const readState = (t: ReturnType<typeof setup>) => JSON.parse(readFileSync(stateFile(t), 'utf8'));
+/** Forget AgentSync's records, as if the folders had been installed by hand with `npx skills add`. */
+const forgetRecords = (t: ReturnType<typeof setup>) => t.write('.config/agentsync/skills.json', JSON.stringify({ ...readState(t), managed: {} }));
 
 const statuses = (result: { json: () => { skills: { name: string; status: string }[] } }) =>
   Object.fromEntries(result.json().skills.map((skill) => [skill.name, skill.status]));
@@ -65,9 +70,7 @@ describe('skills sync', () => {
     const t = await machineWithSkills();
     await t.cli('skills', 'sync');
     // As if `npx skills add` had put them there: same files and lock, but no AgentSync record.
-    const config = JSON.parse(readFileSync(t.path('.config/agentsync/config.json'), 'utf8'));
-    delete config.managedSkills;
-    t.write('.config/agentsync/config.json', JSON.stringify(config));
+    forgetRecords(t);
     t.skills.calls.length = 0;
 
     const result = await t.cli('skills', 'sync', '--json');
@@ -83,8 +86,8 @@ describe('skills sync', () => {
     const animate2 = await t.skills.publish('emil/skills', sha('2'), 'animate', { 'SKILL.md': 'animate v2' });
     const polish2 = await t.skills.publish('emil/skills', sha('2'), 'polish', { 'SKILL.md': 'polish v2' });
     t.server.state.skills = [
-      { name: 'animate', repo: 'emil/skills', commit: sha('2'), installedHash: animate2 },
-      { name: 'polish', repo: 'emil/skills', commit: sha('2'), installedHash: polish2 },
+      { name: 'animate', repo: 'emil/skills', commit: sha('2'), installedHash: animate2, sources: ['emil/skills'] },
+      { name: 'polish', repo: 'emil/skills', commit: sha('2'), installedHash: polish2, sources: ['emil/skills'] },
     ];
     t.write('.agents/skills/polish/SKILL.md', 'polish, edited by hand');
 
@@ -174,9 +177,9 @@ describe('the hook and Skills', () => {
   it('reports an unchanged scan again after a day', async () => {
     const t = await machineWithSkills();
     await t.cli('sync', '--hook', 'pi');
-    const config = JSON.parse(readFileSync(t.path('.config/agentsync/config.json'), 'utf8'));
-    config.skillsReport.at -= 25 * 60 * 60 * 1000;
-    t.write('.config/agentsync/config.json', JSON.stringify(config));
+    const state = readState(t);
+    state.report.at -= 25 * 60 * 60 * 1000;
+    t.write('.config/agentsync/skills.json', JSON.stringify(state));
 
     await t.cli('sync', '--hook', 'pi');
 
@@ -188,9 +191,7 @@ describe('init and Skills', () => {
   it('adopts what is already installed, then skips the rest without a terminal and prints the command', async () => {
     const t = await machineWithSkills();
     await t.cli('skills', 'sync');
-    const config = JSON.parse(readFileSync(t.path('.config/agentsync/config.json'), 'utf8'));
-    delete config.managedSkills;
-    t.write('.config/agentsync/config.json', JSON.stringify(config));
+    forgetRecords(t);
     rmSync(t.path('.agents/skills/polish'), { recursive: true });
     rmSync(t.path('.claude/skills/polish'));
     t.skills.calls.length = 0;
@@ -200,7 +201,7 @@ describe('init and Skills', () => {
     expect(result.stdout).toContain('2 Skills from your account are set for this Machine (1 already installed).');
     expect(result.stdout).toContain('Run `agentsync skills sync` to install them.');
     expect(t.skills.calls).toEqual([]);
-    expect(JSON.parse(readFileSync(t.path('.config/agentsync/config.json'), 'utf8')).managedSkills).toHaveProperty('animate');
+    expect(readState(t).managed).toHaveProperty('animate');
   });
 
   it('installs them with --skills', async () => {
@@ -210,5 +211,93 @@ describe('init and Skills', () => {
 
     expect(result.code).toBe(0);
     expect(result.json().accountSkills.results.map((r: { status: string }) => r.status)).toEqual(['installed', 'installed']);
+  });
+});
+
+describe('skills sync only touches what AgentSync owns', () => {
+  const codexOnly = [{ path: '~/.codex/AGENTS.md', agent: 'codex' }];
+
+  it('leaves your own copy in another agent’s directory alone, even with --overwrite, and doesn’t remove it', async () => {
+    const t = await machineWithSkills();
+    t.registered(codexOnly);
+    await t.cli('skills', 'sync');
+    t.write('.claude/skills/animate/SKILL.md', 'my Claude-only animate');
+    t.write('.claude/skills/animate/metadata.json', 'private');
+    t.skills.calls.length = 0;
+
+    expect(statuses(await t.cli('skills', 'sync', '--json', '--overwrite'))).toMatchObject({ animate: 'blocked' });
+    t.server.state.skills = [];
+    expect(statuses(await t.cli('skills', 'sync', '--json', '--overwrite'))).toMatchObject({ animate: 'blocked' });
+
+    expect(t.skills.calls.filter((call) => call.includes('animate'))).toEqual([]);
+    expect(readFileSync(t.path('.claude/skills/animate/metadata.json'), 'utf8')).toBe('private');
+  });
+
+  it('treats a copy someone reinstalled from another repository as theirs', async () => {
+    const t = await machineWithSkills();
+    await t.cli('skills', 'sync');
+    t.skills.lockSource('animate', 'someone/else');
+    t.write('.agents/skills/animate/SKILL.md', 'their animate');
+
+    expect(statuses(await t.cli('skills', 'sync', '--json', '--overwrite'))).toMatchObject({ animate: 'blocked' });
+    expect(readFileSync(t.path('.agents/skills/animate/SKILL.md'), 'utf8')).toBe('their animate');
+  });
+
+  it('never mistakes an inherited property for a record: a skill named `constructor` stays yours', async () => {
+    const t = await machineWithSkills();
+    const hash = await t.skills.publish('emil/skills', sha('1'), 'constructor', { 'SKILL.md': 'pinned' });
+    t.server.state.skills = [{ name: 'constructor', repo: 'emil/skills', commit: sha('1'), installedHash: hash, sources: ['emil/skills'] }];
+    t.write('.agents/skills/constructor/SKILL.md', 'mine');
+
+    expect(statuses(await t.cli('skills', 'sync', '--json', '--overwrite'))).toEqual({ constructor: 'blocked' });
+    expect(t.skills.calls).toEqual([]);
+  });
+
+  it('refuses a name `skills` would install under another name', async () => {
+    const t = await machineWithSkills();
+    t.write('.agents/skills/animate/SKILL.md', 'mine');
+    t.server.state.skills = [{ ...t.server.state.skills[0]!, name: 'animate-' }];
+
+    const result = await t.cli('skills', 'sync', '--json');
+
+    expect(result.code).toBe(1);
+    expect(t.skills.calls).toEqual([]);
+    expect(readFileSync(t.path('.agents/skills/animate/SKILL.md'), 'utf8')).toBe('mine');
+  });
+
+  it('installs the copy a newly added agent needs', async () => {
+    const t = await machineWithSkills();
+    t.registered(codexOnly);
+    await t.cli('skills', 'sync');
+    expect(existsSync(t.path('.claude/skills/animate'))).toBe(false);
+    t.registered(both);
+
+    const result = await t.cli('skills', 'sync', '--json');
+
+    expect(statuses(result)).toEqual({ animate: 'updated', polish: 'updated' });
+    expect(readFileSync(t.path('.claude/skills/animate/SKILL.md'), 'utf8')).toBe('animate v1');
+  });
+
+  it('fails a Skill `skills` reported as failed, even if a copy landed', async () => {
+    const t = await machineWithSkills();
+    t.skills.failHalfway.add('animate');
+
+    const result = await t.cli('skills', 'sync', '--json');
+
+    expect(result.code).toBe(1);
+    expect(result.json().skills.find((s: { name: string }) => s.name === 'animate')).toMatchObject({ status: 'failed', error: 'EACCES: Claude Code link' });
+  });
+});
+
+describe('plain sync and Skills', () => {
+  it('says what `skills sync` would do, and installs nothing', async () => {
+    const t = await machineWithSkills();
+    t.server.putTemplate('one\n');
+
+    const result = await t.cli('sync', '--json');
+
+    expect(result.stderr).toContain('Skills: 2 Skills to install; run `agentsync skills sync`.');
+    expect(result.json().skills).toEqual({ install: 2, update: 0, remove: 0 });
+    expect(t.skills.calls).toEqual([]);
   });
 });

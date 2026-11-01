@@ -34,7 +34,7 @@ Run `agentsync --help` for the commands, and `agentsync help <command>` for one 
 | `conflict list \| get <id> \| resolve <id> <file>` | Works with open Conflicts. `resolve` refuses leftover markers and warns about lone `=======` lines. |
 | `status` | Shows each Target's state and open Conflicts, without writing. |
 | `history` | Shows each change AgentSync made to this Machine's Targets: when, what ran it, which revision, and (`--verbose`) the diff. Local only. |
-| `skills sync \| status` | `sync` installs, updates and removes this Machine's Skills to match their Pins: the only command that does. A Skill blocked by your own folder, or edited by hand, is left alone (exit 3) until `--overwrite` (hand edits only). `status` shows each Skill's state without changing anything. |
+| `skills sync \| status` | `sync` installs, updates and removes this Machine's Skills to match their Pins: the only command that does. A Skill blocked by a folder AgentSync didn't install is left alone (exit 3); one edited by hand too, until `--overwrite` replaces it (or removes it, if the Machine shouldn't have it). `status` shows each Skill's state without changing anything. `agentsync sync` also says what `skills sync` would do. |
 | `rename <nickname>` | Changes the Machine's nickname (also `init --nickname` on a registered Machine). Writes no Target; name-dependent Template output changes on the next `sync`. |
 | `logout` | Revokes the Machine and removes its token, plus the hooks and skill files AgentSync installed that nobody changed. Targets and installed Skills stay; AgentSync just stops managing them. |
 
@@ -118,18 +118,23 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
   once per repository and commit. The agents are those the Machine has Targets for (`claude` →
   `claude-code`, `codex`, `pi`). The canonical copy goes to `~/.agents/skills/<name>`, with a
   symlink for Claude Code; with Claude Code alone, a copy in its `skills/` directory.
-- **Ownership.** The config records each Skill AgentSync installed or adopted, with its Pin.
-  `skills` itself replaces any folder silently, so AgentSync checks both skills directories first:
-  it installs only where nothing is, updates or removes only its own copies, and only while they
-  still hash to the Pin it installed. Anything else of the same name blocks the Skill. A copy from
-  the `skills` lock that is exactly the Pin (installed by hand with `npx skills add`) is adopted
-  without reinstalling.
+- **Ownership.** `skills` itself replaces any folder silently, so AgentSync keeps its own record in
+  `skills.json` beside the config: each Skill it installed or adopted, with its Pin, the
+  repositories its lock entry may name, and which of the two skills directories hold its copies.
+  It installs only where nothing is, and updates or removes a Skill only while every copy of the
+  name is in a directory it recorded, the lock still names that repository, and the copies still
+  hash to the Pin it installed. Anything else blocks the Skill, even with `--overwrite`. A copy
+  from the Skill's own repository (by the `skills` lock) that is exactly the Pin, such as one
+  installed with `npx skills add`, is adopted without reinstalling. When a Machine gains an agent,
+  the copy that agent needs is added. One `skills sync` runs at a time (a lock file), and each
+  `skills add` is planned again from the disk just before it runs.
 - **Skill Drift.** A folder is hashed on disk as git would (a tree hash), leaving out what
   `skills` never copies (`metadata.json`, `.git`, `__pycache__`, `__pypackages__`), and compared
   with the Pin's installed hash from the server. The lock's own hash is never trusted.
 - **Removing.** `skills remove … -g -y -a claude-code codex pi` removes every copy, so AgentSync
   only asks it to remove its own undrifted copies, and checks the disk afterwards.
-- **Reporting.** `skills sync` and `init` send a scan and their results to the server. The scan
+- **Reporting.** `skills sync` and `init` send a scan and their results to the server; `agentsync
+  sync` and the hook only say what `skills sync` would do. The scan
   lists every skill folder with a `SKILL.md` in `~/.agents/skills` and Claude Code's `skills/`
   (not the `agentsync` skill): name, the lock's GitHub source and ref, and the folder hash for
   ones from the lock. A hand-written folder is sent by name only. File contents are never sent.
@@ -159,8 +164,8 @@ existing files when it cannot reach the server, always exits 0, and prints at mo
 `AgentSync: …` line for the agent. It reports updated Targets, skipped Drift, unset
 Variables, open Conflicts (with a link), and Skills waiting for `agentsync skills sync`. It
 never installs a Skill. It scans the skills directories in-process (tens of milliseconds) beside
-the Template request, and sends the scan only when it changed or a day has passed, so the
-dashboard knows when the Machine last checked in. For Claude Code and Codex the line is wrapped in
+the Template request, within the same 2-second deadline, and sends the scan only when it changed or
+a day has passed, so the dashboard knows when the Machine last checked in. For Claude Code and Codex the line is wrapped in
 SessionStart JSON: `hookSpecificOutput.additionalContext` carries it to the model, and
 `systemMessage` tells the person what changed and points at `agentsync history` (left out
 when only the model needs to know, e.g. the server was unreachable). The pi extension shows

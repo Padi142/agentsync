@@ -32,6 +32,8 @@ describe('folderHash', () => {
     git(dir, 'add', '-A');
     const clean = git(dir, 'write-tree');
     writeFileSync(join(dir, 'metadata.json'), '{}');
+    mkdirSync(join(dir, 'sub', 'metadata.json'));
+    writeFileSync(join(dir, 'sub', 'metadata.json', 'inside.md'), 'skipped with its directory');
     mkdirSync(join(dir, 'sub', '__pycache__'));
     writeFileSync(join(dir, 'sub', '__pycache__', 'x.pyc'), 'compiled');
     expect(await folderHash(dir)).toBe(clean);

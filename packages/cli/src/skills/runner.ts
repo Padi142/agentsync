@@ -5,7 +5,10 @@ import type { Context } from '../context.js';
 interface AddResult {
   name?: unknown;
   status?: unknown;
+  /** Why it was `skipped`. */
   reason?: unknown;
+  /** Why it `failed`. */
+  error?: unknown;
 }
 
 /** Throw unless every argument is one decision 24 allows: names, `owner/repo` and full SHAs, none starting with `-`. */
@@ -37,7 +40,8 @@ export async function addSkills(ctx: Context, repo: string, commit: string, name
   return new Map(names.map((name): [string, { ok: true } | { ok: false; error: string }] => {
     const result = results.find((entry) => entry.name === name);
     if (result?.status === 'installed') return [name, { ok: true }];
-    return [name, { ok: false, error: typeof result?.reason === 'string' ? result.reason : fallback }];
+    const why = typeof result?.error === 'string' ? result.error : typeof result?.reason === 'string' ? result.reason : fallback;
+    return [name, { ok: false, error: why }];
   }));
 }
 
