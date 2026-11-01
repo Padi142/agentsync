@@ -1,4 +1,4 @@
-import { contract, type Conflict, type Machine, type Target } from '@agentsync/contract';
+import { contract, type Conflict, type DesiredSkill, type Machine, type ScannedSkill, type SkillSyncResult, type Target } from '@agentsync/contract';
 import { hasConflictMarkers, validate } from '@agentsync/template';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
@@ -25,6 +25,10 @@ export function fakeServer() {
     /** Procedures (e.g. `/template/put`) whose requests fail like a dropped connection. */
     down: new Set<string>(),
     requests: [] as Headers[],
+    /** The Skills every Machine gets from `machines.sync`. */
+    skills: [] as DesiredSkill[],
+    /** Each `skills.report`, in order. */
+    reports: [] as { machineId: string; scan: ScannedSkill[]; results?: SkillSyncResult[] }[],
   };
   let nextId = 1;
 
@@ -128,6 +132,7 @@ export function fakeServer() {
           template: state.template,
           variables: { machineId: machine.id, ...variablesOf(machine.id) },
           openConflicts: { count: open.length, url: `${SERVER}/conflicts` },
+          skills: state.skills,
         };
       }),
     },
@@ -190,6 +195,24 @@ export function fakeServer() {
         return { conflict, template: putTemplate(input.text) };
       }),
       discard: os.conflicts.discard.handler(sessionOnly),
+    },
+    skills: {
+      overview: os.skills.overview.handler(sessionOnly),
+      search: os.skills.search.handler(sessionOnly),
+      inspect: os.skills.inspect.handler(sessionOnly),
+      add: os.skills.add.handler(sessionOnly),
+      assign: os.skills.assign.handler(sessionOnly),
+      update: os.skills.update.handler(sessionOnly),
+      updateAll: os.skills.updateAll.handler(sessionOnly),
+      remove: os.skills.remove.handler(sessionOnly),
+      setAutoUpdate: os.skills.setAutoUpdate.handler(sessionOnly),
+      settings: os.skills.settings.handler(sessionOnly),
+      history: os.skills.history.handler(sessionOnly),
+      diff: os.skills.diff.handler(sessionOnly),
+      report: os.skills.report.handler(({ context, input }) => {
+        const machine = machineOf(context.token);
+        state.reports.push({ machineId: machine.id, ...input });
+      }),
     },
   });
 

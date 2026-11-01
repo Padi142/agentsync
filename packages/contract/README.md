@@ -38,6 +38,12 @@ Each procedure lists the auth kinds it accepts in its meta
 | `conflicts.get` | ✓ | ✓ | `NOT_FOUND` |
 | `conflicts.resolve` | ✓ | ✓ | `NOT_FOUND`, `CONFLICT`, `INVALID_TEMPLATE` |
 | `conflicts.discard` | ✓ | | `NOT_FOUND` |
+| `skills.overview` | ✓ | | |
+| `skills.search`, `skills.inspect` | ✓ | | `UNSUPPORTED_SKILL`, `NOT_FOUND`, `UPSTREAM_UNAVAILABLE` |
+| `skills.add` | ✓ | | `NOT_FOUND`, `UNSUPPORTED_SKILL`, `SKILL_NAME_TAKEN`, `NO_MATCHING_COMMIT`, `UPSTREAM_UNAVAILABLE` |
+| `skills.assign`, `skills.update`, `skills.remove`, `skills.setAutoUpdate`, `skills.history`, `skills.diff` | ✓ | | `NOT_FOUND`, `UPSTREAM_UNAVAILABLE` |
+| `skills.updateAll`, `skills.settings` | ✓ | | |
+| `skills.report` | | own | |
 
 Every procedure that needs auth can also fail with `UNAUTHORIZED`.
 
@@ -64,5 +70,16 @@ procedures check that a Machine token's Machine matches `machineId`.
   `denied` to exit code 5.
 - `os` is normalised to `macos`, `linux` or `windows` (Node's `darwin` is `macos`,
   `win32` is `windows`).
+- Skills are changed only by a signed-in browser. A Machine gets its Skills in
+  `machines.sync` (`skills`: name, repository, commit and installed hash) and
+  reports what it has with `skills.report`; it can't add or move anything, so a
+  stolen Machine token can't push a Skill to other Machines.
+- A Pin is resolved by the server from GitHub, never taken from a client:
+  `commit` is the newest commit on the default branch that changed the folder,
+  `treeSha` GitHub's tree for it, and `installedHash` the tree hash of what the
+  `skills` CLI writes (it leaves out `SKILL_COPY_EXCLUDES`). Skill Drift
+  compares a folder on disk with `installedHash`.
+- Skill names (`skillNameSchema`), `owner/repo` (`repoNameSchema`) and SHAs
+  (`gitShaSchema`) are validated on both sides, and none can start with `-`.
 - Variable names and Template syntax are checked by the server with
   `@agentsync/template`. This package does not depend on the grammar.

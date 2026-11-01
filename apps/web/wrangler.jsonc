@@ -22,6 +22,8 @@
     "WORKOS_CLIENT_ID": "client_01M5QJZF8AA9ZGPB2NXPAMPCB6",
     "WORKOS_REDIRECT_URI": "https://agentsync.krejzac.cz/callback"
   },
+  // The Skills update check (src/server.ts): each run checks the few Skills not checked for a day.
+  "triggers": { "crons": ["*/10 * * * *"] },
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
