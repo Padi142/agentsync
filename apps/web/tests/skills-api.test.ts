@@ -118,6 +118,9 @@ describe('Adding a Skill', () => {
     await expect(browser().skills.add({ repo: 'me/linked', name: 'linked' })).rejects.toMatchObject({ code: 'UNSUPPORTED_SKILL' });
     await expect(browser().skills.add({ repo: 'me/agentsync', name: 'agentsync' })).rejects.toMatchObject({ code: 'SKILL_NAME_TAKEN' });
     await expect(browser().skills.add({ repo: 'emil/skills', name: 'missing' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // `skills` installs a skill under its frontmatter name as written, so only an exact match can be pinned.
+    gh.repo('me/upper', { 'skills/upper/SKILL.md': skillMd('Upper') });
+    await expect(browser().skills.add({ repo: 'me/upper', name: 'upper' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await browser().skills.add({ repo: 'emil/skills', name: 'animate' });
     await expect(browser().skills.add({ repo: 'emil/skills', name: 'animate' })).rejects.toMatchObject({ code: 'SKILL_NAME_TAKEN' });
   });

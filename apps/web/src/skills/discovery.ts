@@ -135,7 +135,8 @@ export async function findSkillFolder(gh: GitHub, fullName: string, commit: stri
   const ordered = [...folders.filter((dir) => base(dir) === name), ...folders.filter((dir) => base(dir) !== name)];
   for (const folder of ordered.slice(0, MAX_READS)) {
     const text = await read(join(folder, 'SKILL.md'));
-    if (text !== null && frontmatterName(text)?.toLowerCase() === name) return folder;
+    // Exact: `skills` names the installed folder after the frontmatter as written.
+    if (text !== null && frontmatterName(text) === name) return folder;
   }
   return null;
 }
