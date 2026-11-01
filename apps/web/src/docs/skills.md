@@ -24,9 +24,9 @@ Every agent with a Target on the Machine gets every Skill: Claude Code, Codex an
 
 `skills sync` only changes folders AgentSync installed itself:
 
-- A skill folder of the same name that you wrote, or installed some other way, **blocks** the Skill on that Machine. AgentSync never touches it. Rename or remove your folder, or take the Skill off that Machine.
+- A skill folder of the same name that you wrote, or installed some other way (from another repository, say), **blocks** the Skill on that Machine, in either agent's skills directory. AgentSync never touches it, not even with `--overwrite`. Rename or remove your folder, or take the Skill off that Machine.
 - A Skill you **edited by hand** is left alone until you run `agentsync skills sync --overwrite`, which replaces it with the pinned version, or deletes it if the Skill no longer goes to that Machine.
-- A copy you installed earlier with `npx skills add` that is exactly the pinned version is **adopted** without reinstalling.
+- A copy you installed earlier with `npx skills add` from the same repository, exactly at the pinned version, is **adopted** without reinstalling.
 
 ## Updates
 
