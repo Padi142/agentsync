@@ -225,7 +225,7 @@ function EntryRow({ entry, overview, actions, leaves, open, onToggle }: {
 
   if (entry.type === 'found') {
     const { found } = entry;
-    const ref = found.machines.find((machine) => machine.ref)?.ref;
+    const ref = found.machines[0]?.ref; // Add pins the first Machine's copy, so show its commit.
     return (
       <li ref={row} data-flip={entry.key}>
         <div className="sk-line">

@@ -37,7 +37,7 @@ export function useSkillActions() {
       say(done(result as T));
       await beforeReload?.();
       // Stay busy until the page shows the new data, so the next change starts from it, not from stale state.
-      await router.invalidate();
+      await router.invalidate({ sync: true });
       return true;
     } finally {
       setBusy(null);
