@@ -30,11 +30,14 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
   const [candidate, setCandidate] = useState<SkillCandidate | { error: string } | null>(null);
   /** The last Add from this preview failed: show why here, not only under the page title behind the dialog. */
   const [addFailed, setAddFailed] = useState(false);
+  /** Counts openings, so an Add that finishes after the dialog was closed and opened again leaves the new one alone. */
+  const session = useRef(0);
 
   useEffect(() => {
     const element = dialog.current;
     if (!element) return;
     if (open && !element.open) {
+      session.current += 1;
       setQuery('');
       setResults(null);
       setPicked(null);
@@ -71,8 +74,10 @@ export function AddSkillDialog({ open, onClose, taken, actions }: {
 
   const add = async (found: SkillCandidate) => {
     setAddFailed(false);
+    const started = session.current;
     const ok = await actions.run(`add:${found.name}`, () => rpc.skills.add({ repo: found.repo.fullName, name: found.name }),
       (skill) => `${skill.name} added at ${shortCommit(skill.pin.commit)}. Machines install it on their next skills sync.`);
+    if (started !== session.current || !dialog.current?.open) return;
     if (ok) onClose();
     else setAddFailed(true);
   };

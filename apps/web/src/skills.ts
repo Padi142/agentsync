@@ -21,7 +21,7 @@ type Machines = SkillsOverview['machines'];
 export type MachineState = Skill['machines'][number];
 
 /** How a Machine × Skill state reads: a dot, a short label and a line of detail. */
-export function describeState(skill: Pick<Skill, 'name' | 'pin'>, state: MachineSkillState) {
+export function describeState(skill: Pick<Skill, 'name' | 'pin' | 'assignment'>, state: MachineSkillState & { machineId: string }) {
   switch (state.status) {
     case 'installed': return { dot: 'installed', label: 'Installed', detail: `At ${shortCommit(skill.pin.commit)}` };
     case 'pending': return {
@@ -31,7 +31,12 @@ export function describeState(skill: Pick<Skill, 'name' | 'pin'>, state: Machine
     };
     case 'failed': return { dot: 'failed', label: 'Failed', detail: state.error };
     case 'blocked': return { dot: 'blocked', label: 'Blocked', detail: `Your own ${skill.name} folder is in the way` };
-    case 'drifted': return { dot: 'drifted', label: 'Hand edited', detail: 'Replaced only with --overwrite' };
+    // On a Machine the Skill no longer goes to, --overwrite deletes the edited copy instead of replacing it.
+    case 'drifted': return {
+      dot: 'drifted',
+      label: 'Hand edited',
+      detail: isAssigned(skill, state.machineId) ? 'Replaced only with --overwrite' : 'Removed only with --overwrite',
+    };
     case 'newer': return { dot: 'newer', label: 'Newer here', detail: `Has ${shortCommit(state.commit)} from ${shortDate(state.committedAt)}` };
     case 'not-set': return { dot: 'none', label: 'Not set', detail: '' };
   }
@@ -98,5 +103,5 @@ export function entriesOf(overview: SkillsOverview): Entry[] {
 }
 
 /** Whether a Machine gets the Skill under its assignment. */
-export const isAssigned = (skill: Skill, machineId: string) =>
+export const isAssigned = (skill: Pick<Skill, 'assignment'>, machineId: string) =>
   skill.assignment.to === 'all' || skill.assignment.machineIds.includes(machineId);

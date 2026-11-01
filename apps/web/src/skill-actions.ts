@@ -17,7 +17,7 @@ export function skillErrorText(error: unknown): string {
 
 /**
  * Run Skills changes one at a time, with a status line that answers the last one. `run` resolves to
- * whether it worked; on success the page's data reloads.
+ * whether it worked; on success the page's data reloads before the next change may start.
  */
 export function useSkillActions() {
   const router = useRouter();
@@ -28,16 +28,20 @@ export function useSkillActions() {
   async function run<T>(key: string, work: () => Promise<T>, done: (result: T) => string, beforeReload?: () => Promise<void>): Promise<boolean> {
     if (busy) return false;
     setBusy(key);
-    const [error, result] = await safe(work());
-    setBusy(null);
-    if (error) {
-      say(skillErrorText(error), 'error');
-      return false;
+    try {
+      const [error, result] = await safe(work());
+      if (error) {
+        say(skillErrorText(error), 'error');
+        return false;
+      }
+      say(done(result as T));
+      await beforeReload?.();
+      // Stay busy until the page shows the new data, so the next change starts from it, not from stale state.
+      await router.invalidate();
+      return true;
+    } finally {
+      setBusy(null);
     }
-    say(done(result as T));
-    await beforeReload?.();
-    await router.invalidate();
-    return true;
   }
   return { busy, status, say, run };
 }

@@ -119,16 +119,16 @@ function SkillsPage() {
                 onToggle={() => entry.type === 'skill' && setOpen(open === entry.skill.id ? null : entry.skill.id)} />
             ))}
           </ul>
-          {showAll && local.length ? (
-            <p className="sk-note sk-local">
-              Hand-written on Machines:{' '}
-              {local.map((found, i) => (
-                <span key={found.name}>{i ? ', ' : ''}<code>{found.name}</code> ({found.machineIds.map(nickname).join(', ')})</span>
-              ))}
-            </p>
-          ) : null}
         </>
       )}
+      {showAll && local.length ? (
+        <p className="sk-note sk-local">
+          Hand-written on Machines:{' '}
+          {local.map((found, i) => (
+            <span key={found.name}>{i ? ', ' : ''}<code>{found.name}</code> ({found.machineIds.map(nickname).join(', ')})</span>
+          ))}
+        </p>
+      ) : null}
       <AddSkillDialog open={adding} onClose={() => setAdding(false)} taken={new Set(overview.skills.map((skill) => skill.name))} actions={actions} />
     </div>
   );

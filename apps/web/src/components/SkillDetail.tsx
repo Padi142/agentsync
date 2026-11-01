@@ -32,19 +32,22 @@ export function SkillDetail({ skill, overview, actions }: { skill: Skill; overvi
   const chosen = skill.assignment.to === 'chosen';
   const [history, setHistory] = useState<PinMove[] | null>(null);
   const [diff, setDiff] = useState<SkillDiff | 'failed' | null>(null);
+  const pinCommit = skill.pin.commit;
   const updateCommit = skill.update?.pin.commit;
   useEffect(() => {
     let live = true;
     void safe(rpc.skills.history({ skillId: skill.id })).then(([error, moves]) => live && setHistory(error ? [] : moves));
     return () => { live = false; };
-  }, [skill.id, skill.pin.commit]);
+  }, [skill.id, pinCommit]);
+  // Both ends are explicit: after the Pin moves (e.g. Use everywhere), the diff starts from the new Pin.
   useEffect(() => {
     if (!updateCommit) return;
     let live = true;
     setDiff(null);
-    void safe(rpc.skills.diff({ skillId: skill.id })).then(([error, result]) => live && setDiff(error ? 'failed' : result));
+    void safe(rpc.skills.diff({ skillId: skill.id, base: pinCommit, head: updateCommit }))
+      .then(([error, result]) => live && setDiff(error ? 'failed' : result));
     return () => { live = false; };
-  }, [skill.id, updateCommit]);
+  }, [skill.id, pinCommit, updateCommit]);
 
   const nickname = (id: string) => overview.machines.find((machine) => machine.id === id)?.nickname ?? 'a Machine';
   // Chosen stays chosen even with every Machine ticked: only "All Machines" also covers Machines registered later.
@@ -147,8 +150,12 @@ export function SkillDetail({ skill, overview, actions }: { skill: Skill; overvi
 
         <label className="sk-check">
           <input type="checkbox" checked={!skill.autoUpdate} disabled={!!busy}
-            onChange={(event) => run(`auto:${skill.id}`, () => rpc.skills.setAutoUpdate({ skillId: skill.id, autoUpdate: !event.target.checked }),
-              () => (event.target.checked ? `${skill.name} never updates automatically` : `${skill.name} updates automatically again`))} />
+            onChange={(event) => {
+              // Read once: by the time the call returns, React has put the controlled box back.
+              const ignore = event.target.checked;
+              void run(`auto:${skill.id}`, () => rpc.skills.setAutoUpdate({ skillId: skill.id, autoUpdate: !ignore }),
+                () => (ignore ? `${skill.name} never updates automatically` : `${skill.name} updates automatically again`));
+            }} />
           Never update automatically
         </label>
 
