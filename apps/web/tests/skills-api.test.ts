@@ -133,6 +133,17 @@ describe('Adding a Skill', () => {
 });
 
 describe('Found Skills', () => {
+  it('reads audits under a repository’s current name, with empty verdicts for a skill skills.sh doesn’t know', async () => {
+    skillRepo();
+    gh.rename('emil/skills', 'emil/skills-renamed');
+    gh.audit('emil/skills-renamed', 'animate', 'high');
+    const verdicts = await browser().skills.audits({ repo: 'emil/skills', names: ['animate', 'unknown'] });
+    expect(verdicts).toMatchObject([
+      { name: 'animate', audits: { gen: { risk: 'high' } } },
+      { name: 'unknown', audits: { gen: null, socket: null, snyk: null } },
+    ]);
+  });
+
   it('adds a Found Skill at the version the Machine has, by its renamed repository, with the newer one as an update', async () => {
     const first = skillRepo();
     const second = gh.commit('emil/skills', { 'skills/motion/SKILL.md': skillMd('animate', 'v2') });

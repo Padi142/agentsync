@@ -300,6 +300,13 @@ export function skillsService(env: Env) {
 
     setIgnored: (userId: string, repo: string, names: string[], ignored: boolean) => setExclusions(env, userId, repo, names, ignored),
 
+    /** Verdicts are keyed by the repository's name on skills.sh, so ask under its current one: an old name returns frozen ones. */
+    async audits(repoName: string, names: string[]) {
+      const repo = await publicRepo(repoName);
+      const verdicts = await fetchAudits(repo.fullName, names);
+      return names.map((name) => ({ name, audits: verdicts.get(name) ?? noAudits }));
+    },
+
     async inspect(repoName: string, name: string): Promise<SkillCandidate> {
       const { repo, path, version } = await resolveLatest(repoName, name);
       const audits = (await fetchAudits(repo.fullName, [name]).catch(() => null))?.get(name) ?? noAudits;

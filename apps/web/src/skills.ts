@@ -44,17 +44,16 @@ export function describeState(skill: Pick<Skill, 'name' | 'pin' | 'assignment'>,
 
 /**
  * Something a Skill needs from the person, most pressing kind first: an update, a newer version on
- * a Machine, a Found Skill to add, a failed install, a blocked one, a hand edit.
+ * a Machine, a failed install, a blocked one, a hand edit.
  */
 export type Ask =
   | { kind: 'update'; risky: string[] }
   | { kind: 'newer'; machineId: string; commit: string }
-  | { kind: 'found'; machineId: string }
   | { kind: 'failed'; machineId: string }
   | { kind: 'blocked'; machineId: string }
   | { kind: 'drifted'; machineId: string };
 
-const ORDER: Ask['kind'][] = ['update', 'newer', 'found', 'failed', 'blocked', 'drifted'];
+const ORDER: Ask['kind'][] = ['update', 'newer', 'failed', 'blocked', 'drifted'];
 
 /** What one Skill needs from the person, most pressing first. */
 export function asksOf(skill: Skill): Ask[] {
@@ -75,7 +74,6 @@ export function askText(ask: Ask, skill: Skill | null, machines: Machines): stri
   switch (ask.kind) {
     case 'update': return `Update to ${shortCommit(skill!.update!.pin.commit)}${ask.risky.length ? `, ${ask.risky.join(', ')}` : ''}`;
     case 'newer': return `Newer on ${name(ask.machineId)}`;
-    case 'found': return `Found on ${name(ask.machineId)}`;
     case 'failed': return `Failed on ${name(ask.machineId)}`;
     case 'blocked': return `Blocked on ${name(ask.machineId)}`;
     case 'drifted': return `Hand edited on ${name(ask.machineId)}`;
@@ -84,10 +82,10 @@ export function askText(ask: Ask, skill: Skill | null, machines: Machines): stri
 
 export type GitHubFound = Extract<FoundSkill, { kind: 'github' }>;
 
-/** One line of the list: a Skill, or a Found Skill from GitHub that can be added. */
+/** One line of the list: a Skill, or a Found Skill from GitHub that can be synced. A Found Skill asks nothing of the person. */
 export type Entry =
   | { key: string; type: 'skill'; skill: Skill; asks: Ask[] }
-  | { key: string; type: 'found'; found: GitHubFound; asks: Ask[] };
+  | { key: string; type: 'found'; found: GitHubFound; asks: [] };
 
 export type CollectionEntry = Entry | { key: string; type: 'ignored'; name: string; repo: string; asks: [] };
 export interface SkillCollection {
@@ -119,13 +117,13 @@ export function collectionsOf(overview: SkillsOverview): SkillCollection[] {
   }));
 }
 
-/** Every Skill and addable Found Skill, those that need the person first, by the kind of their first ask. */
+/** Every Skill and syncable Found Skill, those that need the person first, by the kind of their first ask. */
 export function entriesOf(overview: SkillsOverview): Entry[] {
   const rank = (asks: Ask[]) => (asks.length ? ORDER.indexOf(asks[0]!.kind) : ORDER.length);
   const entries: Entry[] = [
     ...overview.skills.map((skill): Entry => ({ key: `skill:${skill.id}`, type: 'skill', skill, asks: asksOf(skill) })),
     ...overview.found.flatMap((found): Entry[] => found.kind === 'github'
-      ? [{ key: `found:${found.name}:${found.source}`, type: 'found', found, asks: [{ kind: 'found', machineId: found.machines[0]!.machineId }] }]
+      ? [{ key: `found:${found.name}:${found.source}`, type: 'found', found, asks: [] }]
       : []),
   ];
   // A stable sort keeps the server's order (by name) within a kind.
@@ -135,3 +133,22 @@ export function entriesOf(overview: SkillsOverview): Entry[] {
 /** Whether a Machine gets the Skill under its assignment. */
 export const isAssigned = (skill: Pick<Skill, 'assignment'>, machineId: string) =>
   skill.assignment.to === 'all' || skill.assignment.machineIds.includes(machineId);
+
+/** The Machines named, or just how many once names would crowd a row. */
+export function machineNames(ids: readonly string[], machines: Machines) {
+  if (ids.length > 3) return `${ids.length} machines`;
+  return ids.map((id) => machines.find((machine) => machine.id === id)?.nickname ?? 'a Machine').join(', ');
+}
+
+/** What each Machine with something pending will change on its next `skills sync`. */
+export function waitingOn({ skills, machines }: Pick<SkillsOverview, 'skills' | 'machines'>) {
+  return machines.flatMap((machine) => {
+    const counts = { install: 0, update: 0, remove: 0 };
+    for (const skill of skills) {
+      const state = skill.machines.find((candidate) => candidate.machineId === machine.id);
+      if (state?.status === 'pending') counts[state.change]++;
+    }
+    const changes = (['install', 'update', 'remove'] as const).flatMap((change) => counts[change] ? [`${counts[change]} to ${change}`] : []);
+    return changes.length ? [{ machine, changes: changes.join(', ') }] : [];
+  });
+}

@@ -2,19 +2,23 @@
 
 A **Skill** is an agent skill (a folder with a `SKILL.md`) from a public GitHub repository, which you add on the Skills page. AgentSync pins each one to an exact commit and installs it on your Machines with the official [`skills`](https://skills.sh) CLI.
 
-## Collections and individual skills
+## The Skills page
 
-The Skills page groups skills by their GitHub repository, such as `emilkowalski/skill`. Collections start collapsed. Open one to see compact skill rows, or use **Expand all**. Search matches both repository slugs and skill names and reveals matching rows.
+**Synced** lists what AgentSync manages. **On your machines, not synced** lists skills your Machines have that it doesn't manage yet. Both group skills by GitHub repository, and search matches repository and skill names.
 
-**Add collection** reads the repository's full skill list. All available skills are selected except ones you previously ignored. Uncheck any skills you don't want, then add the selection. Existing skills keep their pins and Machine assignments. Skills found on a Machine are added at that Machine's version; new ones use the newest version. New upstream skills aren't added automatically; open **Manage collection** to review them.
+**Needs you** appears when a synced Skill has an update or a problem. A strip at the top appears when a Machine has changes waiting, with the command that installs them.
 
-Within an expanded collection, select individual discovered skills and use **Add selected** or **Ignore selected**. **Ignore** excludes a skill from collection adds and from **Needs you**. Exclusions are saved to your account, including when a Machine stops reporting the skill. The **Ignored** view lets you restore them. Already-added skills keep their pins and Machine assignments; use **Remove** in a skill's details to remove it.
+## Syncing a skill you already have
 
-## Adding one
+**Sync** on a skill pins the version that Machine already has and sends it to every Machine, including ones you register later. **Sync** on a repository does this for every listed skill from that repository, after showing any High or Critical audits. Tick some skills to use **Sync selected** instead. Open a Skill to choose its Machines.
 
-**Add skills** searches [skills.sh](https://skills.sh). Pick one to see the version AgentSync would pin, the newest commit that changed its folder on the repository's default branch, and its audits from Gen, Socket and Snyk. A High or Critical verdict is a warning, not a block. You can add that skill or browse its whole collection.
+**Ignore** hides a skill from the list. The **ignored** link lets you restore it. To take a synced Skill off your Machines, open it and use **Remove from all machines**.
 
-A new Skill goes to every Machine, including ones you register later. Open it to choose Machines instead.
+## Adding something new
+
+**Add skills** searches [skills.sh](https://skills.sh). Pick one to see the version AgentSync would pin, the newest commit that changed its folder on the repository's default branch, and its audits from Gen, Socket and Snyk. A High or Critical verdict is a warning, not a block. You can sync that skill or browse its repository.
+
+**Browse all skills in this repo** lists everything in a repository, including skills none of your Machines have. Nothing starts ticked, and new skills in a repository are never synced automatically, so come back here to pick them up. Skills your Machines have sync at the version they have; others use the newest version.
 
 ## Installing
 
@@ -40,13 +44,13 @@ Every agent with a Target on the Machine gets every Skill: Claude Code, Codex an
 
 AgentSync checks each Skill's repository daily. When the folder changed, the Skill shows **Update to …** with the new commit, the files that changed and the audits. **Update** moves the pin; every Machine installs it on its next `skills sync`.
 
-With **Updates: Automatic**, AgentSync moves pins for you, but only to a version all three scanners audited after it was pushed and none rated High or Critical. Anything else waits for you. **Never update automatically** keeps one Skill manual.
+With **Auto-approve safe updates** on, AgentSync moves pins for you, but only to a version all three scanners audited after it was pushed and none rated High or Critical. Anything else waits for you. Either way, Machines still install it only on their next `skills sync`. **Never auto-approve updates** keeps one Skill manual.
 
 Every move of a pin is kept in the Skill's history.
 
 ## Found on your Machines
 
-Each Machine reports the skills it has, with names, sources and folder hashes, never file contents. A skill installed from GitHub that isn't a Skill yet shows up with **Add**, which pins the version that Machine already has. Hand-written skills are listed by name only.
+Each Machine reports the skills it has, with names, sources and folder hashes, never file contents. A skill installed from GitHub that isn't a Skill yet shows up with **Sync**. Hand-written skills are listed by name only, because they can't be synced.
 
 When a Machine has a newer version of a Skill than its pin, from the same repository's default branch, **Use everywhere** moves the pin to it.
 

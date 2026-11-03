@@ -1,6 +1,6 @@
 import type { Skill, SkillsOverview } from '@agentsync/contract';
 import { describe, expect, it } from 'vitest';
-import { askText, collectionsOf, entriesOf } from '../src/skills';
+import { askText, collectionsOf, entriesOf, waitingOn } from '../src/skills';
 
 const sha = (c: string) => c.repeat(40);
 const pin = (c: string) => ({ commit: sha(c), treeSha: sha('t'), installedHash: sha('h'), committedAt: new Date('2026-10-01') });
@@ -25,7 +25,7 @@ describe('the Skills list', () => {
     expect(groups[1]!.entries.map((entry) => entry.type)).toEqual(['ignored', 'found', 'skill']);
     expect(groups[0]!.entries[0]).toMatchObject({ type: 'ignored', name: 'remembered' });
   });
-  it('puts what needs the person first, by kind: update, newer, found, failed, blocked, hand edited', () => {
+  it('puts what needs the person first, by kind: update, newer, failed, blocked, hand edited', () => {
     const entries = entriesOf(overview([
       skill('calm', [{ machineId: 'a', status: 'installed' }]),
       skill('edited', [{ machineId: 'a', status: 'drifted' }]),
@@ -34,7 +34,16 @@ describe('the Skills list', () => {
       skill('ahead', [{ machineId: 'a', status: 'newer', commit: sha('3'), committedAt: new Date() }]),
     ], [{ kind: 'github', name: 'found', source: 'o/r', machines: [{ machineId: 'b', ref: null }] }, { kind: 'local', name: 'mine', machineIds: ['a'] }]));
     expect(entries.map((entry) => (entry.type === 'skill' ? entry.skill.name : entry.found.name)))
-      .toEqual(['stale', 'ahead', 'found', 'broken', 'edited', 'calm']);
+      .toEqual(['stale', 'ahead', 'broken', 'edited', 'calm', 'found']);
+  });
+
+  it('counts what each Machine will change on its next skills sync, leaving out Machines with nothing waiting', () => {
+    const waiting = waitingOn(overview([
+      skill('new', [{ machineId: 'a', status: 'pending', change: 'install' }, { machineId: 'b', status: 'installed' }]),
+      skill('newer', [{ machineId: 'a', status: 'pending', change: 'update' }, { machineId: 'b', status: 'failed', error: 'x', at: new Date() }]),
+      skill('other', [{ machineId: 'a', status: 'pending', change: 'install' }]),
+    ]));
+    expect(waiting).toEqual([{ machine: machines[0], changes: '2 to install, 1 to update' }]);
   });
 
   it('names High and Critical verdicts in an update’s reason', () => {

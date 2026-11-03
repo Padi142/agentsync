@@ -310,7 +310,7 @@ describe('skills found on the Machine', () => {
 
     const result = await t.cli('skills', 'sync');
 
-    expect(result.stdout).toMatch(/Found 2 skills on this Machine that AgentSync doesn't manage\. Add the ones you want everywhere at https?:\/\/[^ ]+\/skills/);
+    expect(result.stdout).toMatch(/Found 2 skills on this Machine that AgentSync doesn't manage\. Sync the ones you want everywhere at https?:\/\/[^ ]+\/skills/);
   });
 });
 
