@@ -544,7 +544,12 @@ const skills = {
     .input(z.object({ repo: repoNameSchema, offset: z.number().int().min(0).default(0), commit: gitShaSchema.optional() }))
     .output(z.object({ repo: repoNameSchema, commit: gitShaSchema, names: z.array(skillNameSchema), next: z.number().int().nullable() }))
     .errors(skillErrors),
-  /** Exclude unadded skills from collection adds, or restore them. Already-added skills are preserved. */
+  /** The latest skills.sh verdicts for skills of one repository, without adding them. */
+  audits: sessionProcedure
+    .input(z.object({ repo: repoNameSchema, names: z.array(skillNameSchema).min(1).max(100) }))
+    .output(z.array(z.object({ name: skillNameSchema, audits: auditsSchema })))
+    .errors(skillErrors),
+  /** Hide Found Skills from the not-synced list, or restore them. Skills already synced are unaffected. */
   setIgnored: sessionProcedure
     .input(z.object({ repo: repoNameSchema, names: z.array(skillNameSchema).min(1).max(500), ignored: z.boolean() }))
     .output(z.void()),

@@ -20,8 +20,8 @@ export async function addSkills(inputs: { repo: string; name: string; machineId?
 
 export function collectionMessage({ added, failed }: Awaited<ReturnType<typeof addSkills>>): ActionMessage {
   return failed.length
-    ? { text: `${added} added. ${failed.length} couldn’t be added: ${failed.map(({ name }) => name).join(', ')}. Open the collection to retry.`, tone: 'error' }
-    : { text: `${added} ${added === 1 ? 'skill' : 'skills'} added. Machines install them on their next skills sync.`, tone: 'success' };
+    ? { text: `${added} synced. ${failed.length} couldn’t sync: ${failed.map(({ name }) => name).join(', ')}. Try them again.`, tone: 'error' }
+    : { text: `${added} ${added === 1 ? 'skill' : 'skills'} now syncing. Machines install them on their next skills sync.`, tone: 'success' };
 }
 
 /** What a failed Skills call means for the person. */
@@ -31,7 +31,7 @@ export function skillErrorText(error: unknown): string {
     case 'NOT_FOUND': return 'GitHub has no such skill, or it’s gone.';
     case 'UNSUPPORTED_SKILL': return (error.data as { reason?: string })?.reason ?? 'GitHub has no skill folder AgentSync can install there.';
     case 'SKILL_NAME_TAKEN': return 'A Skill with this name is already in your account.';
-    case 'NO_MATCHING_COMMIT': return 'That Machine’s copy matches no version on the default branch, so it can’t be added as it is.';
+    case 'NO_MATCHING_COMMIT': return 'That Machine’s copy matches no version on the default branch, so it can’t be synced as it is.';
     case 'UPSTREAM_UNAVAILABLE': return 'GitHub or skills.sh didn’t answer. Try again in a minute.';
     default: return 'That didn’t work. Try again.';
   }

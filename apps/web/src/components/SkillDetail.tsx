@@ -7,7 +7,7 @@ import { describeState, isAssigned, RISK_NAMES, riskyVerdicts, SCANNERS, shortCo
 import { Command } from './Copy';
 import { Ago } from './Time';
 
-const MOVES = { added: 'Added', manual: 'Updated', automatic: 'Updated automatically' } as const;
+const MOVES = { added: 'Added', manual: 'Updated', automatic: 'Auto-approved' } as const;
 
 /** The three skills.sh verdicts, toned by risk. */
 export function Verdicts({ audits }: { audits: Audits }) {
@@ -154,9 +154,9 @@ export function SkillDetail({ skill, overview, actions }: { skill: Skill; overvi
               // Read once: by the time the call returns, React has put the controlled box back.
               const ignore = event.target.checked;
               void run(`auto:${skill.id}`, () => rpc.skills.setAutoUpdate({ skillId: skill.id, autoUpdate: !ignore }),
-                () => (ignore ? `${skill.name} never updates automatically` : `${skill.name} updates automatically again`));
+                () => (ignore ? `Updates to ${skill.name} always wait for you` : `Safe updates to ${skill.name} can be auto-approved again`));
             }} />
-          Never update automatically
+          Never auto-approve updates
         </label>
 
         <section>
@@ -181,10 +181,10 @@ export function SkillDetail({ skill, overview, actions }: { skill: Skill; overvi
         <div>
           <button type="button" className="button small danger" disabled={!!busy}
             onClick={() => {
-              if (!window.confirm(`Remove ${skill.name}?\n\nEach Machine deletes AgentSync's copy on its next skills sync. Copies edited by hand stay.`)) return;
+              if (!window.confirm(`Remove ${skill.name} from all machines?\n\nEach Machine deletes AgentSync's copy on its next skills sync. Copies edited by hand stay.`)) return;
               void run(`remove:${skill.id}`, () => rpc.skills.remove({ skillId: skill.id }), () => `${skill.name} removed. Machines delete their copy on the next skills sync.`);
             }}>
-            Remove
+            Remove from all machines
           </button>
         </div>
       </div>

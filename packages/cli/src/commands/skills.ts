@@ -213,7 +213,7 @@ function recordFor(skill: DesiredSkill, places: readonly Place[]): ManagedSkill 
 function sayFound(ctx: Context, scan: Scan) {
   const found = scan.items.filter((item) => !item.managed).length;
   if (found && ctx.config.server) {
-    ctx.say(`Found ${plural(found, 'skill')} on this Machine that AgentSync doesn't manage. Add the ones you want everywhere at ${new URL('/skills', ctx.config.server)}`);
+    ctx.say(`Found ${plural(found, 'skill')} on this Machine that AgentSync doesn't manage. Sync the ones you want everywhere at ${new URL('/skills', ctx.config.server)}`);
   }
 }
 

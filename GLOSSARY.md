@@ -69,7 +69,7 @@ The exact commit a Skill installs, with the git tree hash of its folder at that 
 _Avoid_: Version, lock, ref
 
 **Found Skill**:
-A skill a scan saw on a Machine that is not a Skill in the account, e.g. one installed by hand with `npx skills add` or written locally. The dashboard offers to add one from public GitHub, pinned at the commit the Machine already has; a hand-written one is reported by name only.
+A skill a scan saw on a Machine that is not a Skill in the account, e.g. one installed by hand with `npx skills add` or written locally. The dashboard offers to sync one from public GitHub, pinned at the commit the Machine already has; a hand-written one is reported by name only.
 _Avoid_: Unmanaged skill, local skill, orphan
 
 **Skill Drift**:

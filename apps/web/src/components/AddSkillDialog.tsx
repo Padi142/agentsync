@@ -13,7 +13,7 @@ const SEARCH_DELAY_MS = 250;
 
 /**
  * Add a Skill: search skills.sh, pick one to see the version that would be pinned and its audits,
- * then add it for every Machine. `taken` are the names already in the account.
+ * then sync it to every Machine. `taken` are the names already in the account.
  */
 export function AddSkillDialog({ open, onClose, taken, actions, onCollection }: {
   open: boolean;
@@ -78,7 +78,7 @@ export function AddSkillDialog({ open, onClose, taken, actions, onCollection }: 
     setAddFailed(false);
     const started = session.current;
     const ok = await actions.run(`add:${found.name}`, () => rpc.skills.add({ repo: found.repo.fullName, name: found.name }),
-      (skill) => `${skill.name} added at ${shortCommit(skill.pin.commit)}. Machines install it on their next skills sync.`);
+      (skill) => `${skill.name} now syncing at ${shortCommit(skill.pin.commit)}. Machines install it on their next skills sync.`);
     if (started !== session.current || !dialog.current?.open) return;
     if (ok) onClose();
     else setAddFailed(true);
@@ -105,13 +105,13 @@ export function AddSkillDialog({ open, onClose, taken, actions, onCollection }: 
                   <div className="sk-preview-actions">
                     <button type="button" className={`button small${riskyVerdicts(candidate.audits).length ? ' secondary' : ''}`}
                       disabled={!!actions.busy || taken.has(candidate.name)} onClick={() => add(candidate)}>
-                      {taken.has(candidate.name) ? 'Added' : actions.busy ? 'Adding…' : riskyVerdicts(candidate.audits).length ? 'Add anyway' : 'Add for every Machine'}
+                      {taken.has(candidate.name) ? 'Synced' : actions.busy ? 'Syncing…' : riskyVerdicts(candidate.audits).length ? 'Sync anyway' : 'Sync to all machines'}
                     </button>
                     <a className="sk-note" href={`https://skills.sh/${candidate.repo.fullName}`} target="_blank" rel="noopener noreferrer">Audit details</a>
                   </div>
                   {addFailed && actions.status?.tone === 'error' ? <p className="status-line" data-tone="error" role="status">{actions.status.text}</p> : null}
                   <button type="button" className="sk-browse-collection" disabled={!!actions.busy} onClick={() => onCollection(candidate.repo.fullName)}>
-                    <Icon name="collection" /><span>Browse the whole collection<strong>{candidate.repo.fullName}</strong></span><Icon name="chevron" />
+                    <Icon name="collection" /><span>Browse all skills in this repo<strong>{candidate.repo.fullName}</strong></span><Icon name="chevron" />
                   </button>
                 </>
               )}
@@ -125,7 +125,7 @@ export function AddSkillDialog({ open, onClose, taken, actions, onCollection }: 
             <button type="button" className="icon-button" aria-label="Close" onClick={onClose}><Icon name="close" /></button>
           </div>
           {repository.success ? <div className="sk-repository-result"><button type="button" className="sk-browse-collection" onClick={() => onCollection(repository.data)}>
-            <Icon name="collection" /><span>Browse collection<strong>{repository.data}</strong></span><Icon name="chevron" />
+            <Icon name="collection" /><span>Browse repo<strong>{repository.data}</strong></span><Icon name="chevron" />
           </button></div> : null}
           <ul className="sk-results">
             {results === null ? null : results.length === 0 ? (
@@ -134,7 +134,7 @@ export function AddSkillDialog({ open, onClose, taken, actions, onCollection }: 
               <li key={`${result.source}/${result.name}`}>
                 <button type="button" className="sk-result" onClick={() => setPicked(result)} disabled={taken.has(result.name)}>
                   <span className="sk-result-main"><strong>{result.name}</strong><span className="sk-src">{result.source}</span></span>
-                  <span className="sk-installs">{taken.has(result.name) ? 'Added' : compact.format(result.installs)}</span>
+                  <span className="sk-installs">{taken.has(result.name) ? 'Synced' : compact.format(result.installs)}</span>
                 </button>
               </li>
             ))}

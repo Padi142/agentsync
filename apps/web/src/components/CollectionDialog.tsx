@@ -5,7 +5,7 @@ import { rpc } from '../rpc';
 import { addSkills, collectionMessage, skillErrorText, type SkillActions } from '../skill-actions';
 import { Icon } from './Icon';
 
-/** Review the full repository, keeping exclusions unchecked and already-added names protected. */
+/** Pick skills to sync from everything in a repository. Nothing starts ticked, and leaving a skill unticked changes nothing. */
 export function CollectionDialog({ repo, onClose, overview, actions }: {
   repo: string | null;
   onClose: () => void;
@@ -24,16 +24,12 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const session = useRef(0);
-  // Snapshot exclusions when opening; a partial add's reload must not reset the selection.
-  const overviewRef = useRef(overview);
-  overviewRef.current = overview;
 
   useEffect(() => {
     if (!repo) { dialog.current?.close(); return; }
     dialog.current?.showModal();
     session.current++;
     let live = true;
-    const started = overviewRef.current;
     setLoading(true);
     setNames([]);
     setError('');
@@ -56,10 +52,9 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
         offset = page.next;
       } while (live);
       if (!live) return;
-      const ignored = new Set(started.ignored.filter((item) => [repo.toLowerCase(), canonical.toLowerCase()].includes(item.repo.toLowerCase())).map((item) => item.name));
       setSource(canonical);
       setNames([...collected].sort((a, b) => a.localeCompare(b)));
-      setSelected(new Set([...collected].filter((name) => !ignored.has(name))));
+      setSelected(new Set());
       setLoading(false);
     })();
     return () => { live = false; };
@@ -68,7 +63,10 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
   const taken = new Set(overview.skills.map((skill) => skill.name));
   const available = names.filter((name) => !taken.has(name));
   const picked = available.filter((name) => selected.has(name));
-  const excluded = available.filter((name) => !selected.has(name));
+  // A Machine's lock or an old exclusion may still name the repository as it was before a rename.
+  const isThisRepo = (name: string) => [repo?.toLowerCase(), source.toLowerCase()].includes(name.toLowerCase());
+  const foundHere = (name: string) => overview.found.find((item) => item.kind === 'github' && item.name === name && isThisRepo(item.source));
+  const ignoredHere = (name: string) => overview.ignored.some((item) => item.name === name && isThisRepo(item.repo));
   const busy = !!actions.busy || saving;
 
   const save = async () => {
@@ -81,19 +79,15 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
     try {
       let partial = false;
       const ok = await actions.run(`add-collection:${source}`, async () => {
-        // Each add gets a separate Worker request budget. Exclusions are saved before any add.
-        for (let offset = 0; offset < excluded.length; offset += 500) {
-          await rpc.skills.setIgnored({ repo: source, names: excluded.slice(offset, offset + 500), ignored: true });
-        }
+        // Each add gets a separate Worker request budget.
         const result = await addSkills(picked.map((name) => {
-          const found = overview.found.find((item) => item.kind === 'github' && item.name === name
-            && [repo.toLowerCase(), source.toLowerCase()].includes(item.source.toLowerCase()));
+          const found = foundHere(name);
           return { repo: source, name, machineId: found?.kind === 'github' ? found.machines[0]?.machineId : undefined };
         }), setProgress);
         partial = result.failed.length > 0;
         if (started === session.current) setFailures(result.failed);
         return result;
-      }, (result) => result.added || result.failed.length ? collectionMessage(result) : 'Collection exclusions saved.');
+      }, collectionMessage);
       if (started === session.current) setSaveError(!ok || partial);
       if (started === session.current && dialog.current?.open && ok && !partial) onClose();
     } finally {
@@ -101,12 +95,11 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
     }
   };
 
-  return <dialog ref={dialog} className="sk-dialog sk-collection-dialog" aria-label="Manage collection" onClose={onClose}
+  return <dialog ref={dialog} className="sk-dialog sk-collection-dialog" aria-label="Browse repository" onClose={onClose}
     onCancel={(event) => { if (saving) event.preventDefault(); }} onClick={(event) => !saving && event.target === dialog.current && onClose()}>
     <div className="sk-dialog-head"><Icon name="collection" size={20} /><strong>{repo}</strong>
-      <button type="button" className="icon-button" aria-label="Close collection" disabled={saving} onClick={onClose}><Icon name="close" /></button>
+      <button type="button" className="icon-button" aria-label="Close repository" disabled={saving} onClick={onClose}><Icon name="close" /></button>
     </div>
-    <p className="sk-collection-intro">Choose which skills to add. Unchecked skills stay ignored.</p>
     {loading ? <div className="sk-collection-loading" role="status">Reading skills from this repository…</div>
       : error ? <div className="sk-collection-loading"><p className="status-line" data-tone="error" role="alert">{error}</p><button type="button" className="button small secondary" onClick={() => setRetry((value) => value + 1)}>Try again</button></div>
         : names.length ? <>
@@ -116,6 +109,7 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
           </div></div>
           <ul className="sk-collection-options">{names.map((name) => {
             const added = taken.has(name);
+            const onMachines = !added && !!foundHere(name);
             const own = overview.skills.some((skill) => skill.name === name && skill.repo.fullName.toLowerCase() === source.toLowerCase());
             const failure = failures.find((item) => item.name === name);
             return <li key={name}><label><input type="checkbox" className="sk-checkbox" checked={added || selected.has(name)} disabled={busy || added}
@@ -124,13 +118,13 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
                 if (event.target.checked) next.add(name); else next.delete(name);
                 return next;
               })} /><span><strong>{name}</strong>{failure ? <small className="status-line" data-tone="error">{failure.error}</small> : null}</span>
-              <span className="sk-option-state" data-added={own || undefined}>{own ? 'Added' : added ? 'Name already in use' : selected.has(name) ? '' : 'Ignored'}</span>
+              <span className="sk-option-state" data-added={own || undefined}>{own ? 'Synced' : added ? 'Name already in use' : onMachines ? 'On your machines' : ignoredHere(name) ? 'Ignored' : ''}</span>
             </label></li>;
           })}</ul>
         </> : <p className="sk-collection-loading">No supported skills found in this repository.</p>}
-    <div className="sk-collection-dialog-footer"><span>{loading ? 'Fetching the full collection' : `${picked.length} to add${excluded.length ? `, ${excluded.length} ignored` : ''}`}</span>
-      <button type="button" className="button" disabled={busy || loading || !!error || !names.length || (!picked.length && !excluded.length)} onClick={save}>
-        {saving ? `Adding ${progress} of ${picked.length}…` : picked.length ? `Add ${picked.length} ${picked.length === 1 ? 'skill' : 'skills'}` : 'Save exclusions'}
+    <div className="sk-collection-dialog-footer"><span>{loading ? '' : `${picked.length} selected`}</span>
+      <button type="button" className="button" disabled={busy || loading || !!error || !picked.length} onClick={save}>
+        {saving ? `Syncing ${progress} of ${picked.length}…` : `Sync ${picked.length} ${picked.length === 1 ? 'skill' : 'skills'}`}
       </button></div>
     {saveError ? <p className="sk-dialog-error" role="alert">{actions.status?.text}</p> : null}
   </dialog>;

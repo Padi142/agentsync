@@ -238,7 +238,7 @@ export function listExclusions(env: Pick<Env, 'DB'>, userId: string) {
     .where(eq(skillExclusion.userId, userId)).orderBy(asc(skillExclusion.repo), asc(skillExclusion.name)).all();
 }
 
-/** Save collection exclusions. Already-added skills keep their pins, assignments and history. */
+/** Save which Found Skills are ignored. Skills already synced keep their pins, assignments and history. */
 export async function setExclusions(env: Pick<Env, 'DB'>, userId: string, repo: string, names: string[], ignored: boolean) {
   const db = createDb(env);
   const source = repo.toLowerCase();
