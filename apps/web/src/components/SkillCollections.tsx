@@ -108,7 +108,7 @@ export function SkillCollections({ overview, actions, query, onClearQuery, onBro
       </section> : null}
 
       {found.length || ignored.length || local.length ? <section className="sk-section" aria-label="On your machines, not synced">
-        <div className="sk-section-head"><h2>On your machines, not synced</h2><span>{total(found)}</span>
+        <div className="sk-section-head"><h2>On your machines, not synced</h2><span>{total(found) + local.length}</span>
           {term ? null : <button type="button" className="sk-text-button" aria-expanded={showFound} onClick={() => setFoundOpen(!showFound)}>{showFound ? 'Hide' : 'Show'}</button>}
         </div>
         {showFound ? <>

@@ -47,7 +47,7 @@ function SkillsPage() {
               () => autoApprove ? 'New versions wait for your approval.' : 'Safe updates are approved automatically. Machines install them on their next skills sync.')} />
           <span>
             <strong>Auto-approve safe updates</strong>
-            <small>New versions all three scanners cleared are approved for you. Anything flagged waits here. Machines still install only when you run <code>agentsync skills sync</code>.</small>
+            <small>A new version is approved for you if all three scanners audited it after it was pushed and none rated it High or Critical. Anything else waits here. Machines still install only when you run <code>agentsync skills sync</code>.</small>
           </span>
         </label>
       ) : null}
