@@ -10,7 +10,7 @@ A **Skill** is an agent skill (a folder with a `SKILL.md`) from a public GitHub 
 
 ## Syncing a skill you already have
 
-**Sync** on a skill pins the version that Machine already has and sends it to every Machine, including ones you register later. **Sync** on a repository does this for every listed skill from that repository. Tick some skills to use **Sync selected** instead. When several skills go at once, AgentSync asks first and shows any High or Critical audits. A single skill syncs straight away, with no audit check. Open a Skill to choose its Machines.
+**Sync** on a skill pins the version that Machine already has and sends it to every Machine, including ones you register later. **Sync** on a repository does this for every listed skill from that repository. Tick some skills to use **Sync selected** instead. When several skills go at once, AgentSync asks first, and shows any High or Critical audits and any skills the repository no longer has. A single skill syncs straight away, with no audit check. Open a Skill to choose its Machines.
 
 **Ignore** hides a skill from the list. The **ignored** link lets you restore it. To take a synced Skill off your Machines, open it and use **Remove from all machines**.
 

@@ -2,7 +2,7 @@ import type { SkillsOverview } from '@agentsync/contract';
 import { safe } from '@orpc/client';
 import { useEffect, useRef, useState } from 'react';
 import { rpc } from '../rpc';
-import { addSkills, collectionMessage, skillErrorText, type SkillActions } from '../skill-actions';
+import { addSkills, collectionMessage, progressText, readCollection, skillErrorText, type SkillActions, type SyncProgress } from '../skill-actions';
 import { Icon } from './Icon';
 
 /** Pick skills to sync from everything in a repository. Nothing starts ticked, and leaving a skill unticked changes nothing. */
@@ -19,7 +19,7 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
-  const [progress, setProgress] = useState(0);
+  const [progress, setProgress] = useState<SyncProgress>({ done: 0, failed: 0 });
   const [failures, setFailures] = useState<{ name: string; error: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
@@ -35,28 +35,15 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
     setError('');
     setFailures([]);
     setSaveError(false);
-    setProgress(0);
-    void (async () => {
-      const collected = new Set<string>();
-      let offset = 0;
-      let commit: string | undefined;
-      let canonical = repo;
-      do {
-        const [error, page] = await safe(rpc.skills.collection({ repo, offset, commit }));
-        if (!live) return;
-        if (error) { setError(skillErrorText(error)); setLoading(false); return; }
-        page.names.forEach((name) => collected.add(name));
-        canonical = page.repo;
-        commit = page.commit;
-        if (page.next === null) break;
-        offset = page.next;
-      } while (live);
+    setProgress({ done: 0, failed: 0 });
+    void safe(readCollection(repo)).then(([error, collection]) => {
       if (!live) return;
-      setSource(canonical);
-      setNames([...collected].sort((a, b) => a.localeCompare(b)));
-      setSelected(new Set());
       setLoading(false);
-    })();
+      if (error) return setError(skillErrorText(error));
+      setSource(collection.repo);
+      setNames(collection.names.sort((a, b) => a.localeCompare(b)));
+      setSelected(new Set());
+    });
     return () => { live = false; };
   }, [repo, retry]);
 
@@ -73,7 +60,7 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
     if (!repo || busy) return;
     const started = session.current;
     setSaving(true);
-    setProgress(0);
+    setProgress({ done: 0, failed: 0 });
     setFailures([]);
     setSaveError(false);
     try {
@@ -124,7 +111,7 @@ export function CollectionDialog({ repo, onClose, overview, actions }: {
         </> : <p className="sk-collection-loading">No supported skills found in this repository.</p>}
     <div className="sk-collection-dialog-footer"><span>{loading ? '' : `${picked.length} selected`}</span>
       <button type="button" className="button" disabled={busy || loading || !!error || !picked.length} onClick={save}>
-        {saving ? `Syncing ${progress} of ${picked.length}…` : `Sync ${picked.length} ${picked.length === 1 ? 'skill' : 'skills'}`}
+        {saving ? progressText(progress, picked.length) : `Sync ${picked.length} ${picked.length === 1 ? 'skill' : 'skills'}`}
       </button></div>
     {saveError ? <p className="sk-dialog-error" role="alert">{actions.status?.text}</p> : null}
   </dialog>;

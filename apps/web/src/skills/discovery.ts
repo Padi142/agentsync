@@ -1,5 +1,4 @@
 import { parse } from 'yaml';
-import type { GitHub } from './github';
 import type { GitTreeItem } from './hash';
 
 // Ported from `skills` 1.7.4 (`discoverSkills` in dist/cli.mjs) so the server pins the folder that
@@ -15,8 +14,6 @@ const AGENT_PROJECT_SKILL_DIRS = [
 ];
 const CONTAINERS = ['skills', 'skills/.curated', 'skills/.experimental', 'skills/.system', ...AGENT_PROJECT_SKILL_DIRS];
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '__pycache__']);
-/** Reading SKILL.md files costs a request each (a Worker request may make only 50), so stop after this many. */
-const MAX_READS = 30;
 
 const join = (...parts: string[]) => parts.filter(Boolean).join('/');
 const parent = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
@@ -123,27 +120,4 @@ export function frontmatterName(text: string): string | null {
   } catch {
     return null;
   }
-}
-
-/**
- * The folder of the skill named `name` in the repository at `commit`, or `null`: the first folder in
- * `skills`' own walk order whose SKILL.md declares exactly that name, since `skills` keeps the first
- * skill of a name and drops later ones.
- */
-export async function findSkillFolder(gh: GitHub, fullName: string, commit: string, tree: GitTreeItem[], name: string,
-  cachedName?: (folder: string) => Promise<string | null | undefined>) {
-  const read = (path: string) => gh.raw(fullName, commit, path);
-  let reads = 0;
-  for (const folder of await skillFolders(tree, read)) {
-    const cached = await cachedName?.(folder);
-    if (cached !== undefined && cached !== null) {
-      if (cached === name) return folder;
-      continue;
-    }
-    if (reads++ >= MAX_READS) break;
-    const text = await read(join(folder, 'SKILL.md'));
-    // Exact: `skills` names the installed folder after the frontmatter as written.
-    if (text !== null && frontmatterName(text) === name) return folder;
-  }
-  return null;
 }
