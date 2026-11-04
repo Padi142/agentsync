@@ -45,6 +45,8 @@ const encodePath = (path: string) => path.split('/').map(encodeURIComponent).joi
  * without one GitHub allows 60 requests an hour per IP. Every call has a timeout.
  */
 export function github(token: string | undefined) {
+  const noAnswer = (error: unknown) => new UpstreamError(`GitHub did not answer: ${error instanceof Error ? error.message : String(error)}`);
+
   /** Requests made so far, API and raw: a Worker invocation may only make so many. */
   const usage = { requests: 0 };
 
@@ -62,14 +64,15 @@ export function github(token: string | undefined) {
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
     } catch (error) {
-      throw new UpstreamError(`GitHub did not answer: ${error instanceof Error ? error.message : String(error)}`);
+      throw noAnswer(error);
     }
     if (response.status === 404 || response.status === 422) throw new NotFoundError(`GitHub has no ${path}.`);
     if (!response.ok) {
       const limited = response.headers.get('x-ratelimit-remaining') === '0';
       throw new UpstreamError(limited ? 'GitHub’s rate limit is used up. Try again later.' : `GitHub answered ${response.status}.`);
     }
-    return response.json() as Promise<T>;
+    // The body can fail too, after a good status.
+    return await (response.json() as Promise<T>).catch((error: unknown) => { throw noAnswer(error); });
   }
 
   async function repo(path: string): Promise<Repo> {
@@ -129,11 +132,11 @@ export function github(token: string | undefined) {
           signal: AbortSignal.timeout(TIMEOUT_MS),
         });
       } catch (error) {
-        throw new UpstreamError(`GitHub did not answer: ${error instanceof Error ? error.message : String(error)}`);
+        throw noAnswer(error);
       }
       if (response.status === 404) return null;
       if (!response.ok) throw new UpstreamError(`GitHub answered ${response.status}.`);
-      return response.text();
+      return await response.text().catch((error: unknown) => { throw noAnswer(error); });
     },
   };
 }

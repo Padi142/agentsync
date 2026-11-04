@@ -45,8 +45,15 @@ export const CHECK_REQUESTS = 3 + 2 * MAX_VERSIONS;
 const ADD_REQUEST_BUDGET = 50 - 2 * MAX_VERSIONS - 2;
 /** Requests after which no more SKILL.md files or old versions are read, or skills started, leaving room for the rest of an Add. */
 const READ_BUDGET = ADD_REQUEST_BUDGET - 2;
-/** D1 statements after which the same stops, under a Worker's 50: finishing the skill in hand takes up to 20 more. */
-const QUERY_BUDGET = 30;
+/** The D1 statements a Worker invocation may make on the Free plan. */
+const QUERY_LIMIT = 50;
+/** D1 statements after which the same stops: finishing the skill in hand takes up to 20 more. */
+const QUERY_BUDGET = QUERY_LIMIT - 20;
+/**
+ * The most D1 statements one update check makes: settings, cached versions, an insert and a name per
+ * version, saving the check, moving the Pin (a batch of 2), and recording a failure.
+ */
+const CHECK_QUERIES = 2 + 2 * MAX_VERSIONS + 1 + 2 + 1;
 /** How many SKILL.md files are read at once. */
 const READ_AT_ONCE = 6;
 
@@ -546,15 +553,15 @@ export function skillsService(worker: Env) {
 
     /**
      * The scheduled update check: Skills not checked for about a day, oldest first, as many as fit in
-     * `budget` outgoing requests (a Worker invocation may make only so many). One check makes at most
-     * `CHECK_REQUESTS`. A failed check is retried in about two hours, not a day.
+     * `budget` outgoing requests and a Worker's D1 limit. One check makes at most `CHECK_REQUESTS` and
+     * `CHECK_QUERIES`. A failed check is retried in about two hours, not a day.
      */
     async checkStale(budget: number, now = new Date()) {
       const rows = await staleSkillRows(env, new Date(now.getTime() - 20 * 60 * 60 * 1000), 50);
       const settings = new Map<string, boolean>();
       let checked = 0;
       for (const row of rows) {
-        if (gh.usage.requests + CHECK_REQUESTS > budget) break;
+        if (gh.usage.requests + CHECK_REQUESTS > budget || db.queries + CHECK_QUERIES > QUERY_LIMIT) break;
         try {
           if (!settings.has(row.userId)) settings.set(row.userId, (await getSettings(env, row.userId)).autoUpdate);
           await checkSkill(row, settings.get(row.userId));

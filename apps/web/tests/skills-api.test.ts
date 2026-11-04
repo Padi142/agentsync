@@ -382,22 +382,36 @@ describe('Adding several skills at once', () => {
     expect((await browser().skills.overview()).skills[0]!.pin.commit).toBe(first);
   });
 
-  it('stays within a Worker’s limits on every call, however far back a Machine’s copy is', async () => {
-    const first = gh.repo('team/old', { 'skills/a/SKILL.md': skillMd('a') });
-    for (let version = 2; version <= 60; version++) gh.commit('team/old', { 'skills/a/SKILL.md': skillMd('a', `v${version}`) });
+  /** `env` with a count of its D1 statements, and of every outgoing request while `work` runs. */
+  async function counting<T>(work: (counted: Env) => Promise<T>) {
+    const used = { queries: 0, requests: 0 };
+    const DB = new Proxy(env.DB, { get(target, property) {
+      if (property === 'prepare') used.queries++;
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const healthy = globalThis.fetch;
+    globalThis.fetch = ((input, init) => { used.requests++; return healthy(input, init); }) as typeof fetch;
+    try {
+      return { result: await work({ ...env, DB }), used };
+    } finally {
+      globalThis.fetch = healthy;
+    }
+  }
+
+  it('stays within a Worker’s limits on every call, however many folders there are and however far back a Machine’s copy is', async () => {
+    const first = gh.repo('team/old', {
+      ...Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`skills/other-${String(i).padStart(2, '0')}/SKILL.md`, skillMd(`other-${i}`)])),
+      'skills/zed/SKILL.md': skillMd('zed'),
+    });
+    for (let version = 2; version <= 60; version++) gh.commit('team/old', { 'skills/zed/SKILL.md': skillMd('zed', `v${version}`) });
     const { machine, client } = await registerMachine();
-    await client.skills.report({ scan: [{ name: 'a', source: 'team/old', ref: null, hash: await gh.installedHash('team/old', first, 'skills/a'), managed: false }] });
+    await client.skills.report({ scan: [{ name: 'zed', source: 'team/old', ref: null, hash: await gh.installedHash('team/old', first, 'skills/zed'), managed: false }] });
     const add = async () => {
-      let queries = 0;
-      const DB = new Proxy(env.DB, { get(target, property) {
-        if (property === 'prepare') queries++;
-        const value: unknown = Reflect.get(target, property);
-        return typeof value === 'function' ? value.bind(target) : value;
-      } });
-      gh.calls.length = 0;
-      const result = await rpcClient({ ...env, DB }, { cookie: `wos-session=${identities.alice.id}` }).skills.addMany({ repo: 'team/old', skills: [{ name: 'a', machineId: machine.id }] });
-      expect(queries).toBeLessThanOrEqual(50);
-      expect(gh.calls.length).toBeLessThanOrEqual(50);
+      const { result, used } = await counting((counted) => rpcClient(counted, { cookie: `wos-session=${identities.alice.id}` }).skills
+        .addMany({ repo: 'team/old', skills: [{ name: 'zed', machineId: machine.id }] }));
+      expect(used.queries).toBeLessThanOrEqual(50);
+      expect(used.requests).toBeLessThanOrEqual(50);
       return result;
     };
     let result = await add();
@@ -405,11 +419,30 @@ describe('Adding several skills at once', () => {
       expect(calls).toBeLessThan(10);
       result = await add();
     }
-    expect(result).toEqual({ added: ['a'], failed: [], rest: [] });
+    expect(result).toEqual({ added: ['zed'], failed: [], rest: [] });
     expect((await browser().skills.overview()).skills[0]!.pin.commit).toBe(first);
   }, 30_000);
 
-  it('reports a saved skill as added when GitHub fails while looking for its newer versions', async () => {
+  it('keeps the update check within a Worker’s D1 limit, leaving the rest for the next run', async () => {
+    const names = Array.from({ length: 24 }, (_, i) => `skill-${String(i).padStart(2, '0')}`);
+    gh.repo('team/many', Object.fromEntries(names.map((name) => [`skills/${name}/SKILL.md`, skillMd(name)])));
+    await browser().skills.settings({ autoUpdate: true });
+    await browser().skills.collection({ repo: 'team/many' });
+    for (let start = 0; start < names.length; start += 6) {
+      await browser().skills.addMany({ repo: 'team/many', skills: names.slice(start, start + 6).map((name) => ({ name })) });
+    }
+    gh.commit('team/many', Object.fromEntries(names.map((name) => [`skills/${name}/SKILL.md`, skillMd(name, 'v2')])));
+    for (const name of names) gh.audit('team/many', name, 'safe');
+    const { result, used } = await counting((counted) => skillsService(counted).checkStale(1000, new Date(Date.now() + 25 * 3600_000)));
+    expect(used.queries).toBeLessThanOrEqual(50);
+    expect(result.checked).toBeGreaterThan(0);
+    expect(result.checked).toBeLessThan(names.length);
+  }, 30_000);
+
+  it.each([
+    ['answers with an error', () => new Response('down', { status: 500 })],
+    ['breaks off mid-answer', () => new Response(new ReadableStream({ pull: (controller) => controller.error(new TypeError('connection reset')) }))],
+  ])('reports a saved skill as added when GitHub %s while looking for its newer versions', async (_, failure) => {
     const first = gh.repo('team/old', { 'skills/a/SKILL.md': skillMd('a') });
     const between = gh.commit('team/old', { 'skills/a/SKILL.md': skillMd('a', 'v2') });
     gh.commit('team/old', { 'skills/a/SKILL.md': skillMd('a', 'v3') });
@@ -418,7 +451,7 @@ describe('Adding several skills at once', () => {
     const healthy = globalThis.fetch;
     globalThis.fetch = (async (input, init) => {
       const url = String(input instanceof Request ? input.url : input);
-      return url.includes('raw.githubusercontent.com') && url.includes(between) ? new Response('down', { status: 500 }) : healthy(input, init);
+      return url.includes('raw.githubusercontent.com') && url.includes(between) ? failure() : healthy(input, init);
     }) as typeof fetch;
     try {
       // The search for the Machine's copy passes `between` without needing its name; the check for newer versions does.
