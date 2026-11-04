@@ -278,7 +278,7 @@ describe('The update check', () => {
       const [shown] = (await browser().skills.overview()).skills;
       expect(shown).toMatchObject({ pin: { commit: skill.pin.commit }, update: { pin: { commit: newer } } });
     }
-  });
+  }, 15_000); // Three rounds of real git repositories, which can pass 5s on a busy machine.
 });
 
 describe('What a check may offer', () => {
