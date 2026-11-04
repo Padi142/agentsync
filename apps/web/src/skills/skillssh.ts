@@ -13,7 +13,9 @@ async function get(url: string): Promise<unknown> {
     throw new UpstreamError(`skills.sh did not answer: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!response.ok) throw new UpstreamError(`skills.sh answered ${response.status}.`);
-  return response.json();
+  return await (response.json() as Promise<unknown>).catch((error: unknown) => {
+    throw new UpstreamError(`skills.sh did not answer: ${error instanceof Error ? error.message : String(error)}`);
+  });
 }
 
 const searchResponse = z.object({

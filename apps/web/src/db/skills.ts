@@ -268,6 +268,13 @@ export function cachedFolderVersion(env: Pick<Env, 'DB'>, repoId: number, commit
     .where(and(eq(skillFolderVersion.repoId, repoId), eq(skillFolderVersion.commit, commit), eq(skillFolderVersion.path, path))).get();
 }
 
+/** Every cached version of a folder by commit, in one query however long its history is. */
+export async function cachedVersionsOfFolder(env: Pick<Env, 'DB'>, repoId: number, path: string) {
+  const rows = await createDb(env).select().from(skillFolderVersion)
+    .where(and(eq(skillFolderVersion.repoId, repoId), eq(skillFolderVersion.path, path))).all();
+  return new Map(rows.map((row) => [row.commit, row]));
+}
+
 /** The folders of a commit whose SKILL.md was already read, with what it said. */
 export async function namedFolders(env: Pick<Env, 'DB'>, repoId: number, commit: string) {
   const rows = await createDb(env).select({ path: skillFolderVersion.path, skillName: skillFolderVersion.skillName, installedHash: skillFolderVersion.installedHash })
