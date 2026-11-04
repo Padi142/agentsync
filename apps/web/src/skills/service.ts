@@ -3,8 +3,9 @@ import {
   type Audits, type FoundSkill, type MachineSkillState, type Pin, type PinMove, type Skill, type SkillCandidate,
   type SkillDiff, type SkillsOverview, type DesiredSkill, type ScannedSkill, type SkillSyncResult, type SkillAssignment,
 } from '@agentsync/contract';
+import { countQueries } from '../db';
 import {
-  assignedSkillRows, cacheFolderVersion, cacheNamedFolders, cachedFolderVersion, chosenMachines, deleteSkill, getReport, getSettings,
+  assignedSkillRows, cacheFolderVersion, cacheNamedFolders, cachedFolderVersion, cachedVersionsOfFolder, chosenMachines, deleteSkill, getReport, getSettings,
   auditsOf, getSkillRow, insertSkill, listSkillRows, movePin, namedFolders, nameFolderVersion, noAudits, storedAudits, pinHashes, pinHistory, putSettings, reportsFor, saveCheck,
   saveReport, setAssignment, setAutoUpdate, staleSkillRows, touchCheck, listExclusions, setExclusions, type SkillRow,
 } from '../db/skills';
@@ -44,6 +45,8 @@ export const CHECK_REQUESTS = 3 + 2 * MAX_VERSIONS;
 const ADD_REQUEST_BUDGET = 50 - 2 * MAX_VERSIONS - 2;
 /** Requests after which no more SKILL.md files or old versions are read, or skills started, leaving room for the rest of an Add. */
 const READ_BUDGET = ADD_REQUEST_BUDGET - 2;
+/** D1 statements after which the same stops, under a Worker's 50: finishing the skill in hand takes up to 20 more. */
+const QUERY_BUDGET = 30;
 /** How many SKILL.md files are read at once. */
 const READ_AT_ONCE = 6;
 
@@ -74,17 +77,20 @@ const pinOf = (row: SkillRow): FolderVersion => ({
 });
 
 /** Skills: adding, pinning and updating them from GitHub, and where they stand on each Machine. */
-export function skillsService(env: Env) {
+export function skillsService(worker: Env) {
+  const { env, usage: db } = countQueries(worker);
   const gh: GitHub = github(env.GITHUB_TOKEN);
+  const outOfBudget = () => gh.usage.requests >= READ_BUDGET || db.queries > QUERY_BUDGET;
 
   /**
    * A folder at a commit, from the D1 cache or GitHub: its hashes (one tree call), and with `name` also
    * checked to still be the skill of that name there (one raw read), so a version that lost or renamed
    * its SKILL.md is never offered. `null` if it isn't an installable version of `name` (with `name`
-   * `null`: of any skill, to compare hashes before paying for the name check).
+   * `null`: of any skill, to compare hashes before paying for the name check). `known` is the folder's
+   * cached versions (see `cachedVersionsOfFolder`), to save a query per version when looking through many.
    */
-  async function folderVersion(repoId: number, fullName: string, commit: Commit, path: string, name: string | null): Promise<FolderVersion | null> {
-    let cached = await cachedFolderVersion(env, repoId, commit.sha, path);
+  async function folderVersion(repoId: number, fullName: string, commit: Commit, path: string, name: string | null, known?: Awaited<ReturnType<typeof cachedVersionsOfFolder>>): Promise<FolderVersion | null> {
+    let cached = known ? known.get(commit.sha) : await cachedFolderVersion(env, repoId, commit.sha, path);
     if (!cached) {
       let tree: Awaited<ReturnType<GitHub['tree']>>;
       try {
@@ -92,7 +98,9 @@ export function skillsService(env: Env) {
       } catch (error) {
         // The commit deleted or moved the folder: a version with no skill in it.
         if (!(error instanceof NotFoundError)) throw error;
-        await cacheFolderVersion(env, { repoId, commit: commit.sha, path, treeSha: '', installedHash: null, skillName: '' });
+        const missing = { repoId, commit: commit.sha, path, treeSha: '', installedHash: null, skillName: '' };
+        await cacheFolderVersion(env, missing);
+        known?.set(commit.sha, missing);
         return null;
       }
       let installedHash: string | null = null;
@@ -106,6 +114,7 @@ export function skillsService(env: Env) {
       // Without an installable folder the name doesn't matter: record it as having none.
       cached = { repoId, commit: commit.sha, path, treeSha: tree.sha, installedHash, skillName: installedHash ? null : '' };
       await cacheFolderVersion(env, cached);
+      known?.set(commit.sha, cached);
     }
     if (!cached.installedHash) return null;
     if (name !== null && cached.skillName === null) {
@@ -142,9 +151,12 @@ export function skillsService(env: Env) {
     return { ...await readSnapshot(repo, head.sha), head };
   }
 
-  /** Read these folders' SKILL.md and save what they say, so no later call has to read them again. */
+  /**
+   * Read these folders' SKILL.md and save what they say, so no later call has to read them again. A folder
+   * that can't be read doesn't lose the others: returns why, by folder, for the caller to raise if it matters.
+   */
   async function readFolders({ repo, commit, tree, named }: RepoSnapshot, folders: string[]) {
-    const rows = await Promise.all(folders.map(async (folder) => {
+    const results = await Promise.allSettled(folders.map(async (folder) => {
       const text = await gh.raw(repo.fullName, commit, folder ? `${folder}/SKILL.md` : 'SKILL.md');
       let installedHash: string | null = null;
       try {
@@ -157,8 +169,10 @@ export function skillsService(env: Env) {
         treeSha: folder ? tree.tree.find((item) => item.path === folder)!.sha : tree.sha,
       };
     }));
+    const rows = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
     await cacheNamedFolders(env, rows);
     for (const row of rows) named.set(row.path, row);
+    return new Map(results.flatMap((result, index): [string, unknown][] => result.status === 'rejected' ? [[folders[index]!, result.reason]] : []));
   }
 
   /**
@@ -169,8 +183,10 @@ export function skillsService(env: Env) {
     for (const [index, folder] of at.folders.entries()) {
       if (!at.named.has(folder)) {
         const room = READ_BUDGET - gh.usage.requests;
-        if (room <= 0) throw new StillReadingError(STILL_READING);
-        await readFolders(at, at.folders.slice(index).filter((later) => !at.named.has(later)).slice(0, Math.min(room, READ_AT_ONCE)));
+        if (outOfBudget()) throw new StillReadingError(STILL_READING);
+        const failures = await readFolders(at, at.folders.slice(index).filter((later) => !at.named.has(later)).slice(0, Math.min(room, READ_AT_ONCE)));
+        // Only this folder decides the search: a later one read ahead may never be reached.
+        if (failures.has(folder)) throw failures.get(folder);
       }
       if (at.named.get(folder)!.skillName === name) return folder;
     }
@@ -203,7 +219,8 @@ export function skillsService(env: Env) {
     const commits = history ?? await gh.folderHistory(repo.fullName, repo.defaultBranch, path);
     const index = commits.findIndex((commit) => commit.sha === pinCommit);
     const candidates = (index < 0 ? commits : commits.slice(0, index)).slice(0, MAX_VERSIONS);
-    const versions = await Promise.all(candidates.map((commit) => folderVersion(repo.id, repo.fullName, commit, path, name)));
+    const known = await cachedVersionsOfFolder(env, repo.id, path);
+    const versions = await Promise.all(candidates.map((commit) => folderVersion(repo.id, repo.fullName, commit, path, name, known)));
     const newer = versions.filter((version) => version !== null);
     return { newer, newestUsable: !candidates.length || newer[0]?.commit === candidates[0]!.sha };
   }
@@ -259,13 +276,14 @@ export function skillsService(env: Env) {
       if (!machines.some((machine) => machine.id === input.machineId)) throw new NotFoundError('No such Machine.');
       const hash = (await getReport(env, input.machineId))?.scan.find((item) => item.name === input.name && !item.managed)?.hash;
       if (!hash) throw new NoMatchingCommitError('That Machine has no copy of this skill from GitHub.');
+      const known = await cachedVersionsOfFolder(env, repo.id, path);
       let match: FolderVersion | null = null;
       for (const commit of history) {
-        if (gh.usage.requests >= READ_BUDGET) throw new StillReadingError(STILL_READING);
-        const version = commit.sha === latest.commit ? latest : await folderVersion(repo.id, repo.fullName, commit, path, null);
+        if (outOfBudget()) throw new StillReadingError(STILL_READING);
+        const version = commit.sha === latest.commit ? latest : await folderVersion(repo.id, repo.fullName, commit, path, null, known);
         if (version?.installedHash === hash) {
           // Only a version that still is this skill counts.
-          match = version === latest ? latest : await folderVersion(repo.id, repo.fullName, commit, path, input.name);
+          match = version === latest ? latest : await folderVersion(repo.id, repo.fullName, commit, path, input.name, known);
           break;
         }
       }
@@ -283,11 +301,16 @@ export function skillsService(env: Env) {
     }
     if (pin === latest) return row;
     // Near a Worker request's limit, leave the newer versions to the next update check (soon: never checked).
-    if (gh.usage.requests > ADD_REQUEST_BUDGET) return row;
-    const { newer, newestUsable } = await versionsAfter(repo, path, input.name, pin.commit, history);
-    const updatePushedAt = newer.length && newestUsable ? repo.pushedAt : null;
-    if (newer.length && await saveCheck(env, row.id, pin.commit, { repoFullName: repo.fullName, repoAliases: aliases, newer, updatePushedAt, audits: verdicts })) {
-      return { ...row, newer, updatePushedAt };
+    if (gh.usage.requests > ADD_REQUEST_BUDGET || db.queries > QUERY_BUDGET) return row;
+    try {
+      const { newer, newestUsable } = await versionsAfter(repo, path, input.name, pin.commit, history);
+      const updatePushedAt = newer.length && newestUsable ? repo.pushedAt : null;
+      if (newer.length && await saveCheck(env, row.id, pin.commit, { repoFullName: repo.fullName, repoAliases: aliases, newer, updatePushedAt, audits: verdicts })) {
+        return { ...row, newer, updatePushedAt };
+      }
+    } catch (error) {
+      // The Skill is saved, so this isn't a failed Add: the next update check looks again.
+      if (!(error instanceof UpstreamError)) throw error;
     }
     return row;
   }
@@ -391,7 +414,8 @@ export function skillsService(env: Env) {
       const repo = await publicRepo(input.repo);
       const at = await readSnapshot(repo, input.commit ?? (await gh.commit(repo.fullName, repo.defaultBranch)).sha);
       const page = at.folders.slice(input.offset, input.offset + 20);
-      await readFolders(at, page.filter((folder) => !at.named.has(folder)));
+      const [failure] = (await readFolders(at, page.filter((folder) => !at.named.has(folder)))).values();
+      if (failure) throw failure;
       const names = page.flatMap((folder) => {
         const { skillName, installedHash } = at.named.get(folder)!;
         const name = skillNameSchema.safeParse(skillName);
@@ -431,7 +455,7 @@ export function skillsService(env: Env) {
       const added: string[] = [];
       const failed: ({ name: string } & NonNullable<ReturnType<typeof skillFailure>>)[] = [];
       for (const [index, skill] of input.skills.entries()) {
-        if (index && gh.usage.requests > READ_BUDGET) return { added, failed, rest: names.slice(index) };
+        if (index && outOfBudget()) return { added, failed, rest: names.slice(index) };
         try {
           await addAt(userId, at, { repo: input.repo, ...skill }, audits?.get(skill.name) ?? null);
           added.push(skill.name);

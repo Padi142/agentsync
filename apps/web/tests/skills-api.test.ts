@@ -382,6 +382,68 @@ describe('Adding several skills at once', () => {
     expect((await browser().skills.overview()).skills[0]!.pin.commit).toBe(first);
   });
 
+  it('stays within a Worker’s limits on every call, however far back a Machine’s copy is', async () => {
+    const first = gh.repo('team/old', { 'skills/a/SKILL.md': skillMd('a') });
+    for (let version = 2; version <= 60; version++) gh.commit('team/old', { 'skills/a/SKILL.md': skillMd('a', `v${version}`) });
+    const { machine, client } = await registerMachine();
+    await client.skills.report({ scan: [{ name: 'a', source: 'team/old', ref: null, hash: await gh.installedHash('team/old', first, 'skills/a'), managed: false }] });
+    const add = async () => {
+      let queries = 0;
+      const DB = new Proxy(env.DB, { get(target, property) {
+        if (property === 'prepare') queries++;
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      gh.calls.length = 0;
+      const result = await rpcClient({ ...env, DB }, { cookie: `wos-session=${identities.alice.id}` }).skills.addMany({ repo: 'team/old', skills: [{ name: 'a', machineId: machine.id }] });
+      expect(queries).toBeLessThanOrEqual(50);
+      expect(gh.calls.length).toBeLessThanOrEqual(50);
+      return result;
+    };
+    let result = await add();
+    for (let calls = 1; result.rest.length; calls++) {
+      expect(calls).toBeLessThan(10);
+      result = await add();
+    }
+    expect(result).toEqual({ added: ['a'], failed: [], rest: [] });
+    expect((await browser().skills.overview()).skills[0]!.pin.commit).toBe(first);
+  }, 30_000);
+
+  it('reports a saved skill as added when GitHub fails while looking for its newer versions', async () => {
+    const first = gh.repo('team/old', { 'skills/a/SKILL.md': skillMd('a') });
+    const between = gh.commit('team/old', { 'skills/a/SKILL.md': skillMd('a', 'v2') });
+    gh.commit('team/old', { 'skills/a/SKILL.md': skillMd('a', 'v3') });
+    const { machine, client } = await registerMachine();
+    await client.skills.report({ scan: [{ name: 'a', source: 'team/old', ref: null, hash: await gh.installedHash('team/old', first, 'skills/a'), managed: false }] });
+    const healthy = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      return url.includes('raw.githubusercontent.com') && url.includes(between) ? new Response('down', { status: 500 }) : healthy(input, init);
+    }) as typeof fetch;
+    try {
+      // The search for the Machine's copy passes `between` without needing its name; the check for newer versions does.
+      expect(await browser().skills.addMany({ repo: 'team/old', skills: [{ name: 'a', machineId: machine.id }] })).toEqual({ added: ['a'], failed: [], rest: [] });
+    } finally {
+      globalThis.fetch = healthy;
+    }
+    expect((await browser().skills.overview()).skills[0]!.pin.commit).toBe(first);
+  });
+
+  it('finds a skill even if a folder it had no need to read can’t be read', async () => {
+    gh.repo('team/flaky', { 'skills/a/SKILL.md': skillMd('a'), 'skills/b/SKILL.md': skillMd('b') });
+    const healthy = globalThis.fetch;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      return url.includes('skills/b/SKILL.md') ? new Response('down', { status: 500 }) : healthy(input, init);
+    }) as typeof fetch;
+    try {
+      expect((await browser().skills.add({ repo: 'team/flaky', name: 'a' })).name).toBe('a');
+      await expect(browser().skills.add({ repo: 'team/flaky', name: 'b' })).rejects.toMatchObject({ code: 'UPSTREAM_UNAVAILABLE' });
+    } finally {
+      globalThis.fetch = healthy;
+    }
+  });
+
   it('hands back what it has no budget for, and a second call carries on from what the first read', async () => {
     gh.repo('team/deep', Object.fromEntries(Array.from({ length: 45 }, (_, i) => {
       const name = `skill-${String(i).padStart(2, '0')}`;
