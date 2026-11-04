@@ -47,7 +47,7 @@ const encodePath = (path: string) => path.split('/').map(encodeURIComponent).joi
 export function github(token: string | undefined) {
   const noAnswer = (error: unknown) => new UpstreamError(`GitHub did not answer: ${error instanceof Error ? error.message : String(error)}`);
 
-  /** Requests made so far, API and raw: a Worker invocation may only make so many. */
+  /** Requests made so far, API and raw (the service adds its skills.sh ones): a Worker invocation may only make so many. */
   const usage = { requests: 0 };
 
   async function api<T>(path: string): Promise<T> {

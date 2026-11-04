@@ -53,6 +53,23 @@ async function registerMachine(who: keyof typeof identities = 'alice', nickname 
   return { machine: result.machine, client: rpcClient(env, { token: result.token }) };
 }
 
+/** `env` with a count of its D1 statements, and of every outgoing request while `work` runs. */
+async function counting<T>(work: (counted: Env) => Promise<T>) {
+  const used = { queries: 0, requests: 0 };
+  const DB = new Proxy(env.DB, { get(target, property) {
+    if (property === 'prepare') used.queries++;
+    const value: unknown = Reflect.get(target, property);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const healthy = globalThis.fetch;
+  globalThis.fetch = ((input, init) => { used.requests++; return healthy(input, init); }) as typeof fetch;
+  try {
+    return { result: await work({ ...env, DB }), used };
+  } finally {
+    globalThis.fetch = healthy;
+  }
+}
+
 /** A repository whose `animate` skill lives in a folder of another name and ships a `metadata.json`. */
 function skillRepo() {
   const first = gh.repo('emil/skills', {
@@ -281,6 +298,17 @@ describe('The update check', () => {
     expect((await browser().skills.overview()).skills[0]!.pin.commit).toBe(skill.pin.commit);
   });
 
+  it('counts audit lookups against the request budget', async () => {
+    const names = Array.from({ length: 14 }, (_, i) => `skill-${String(i).padStart(2, '0')}`);
+    gh.repo('team/many', Object.fromEntries(names.map((name) => [`skills/${name}/SKILL.md`, skillMd(name)])));
+    await browser().skills.collection({ repo: 'team/many' });
+    for (const name of names) await browser().skills.add({ repo: 'team/many', name });
+    // The last Skill has five versions nothing has read yet, so its check is the most expensive one.
+    for (let version = 2; version <= 6; version++) gh.commit('team/many', { 'skills/skill-13/SKILL.md': skillMd('skill-13', `v${version}`) });
+    const { used } = await counting((counted) => skillsService(counted).checkStale(40, tomorrow()));
+    expect(used.requests).toBeLessThanOrEqual(40);
+  }, 30_000);
+
   it('holds back a version rated High, one not audited since its push, and Skills on the ignore list', async () => {
     await browser().skills.settings({ autoUpdate: true });
     for (const setup of [
@@ -406,23 +434,6 @@ describe('Adding several skills at once', () => {
     expect(await browser().skills.addMany({ repo: 'team/old', skills: [{ name: 'a', machineId: machine.id }] })).toEqual({ added: ['a'], failed: [], rest: [] });
     expect((await browser().skills.overview()).skills[0]!.pin.commit).toBe(first);
   });
-
-  /** `env` with a count of its D1 statements, and of every outgoing request while `work` runs. */
-  async function counting<T>(work: (counted: Env) => Promise<T>) {
-    const used = { queries: 0, requests: 0 };
-    const DB = new Proxy(env.DB, { get(target, property) {
-      if (property === 'prepare') used.queries++;
-      const value: unknown = Reflect.get(target, property);
-      return typeof value === 'function' ? value.bind(target) : value;
-    } });
-    const healthy = globalThis.fetch;
-    globalThis.fetch = ((input, init) => { used.requests++; return healthy(input, init); }) as typeof fetch;
-    try {
-      return { result: await work({ ...env, DB }), used };
-    } finally {
-      globalThis.fetch = healthy;
-    }
-  }
 
   it('stays within a Worker’s limits on every call, however many folders there are and however far back a Machine’s copy is', async () => {
     const first = gh.repo('team/old', {

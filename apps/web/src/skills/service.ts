@@ -88,6 +88,11 @@ export function skillsService(worker: Env) {
   const { env, usage: db } = countQueries(worker);
   const gh: GitHub = github(env.GITHUB_TOKEN);
   const outOfBudget = () => gh.usage.requests >= READ_BUDGET || db.queries > QUERY_BUDGET;
+  /** skills.sh verdicts. One outgoing request, which counts against the budget like GitHub's, even if it fails. */
+  const auditsOfSkills = (fullName: string, names: string[]) => {
+    gh.usage.requests++;
+    return fetchAudits(fullName, names);
+  };
 
   /**
    * A folder at a commit, from the D1 cache or GitHub: its hashes (one tree call), and with `name` also
@@ -249,7 +254,7 @@ export function skillsService(worker: Env) {
     const { newer, newestUsable } = await versionsAfter(repo, row.path, row.name, row.pinCommit);
     let audits: Audits | null = null;
     try {
-      audits = (await fetchAudits(repo.fullName, [row.name])).get(row.name) ?? null;
+      audits = (await auditsOfSkills(repo.fullName, [row.name])).get(row.name) ?? null;
     } catch {
       // skills.sh is down: keep the verdicts we have.
     }
@@ -440,20 +445,20 @@ export function skillsService(worker: Env) {
     /** Verdicts are keyed by the repository's name on skills.sh, so ask under its current one: an old name returns frozen ones. */
     async audits(repoName: string, names: string[]) {
       const repo = await publicRepo(repoName);
-      const verdicts = await fetchAudits(repo.fullName, names);
+      const verdicts = await auditsOfSkills(repo.fullName, names);
       return names.map((name) => ({ name, audits: verdicts.get(name) ?? noAudits }));
     },
 
     async inspect(repoName: string, name: string): Promise<SkillCandidate> {
       const { repo, path, version } = await resolveLatest(await readHead(repoName), name);
-      const audits = (await fetchAudits(repo.fullName, [name]).catch(() => null))?.get(name) ?? noAudits;
+      const audits = (await auditsOfSkills(repo.fullName, [name]).catch(() => null))?.get(name) ?? noAudits;
       return { name, repo: { id: repo.id, fullName: repo.fullName }, path, pin: toPin(version), audits };
     },
 
     /** Add a Skill from GitHub. See `addAt`. */
     async add(userId: string, input: { repo: string; name: string; machineId?: string | undefined }): Promise<Skill> {
       const at = await readHead(input.repo);
-      const audits = (await fetchAudits(at.repo.fullName, [input.name]).catch(() => null))?.get(input.name) ?? null;
+      const audits = (await auditsOfSkills(at.repo.fullName, [input.name]).catch(() => null))?.get(input.name) ?? null;
       return presentOne(await addAt(userId, at, input, audits));
     },
 
@@ -461,7 +466,7 @@ export function skillsService(worker: Env) {
     async addMany(userId: string, input: { repo: string; skills: { name: string; machineId?: string | undefined }[] }) {
       const at = await readHead(input.repo);
       const names = input.skills.map((skill) => skill.name);
-      const audits = await fetchAudits(at.repo.fullName, names).catch(() => null);
+      const audits = await auditsOfSkills(at.repo.fullName, names).catch(() => null);
       const added: string[] = [];
       const failed: ({ name: string } & NonNullable<ReturnType<typeof skillFailure>>)[] = [];
       for (const [index, skill] of input.skills.entries()) {
