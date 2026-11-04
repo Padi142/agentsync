@@ -2678,8 +2678,161 @@ fieldset.variables-table {
   animation: ink 520ms var(--ease-out);
 }
 
+/* Each pass of the bar shows the next Machine, so pausing it here pauses the demo too. */
+.demo-progress {
+  height: 3px;
+  background: var(--hover);
+  transition: opacity 200ms var(--ease-out);
+}
+
+.demo-progress span {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transform-origin: left;
+  animation: demo-progress 2800ms linear infinite;
+}
+
+.demo:focus-within .demo-progress span,
+.demo-progress[data-stopped] span {
+  animation-play-state: paused;
+}
+
+.demo-progress[data-stopped] {
+  opacity: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .demo:hover .demo-progress span {
+    animation-play-state: paused;
+  }
+}
+
+@keyframes demo-progress {
+  from { transform: scaleX(0); }
+}
+
 @keyframes ink {
   from { background: var(--ditto-wash); }
+}
+
+.skills-band {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 56px;
+  align-items: center;
+  margin-top: 88px;
+}
+
+.skills-band h2 {
+  font-size: clamp(26px, 3vw, 32px);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.skills-copy > p {
+  max-width: 44ch;
+  margin-top: 14px;
+  color: var(--graphite);
+  font-size: 17px;
+}
+
+.skills-copy ul {
+  display: grid;
+  gap: 14px;
+  max-width: 48ch;
+  margin: 22px 0;
+  padding: 0;
+  list-style: none;
+  color: var(--graphite);
+  font-size: 14px;
+}
+
+.skills-copy strong {
+  display: block;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.skills-copy code {
+  white-space: nowrap;
+}
+
+.skills-demo {
+  margin: 0;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--sheet);
+  box-shadow: 0 30px 60px -40px rgba(26, 27, 37, 0.35);
+  overflow: hidden;
+}
+
+.skills-demo ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.skills-demo li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 124px;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.skills-demo li > .icon {
+  justify-self: end;
+  color: var(--graphite);
+}
+
+.skills-demo-name {
+  display: grid;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.skills-demo-name strong {
+  font-size: 14px;
+}
+
+.skills-demo-name code {
+  color: var(--graphite);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.skills-demo-machines {
+  color: var(--graphite);
+  font-size: 13px;
+}
+
+.skills-demo-update {
+  justify-self: end;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.skills-demo .sk-verdicts {
+  grid-column: 1 / -1;
+}
+
+.skills-demo pre {
+  margin: 0;
+  padding: 14px 18px;
+  background: var(--paper);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.skills-demo-prompt,
+.skills-demo-output {
+  color: var(--graphite);
 }
 
 .how {
@@ -2728,8 +2881,14 @@ fieldset.variables-table {
     position: static;
   }
 
-  .hero {
+  .hero,
+  .skills-band {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .skills-band {
+    gap: 28px;
+    margin-top: 64px;
   }
 }
 
@@ -2901,6 +3060,20 @@ fieldset.variables-table {
   .demo-output {
     padding: 14px;
   }
+
+  .skills-demo li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 12px;
+    padding: 12px 14px;
+  }
+
+  .skills-demo-name {
+    grid-column: 1 / -1;
+  }
+
+  .skills-demo pre {
+    padding: 12px 14px;
+  }
 }
 
 /* iOS zooms into a field whose text is under 16px, and stays zoomed. */
@@ -2933,6 +3106,11 @@ fieldset.variables-table {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* No bar means no auto-switching: the demo waits for a Machine to be picked. */
+  .demo-progress {
+    display: none;
   }
 
   /* Entrances still fade, without moving. */
