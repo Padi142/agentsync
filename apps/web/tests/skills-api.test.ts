@@ -256,6 +256,31 @@ describe('The update check', () => {
     });
   });
 
+  it('finishes every version read of a failed check before moving on, so the budget sees their work', async () => {
+    const { skill } = await withUpdate(null);
+    gh.commit('emil/skills', { 'skills/motion/SKILL.md': skillMd('animate', 'v3') });
+    const healthy = globalThis.fetch;
+    let trees = 0;
+    let running = 0;
+    globalThis.fetch = (async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (!url.includes(':skills%2Fmotion') && !url.includes(':skills/motion')) return healthy(input, init);
+      if (trees++ === 0) return new Response('down', { status: 500 });
+      running++;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      running--;
+      return healthy(input, init);
+    }) as typeof fetch;
+    try {
+      await skillsService(env).checkStale(40, tomorrow());
+    } finally {
+      globalThis.fetch = healthy;
+    }
+    expect(trees).toBe(2);
+    expect(running).toBe(0);
+    expect((await browser().skills.overview()).skills[0]!.pin.commit).toBe(skill.pin.commit);
+  });
+
   it('holds back a version rated High, one not audited since its push, and Skills on the ignore list', async () => {
     await browser().skills.settings({ autoUpdate: true });
     for (const setup of [

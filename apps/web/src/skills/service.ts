@@ -227,8 +227,11 @@ export function skillsService(worker: Env) {
     const index = commits.findIndex((commit) => commit.sha === pinCommit);
     const candidates = (index < 0 ? commits : commits.slice(0, index)).slice(0, MAX_VERSIONS);
     const known = await cachedVersionsOfFolder(env, repo.id, path);
-    const versions = await Promise.all(candidates.map((commit) => folderVersion(repo.id, repo.fullName, commit, path, name, known)));
-    const newer = versions.filter((version) => version !== null);
+    // Wait for all of them even if one fails: the rest keep making requests and writes, which the budget must see.
+    const versions = await Promise.allSettled(candidates.map((commit) => folderVersion(repo.id, repo.fullName, commit, path, name, known)));
+    const failed = versions.find((version) => version.status === 'rejected');
+    if (failed) throw failed.reason;
+    const newer = versions.flatMap((version) => version.status === 'fulfilled' && version.value ? [version.value] : []);
     return { newer, newestUsable: !candidates.length || newer[0]?.commit === candidates[0]!.sha };
   }
 
