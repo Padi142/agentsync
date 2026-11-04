@@ -1,5 +1,5 @@
 import type { Audits, ScannedSkill, SkillAssignment, SkillSyncResult } from '@agentsync/contract';
-import { and, asc, desc, eq, inArray, isNull, lt, or } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import { createDb } from './index';
 import {
   machine, machineSkillReport, skill, skillExclusion, skillFolderVersion, skillMachine, skillPinMove, skillSettings,
@@ -266,6 +266,23 @@ export async function setExclusions(env: Pick<Env, 'DB'>, userId: string, repo: 
 export function cachedFolderVersion(env: Pick<Env, 'DB'>, repoId: number, commit: string, path: string) {
   return createDb(env).select().from(skillFolderVersion)
     .where(and(eq(skillFolderVersion.repoId, repoId), eq(skillFolderVersion.commit, commit), eq(skillFolderVersion.path, path))).get();
+}
+
+/** The folders of a commit whose SKILL.md was already read, with what it said. */
+export async function namedFolders(env: Pick<Env, 'DB'>, repoId: number, commit: string) {
+  const rows = await createDb(env).select({ path: skillFolderVersion.path, skillName: skillFolderVersion.skillName, installedHash: skillFolderVersion.installedHash })
+    .from(skillFolderVersion)
+    .where(and(eq(skillFolderVersion.repoId, repoId), eq(skillFolderVersion.commit, commit), isNotNull(skillFolderVersion.skillName))).all();
+  return new Map(rows.map((row) => [row.path, { skillName: row.skillName!, installedHash: row.installedHash }]));
+}
+
+/** Save folders read at a commit in one round trip, naming any that were cached without a name. */
+export async function cacheNamedFolders(env: Pick<Env, 'DB'>, rows: (typeof skillFolderVersion.$inferInsert & { skillName: string })[]) {
+  const db = createDb(env);
+  const insert = (row: (typeof rows)[number]) => db.insert(skillFolderVersion).values(row)
+    .onConflictDoUpdate({ target: [skillFolderVersion.repoId, skillFolderVersion.commit, skillFolderVersion.path], set: { skillName: row.skillName } });
+  const [first, ...rest] = rows;
+  if (first) await db.batch([insert(first), ...rest.map(insert)]);
 }
 
 /** Record which skill (`''`: none) a cached folder version holds, once its SKILL.md was read. */

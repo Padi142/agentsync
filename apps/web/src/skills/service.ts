@@ -4,16 +4,16 @@ import {
   type SkillDiff, type SkillsOverview, type DesiredSkill, type ScannedSkill, type SkillSyncResult, type SkillAssignment,
 } from '@agentsync/contract';
 import {
-  assignedSkillRows, cacheFolderVersion, cachedFolderVersion, chosenMachines, deleteSkill, getReport, getSettings,
-  auditsOf, getSkillRow, insertSkill, listSkillRows, movePin, nameFolderVersion, noAudits, storedAudits, pinHashes, pinHistory, putSettings, reportsFor, saveCheck,
+  assignedSkillRows, cacheFolderVersion, cacheNamedFolders, cachedFolderVersion, chosenMachines, deleteSkill, getReport, getSettings,
+  auditsOf, getSkillRow, insertSkill, listSkillRows, movePin, namedFolders, nameFolderVersion, noAudits, storedAudits, pinHashes, pinHistory, putSettings, reportsFor, saveCheck,
   saveReport, setAssignment, setAutoUpdate, staleSkillRows, touchCheck, listExclusions, setExclusions, type SkillRow,
 } from '../db/skills';
 import { listMachines } from '../db/machines';
 import type { FolderVersion } from '../db/schema';
 import type { Env } from '../env';
 import { isAudited, mayAutoUpdate } from './audits';
-import { findSkillFolder, frontmatterName, skillFolders } from './discovery';
-import { github, NotFoundError, type Commit, type GitHub, type Repo } from './github';
+import { frontmatterName, skillFolders } from './discovery';
+import { github, NotFoundError, UpstreamError, type Commit, type GitHub, type Repo, type Tree } from './github';
 import { installedFolderHash, UnsupportedSkillFolder } from './hash';
 import { fetchAudits, searchSkills } from './skillssh';
 import { machineSkillState } from './status';
@@ -22,6 +22,19 @@ import { machineSkillState } from './status';
 export class NameTakenError extends Error {}
 /** A Machine's copy matches no version of the folder on the default branch. */
 export class NoMatchingCommitError extends Error {}
+/** The search for a skill's folder or version used up this request's budget. What it read is saved, so asking again gets further. */
+class StillReadingError extends UnsupportedSkillFolder {}
+const STILL_READING = 'AgentSync hasn’t finished reading this repository. Try again.';
+
+/** The contract's name for a failed Skills call, or `null` if it's a bug rather than an expected failure. */
+export function skillFailure(error: unknown) {
+  if (error instanceof NotFoundError) return { code: 'NOT_FOUND' } as const;
+  if (error instanceof UnsupportedSkillFolder) return { code: 'UNSUPPORTED_SKILL', reason: error.message } as const;
+  if (error instanceof NameTakenError) return { code: 'SKILL_NAME_TAKEN' } as const;
+  if (error instanceof NoMatchingCommitError) return { code: 'NO_MATCHING_COMMIT' } as const;
+  if (error instanceof UpstreamError) return { code: 'UPSTREAM_UNAVAILABLE' } as const;
+  return null;
+}
 
 /** How many versions of a folder one check looks at (two GitHub requests each, unless cached). */
 const MAX_VERSIONS = 5;
@@ -29,8 +42,25 @@ const MAX_VERSIONS = 5;
 export const CHECK_REQUESTS = 3 + 2 * MAX_VERSIONS;
 /** Requests an Add may have made and still look for newer versions (up to 2 × MAX_VERSIONS more), under a Worker's 50. */
 const ADD_REQUEST_BUDGET = 50 - 2 * MAX_VERSIONS - 2;
-/** How far back a Found Skill's copy is looked for (one GitHub call each, unless cached). */
-const MAX_MATCH = 10;
+/** Requests after which no more SKILL.md files or old versions are read, or skills started, leaving room for the rest of an Add. */
+const READ_BUDGET = ADD_REQUEST_BUDGET - 2;
+/** How many SKILL.md files are read at once. */
+const READ_AT_ONCE = 6;
+
+/** A repository at one commit, read once however many of its skills are looked up. */
+interface RepoSnapshot {
+  repo: Repo;
+  commit: string;
+  tree: Tree;
+  /** Every folder that may hold a skill, in the order `skills` walks them. */
+  folders: string[];
+  /** What each folder's SKILL.md said at this commit, for those read so far. */
+  named: Awaited<ReturnType<typeof namedFolders>>;
+}
+/** A repository at its newest commit. */
+interface RepoHead extends RepoSnapshot {
+  head: Commit;
+}
 
 /** Every `owner/repo` a Machine's lock may record for a Skill's repository, lowercase. */
 const sourcesOf = (row: Pick<SkillRow, 'repoFullName' | 'repoAliases'>) =>
@@ -94,18 +124,63 @@ export function skillsService(env: Env) {
     return repo;
   }
 
-  /**
-   * The newest version of the skill `name` in `repoName`, found the way `skills add` finds it: 4 GitHub
-   * calls (repository, head, recursive tree, the folder's history at that head) plus raw SKILL.md reads.
-   * Everything is read at the one head commit, so a push meanwhile can't mix two versions.
-   */
-  async function resolveLatest(repoName: string, name: string) {
+  /** A repository at `commit`: 1 GitHub call, plus up to 2 for plugin manifests. */
+  async function readSnapshot(repo: Repo, commit: string): Promise<RepoSnapshot> {
+    const tree = await gh.tree(repo.fullName, commit);
+    if (tree.truncated) throw new UnsupportedSkillFolder('The repository is too large to search.');
+    const [folders, named] = await Promise.all([
+      skillFolders(tree.tree, (path) => gh.raw(repo.fullName, commit, path)),
+      namedFolders(env, repo.id, commit),
+    ]);
+    return { repo, commit, tree, folders, named };
+  }
+
+  /** A repository as it is now: 2 GitHub calls more than a snapshot. */
+  async function readHead(repoName: string): Promise<RepoHead> {
     const repo = await publicRepo(repoName);
     const head = await gh.commit(repo.fullName, repo.defaultBranch);
-    const tree = await gh.tree(repo.fullName, head.sha);
-    if (tree.truncated) throw new UnsupportedSkillFolder('The repository is too large to search.');
-    const path = await findSkillFolder(gh, repo.fullName, head.sha, tree.tree, name,
-      async (folder) => (await cachedFolderVersion(env, repo.id, head.sha, folder))?.skillName);
+    return { ...await readSnapshot(repo, head.sha), head };
+  }
+
+  /** Read these folders' SKILL.md and save what they say, so no later call has to read them again. */
+  async function readFolders({ repo, commit, tree, named }: RepoSnapshot, folders: string[]) {
+    const rows = await Promise.all(folders.map(async (folder) => {
+      const text = await gh.raw(repo.fullName, commit, folder ? `${folder}/SKILL.md` : 'SKILL.md');
+      let installedHash: string | null = null;
+      try {
+        installedHash = await installedFolderHash(tree.tree, folder);
+      } catch (error) {
+        if (!(error instanceof UnsupportedSkillFolder)) throw error;
+      }
+      return {
+        repoId: repo.id, commit, path: folder, installedHash, skillName: (text === null ? null : frontmatterName(text)) ?? '',
+        treeSha: folder ? tree.tree.find((item) => item.path === folder)!.sha : tree.sha,
+      };
+    }));
+    await cacheNamedFolders(env, rows);
+    for (const row of rows) named.set(row.path, row);
+  }
+
+  /**
+   * The folder of the skill named `name`, or `null`: the first in `skills`' own walk order whose SKILL.md
+   * declares exactly that name, since `skills` keeps the first skill of a name and drops later ones.
+   */
+  async function findFolder(at: RepoHead, name: string): Promise<string | null> {
+    for (const [index, folder] of at.folders.entries()) {
+      if (!at.named.has(folder)) {
+        const room = READ_BUDGET - gh.usage.requests;
+        if (room <= 0) throw new StillReadingError(STILL_READING);
+        await readFolders(at, at.folders.slice(index).filter((later) => !at.named.has(later)).slice(0, Math.min(room, READ_AT_ONCE)));
+      }
+      if (at.named.get(folder)!.skillName === name) return folder;
+    }
+    return null;
+  }
+
+  /** The newest version of the skill `name` in a repository, found the way `skills add` finds it, plus the folder's history at the head. */
+  async function resolveLatest(at: RepoHead, name: string) {
+    const { repo, head, tree } = at;
+    const path = await findFolder(at, name);
     if (path === null) throw new NotFoundError(`${repo.fullName} has no skill named ${name}.`);
     if (path.length > 500) throw new UnsupportedSkillFolder('The skill’s folder path is too long.');
     const history = await gh.folderHistory(repo.fullName, head.sha, path);
@@ -128,11 +203,8 @@ export function skillsService(env: Env) {
     const commits = history ?? await gh.folderHistory(repo.fullName, repo.defaultBranch, path);
     const index = commits.findIndex((commit) => commit.sha === pinCommit);
     const candidates = (index < 0 ? commits : commits.slice(0, index)).slice(0, MAX_VERSIONS);
-    const newer: FolderVersion[] = [];
-    for (const commit of candidates) {
-      const version = await folderVersion(repo.id, repo.fullName, commit, path, name);
-      if (version) newer.push(version);
-    }
+    const versions = await Promise.all(candidates.map((commit) => folderVersion(repo.id, repo.fullName, commit, path, name)));
+    const newer = versions.filter((version) => version !== null);
     return { newer, newestUsable: !candidates.length || newer[0]?.commit === candidates[0]!.sha };
   }
 
@@ -172,6 +244,52 @@ export function skillsService(env: Env) {
       }
     }
     return checked;
+  }
+
+  /**
+   * Add a Skill from a repository already read. With `machineId`, pin the version that Machine already
+   * has (a Found Skill), so nothing is reinstalled: only a version from the default branch's own history counts.
+   */
+  async function addAt(userId: string, at: RepoHead, input: { repo: string; name: string; machineId?: string | undefined }, audits: Audits | null): Promise<SkillRow> {
+    if (input.name === RESERVED_SKILL_NAME) throw new NameTakenError(`"${RESERVED_SKILL_NAME}" is the CLI's own skill.`);
+    const { repo, path, version: latest, history } = await resolveLatest(at, input.name);
+    let pin = latest;
+    if (input.machineId !== undefined) {
+      const machines = await listMachines(env, userId);
+      if (!machines.some((machine) => machine.id === input.machineId)) throw new NotFoundError('No such Machine.');
+      const hash = (await getReport(env, input.machineId))?.scan.find((item) => item.name === input.name && !item.managed)?.hash;
+      if (!hash) throw new NoMatchingCommitError('That Machine has no copy of this skill from GitHub.');
+      let match: FolderVersion | null = null;
+      for (const commit of history) {
+        if (gh.usage.requests >= READ_BUDGET) throw new StillReadingError(STILL_READING);
+        const version = commit.sha === latest.commit ? latest : await folderVersion(repo.id, repo.fullName, commit, path, null);
+        if (version?.installedHash === hash) {
+          // Only a version that still is this skill counts.
+          match = version === latest ? latest : await folderVersion(repo.id, repo.fullName, commit, path, input.name);
+          break;
+        }
+      }
+      if (!match) throw new NoMatchingCommitError('The copy on that Machine matches no version on the default branch.');
+      pin = match;
+    }
+    const verdicts = audits ?? noAudits;
+    // The name asked for may be an old one that GitHub redirected: a Machine's lock may still say it.
+    const aliases = input.repo.toLowerCase() === repo.fullName.toLowerCase() ? [] : [input.repo.toLowerCase()];
+    const row = await insertSkill(env, { userId, name: input.name, repo: { id: repo.id, fullName: repo.fullName }, aliases, path, pin, audits: verdicts });
+    if (!row) throw new NameTakenError(`A Skill named ${input.name} is already in the account.`);
+    // An explicit Add restores a previously excluded skill, including an old repository alias.
+    for (const source of new Set([input.repo, repo.fullName])) {
+      await setExclusions(env, userId, source, [input.name], false);
+    }
+    if (pin === latest) return row;
+    // Near a Worker request's limit, leave the newer versions to the next update check (soon: never checked).
+    if (gh.usage.requests > ADD_REQUEST_BUDGET) return row;
+    const { newer, newestUsable } = await versionsAfter(repo, path, input.name, pin.commit, history);
+    const updatePushedAt = newer.length && newestUsable ? repo.pushedAt : null;
+    if (newer.length && await saveCheck(env, row.id, pin.commit, { repoFullName: repo.fullName, repoAliases: aliases, newer, updatePushedAt, audits: verdicts })) {
+      return { ...row, newer, updatePushedAt };
+    }
+    return row;
   }
 
   const pinColumns = (version: FolderVersion) => ({
@@ -271,31 +389,16 @@ export function skillsService(env: Env) {
 
     async collection(input: { repo: string; offset: number; commit?: string | undefined }) {
       const repo = await publicRepo(input.repo);
-      const commit = input.commit ?? (await gh.commit(repo.fullName, repo.defaultBranch)).sha;
-      const tree = await gh.tree(repo.fullName, commit);
-      if (tree.truncated) throw new UnsupportedSkillFolder('The repository is too large to search.');
-      const folders = await skillFolders(tree.tree, (path) => gh.raw(repo.fullName, commit, path));
-      const page = folders.slice(input.offset, input.offset + 20);
-      const names: string[] = [];
-      for (const folder of page) {
-        const text = await gh.raw(repo.fullName, commit, folder ? `${folder}/SKILL.md` : 'SKILL.md');
-        const name = skillNameSchema.safeParse(text === null ? null : frontmatterName(text));
-        let installedHash: string | null = null;
-        try {
-          installedHash = await installedFolderHash(tree.tree, folder);
-        } catch (error) {
-          if (!(error instanceof UnsupportedSkillFolder)) throw error;
-        }
-        await cacheFolderVersion(env, {
-          repoId: repo.id, commit, path: folder,
-          treeSha: folder ? tree.tree.find((item) => item.path === folder)!.sha : tree.sha,
-          installedHash, skillName: text === null ? '' : frontmatterName(text) ?? '',
-        });
-        await nameFolderVersion(env, repo.id, commit, folder, text === null ? '' : frontmatterName(text) ?? '');
-        if (installedHash && name.success && name.data !== RESERVED_SKILL_NAME) names.push(name.data);
-      }
+      const at = await readSnapshot(repo, input.commit ?? (await gh.commit(repo.fullName, repo.defaultBranch)).sha);
+      const page = at.folders.slice(input.offset, input.offset + 20);
+      await readFolders(at, page.filter((folder) => !at.named.has(folder)));
+      const names = page.flatMap((folder) => {
+        const { skillName, installedHash } = at.named.get(folder)!;
+        const name = skillNameSchema.safeParse(skillName);
+        return installedHash && name.success && name.data !== RESERVED_SKILL_NAME ? [name.data] : [];
+      });
       const next = input.offset + page.length;
-      return { repo: repo.fullName, commit, names: [...new Set(names)], next: next < folders.length ? next : null };
+      return { repo: repo.fullName, commit: at.commit, names: [...new Set(names)], next: next < at.folders.length ? next : null };
     },
 
     setIgnored: (userId: string, repo: string, names: string[], ignored: boolean) => setExclusions(env, userId, repo, names, ignored),
@@ -308,54 +411,40 @@ export function skillsService(env: Env) {
     },
 
     async inspect(repoName: string, name: string): Promise<SkillCandidate> {
-      const { repo, path, version } = await resolveLatest(repoName, name);
+      const { repo, path, version } = await resolveLatest(await readHead(repoName), name);
       const audits = (await fetchAudits(repo.fullName, [name]).catch(() => null))?.get(name) ?? noAudits;
       return { name, repo: { id: repo.id, fullName: repo.fullName }, path, pin: toPin(version), audits };
     },
 
-    /**
-     * Add a Skill from GitHub. With `machineId`, pin the version that Machine already has (a Found
-     * Skill), so nothing is reinstalled: only a version from the default branch's own history counts.
-     */
+    /** Add a Skill from GitHub. See `addAt`. */
     async add(userId: string, input: { repo: string; name: string; machineId?: string | undefined }): Promise<Skill> {
-      if (input.name === RESERVED_SKILL_NAME) throw new NameTakenError(`"${RESERVED_SKILL_NAME}" is the CLI's own skill.`);
-      const { repo, path, version: latest, history } = await resolveLatest(input.repo, input.name);
-      let pin = latest;
-      if (input.machineId !== undefined) {
-        const machines = await listMachines(env, userId);
-        if (!machines.some((machine) => machine.id === input.machineId)) throw new NotFoundError('No such Machine.');
-        const hash = (await getReport(env, input.machineId))?.scan.find((item) => item.name === input.name && !item.managed)?.hash;
-        if (!hash) throw new NoMatchingCommitError('That Machine has no copy of this skill from GitHub.');
-        let match: FolderVersion | null = null;
-        for (const commit of history.slice(0, MAX_MATCH)) {
-          const version = commit.sha === latest.commit ? latest : await folderVersion(repo.id, repo.fullName, commit, path, null);
-          if (version?.installedHash === hash) {
-            // Only a version that still is this skill counts.
-            match = version === latest ? latest : await folderVersion(repo.id, repo.fullName, commit, path, input.name);
-            break;
-          }
+      const at = await readHead(input.repo);
+      const audits = (await fetchAudits(at.repo.fullName, [input.name]).catch(() => null))?.get(input.name) ?? null;
+      return presentOne(await addAt(userId, at, input, audits));
+    },
+
+    /** Add several skills of a repository, sharing what one read of it found. See `addMany` in the contract. */
+    async addMany(userId: string, input: { repo: string; skills: { name: string; machineId?: string | undefined }[] }) {
+      const at = await readHead(input.repo);
+      const names = input.skills.map((skill) => skill.name);
+      const audits = await fetchAudits(at.repo.fullName, names).catch(() => null);
+      const added: string[] = [];
+      const failed: ({ name: string } & NonNullable<ReturnType<typeof skillFailure>>)[] = [];
+      for (const [index, skill] of input.skills.entries()) {
+        if (index && gh.usage.requests > READ_BUDGET) return { added, failed, rest: names.slice(index) };
+        try {
+          await addAt(userId, at, { repo: input.repo, ...skill }, audits?.get(skill.name) ?? null);
+          added.push(skill.name);
+        } catch (error) {
+          if (error instanceof StillReadingError) return { added, failed, rest: names.slice(index) };
+          const failure = skillFailure(error);
+          if (!failure) throw error;
+          console.warn(`Couldn't add ${skill.name} from ${input.repo}: ${failure.code}: ${(error as Error).message}`);
+          failed.push({ name: skill.name, ...failure });
+          if (failure.code === 'UPSTREAM_UNAVAILABLE') return { added, failed, rest: names.slice(index + 1) };
         }
-        if (!match) throw new NoMatchingCommitError('The copy on that Machine matches no version on the default branch.');
-        pin = match;
       }
-      const audits = (await fetchAudits(repo.fullName, [input.name]).catch(() => null))?.get(input.name) ?? noAudits;
-      // The name asked for may be an old one that GitHub redirected: a Machine's lock may still say it.
-      const aliases = input.repo.toLowerCase() === repo.fullName.toLowerCase() ? [] : [input.repo.toLowerCase()];
-      const row = await insertSkill(env, { userId, name: input.name, repo: { id: repo.id, fullName: repo.fullName }, aliases, path, pin, audits });
-      if (!row) throw new NameTakenError(`A Skill named ${input.name} is already in the account.`);
-      // An explicit Add restores a previously excluded skill, including an old repository alias.
-      for (const source of new Set([input.repo, repo.fullName])) {
-        await setExclusions(env, userId, source, [input.name], false);
-      }
-      if (pin === latest) return presentOne(row);
-      // Near a Worker request's limit, leave the newer versions to the next update check (soon: never checked).
-      if (gh.usage.requests > ADD_REQUEST_BUDGET) return presentOne(row);
-      const { newer, newestUsable } = await versionsAfter(repo, path, input.name, pin.commit, history);
-      const updatePushedAt = newer.length && newestUsable ? repo.pushedAt : null;
-      if (newer.length && await saveCheck(env, row.id, pin.commit, { repoFullName: repo.fullName, repoAliases: aliases, newer, updatePushedAt, audits })) {
-        return presentOne({ ...row, newer, updatePushedAt });
-      }
-      return presentOne(row);
+      return { added, failed, rest: [] };
     },
 
     async assign(userId: string, skillId: string, assignment: SkillAssignment) {

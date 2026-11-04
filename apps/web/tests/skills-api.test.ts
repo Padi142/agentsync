@@ -345,6 +345,61 @@ describe('Finding the folder', () => {
   });
 });
 
+describe('Adding several skills at once', () => {
+  it('reads the repository once, keeps each Machine’s version, and says why a skill failed', async () => {
+    const first = gh.repo('team/many', { 'skills/a/SKILL.md': skillMd('a'), 'skills/b/SKILL.md': skillMd('b'), 'skills/c/SKILL.md': skillMd('c') });
+    const second = gh.commit('team/many', { 'skills/a/SKILL.md': skillMd('a', 'v2'), 'skills/b/SKILL.md': skillMd('b', 'v2') });
+    const side = gh.commit('team/many', { 'skills/c/SKILL.md': skillMd('c', 'fork') }, 'fork');
+    const { machine, client } = await registerMachine();
+    await client.skills.report({ scan: [
+      { name: 'a', source: 'team/many', ref: null, hash: await gh.installedHash('team/many', first, 'skills/a'), managed: false },
+      { name: 'b', source: 'team/many', ref: null, hash: await gh.installedHash('team/many', second, 'skills/b'), managed: false },
+      { name: 'c', source: 'team/many', ref: null, hash: await gh.installedHash('team/many', side, 'skills/c'), managed: false },
+    ] });
+    gh.calls.length = 0;
+    const result = await browser().skills.addMany({ repo: 'team/many', skills: [
+      { name: 'a', machineId: machine.id }, { name: 'gone', machineId: machine.id }, { name: 'b', machineId: machine.id }, { name: 'c', machineId: machine.id },
+    ] });
+    expect(result).toEqual({
+      added: ['a', 'b'],
+      failed: [{ name: 'gone', code: 'NOT_FOUND' }, { name: 'c', code: 'NO_MATCHING_COMMIT' }],
+      rest: [],
+    });
+    expect(gh.calls.filter((call) => /\/git\/trees\/[0-9a-f]+\?/.test(call) && !call.includes(':'))).toHaveLength(1);
+    const { skills } = await browser().skills.overview();
+    const a = skills.find((skill) => skill.name === 'a')!;
+    expect(a.pin.commit).toBe(first);
+    expect(a.update?.pin.commit).toBe(second);
+    expect(skills.find((skill) => skill.name === 'b')!.pin.commit).toBe(second);
+  });
+
+  it('finds a Machine’s copy however many versions ago it was', async () => {
+    const first = gh.repo('team/old', { 'skills/a/SKILL.md': skillMd('a') });
+    for (let version = 2; version <= 13; version++) gh.commit('team/old', { 'skills/a/SKILL.md': skillMd('a', `v${version}`) });
+    const { machine, client } = await registerMachine();
+    await client.skills.report({ scan: [{ name: 'a', source: 'team/old', ref: null, hash: await gh.installedHash('team/old', first, 'skills/a'), managed: false }] });
+    expect(await browser().skills.addMany({ repo: 'team/old', skills: [{ name: 'a', machineId: machine.id }] })).toEqual({ added: ['a'], failed: [], rest: [] });
+    expect((await browser().skills.overview()).skills[0]!.pin.commit).toBe(first);
+  });
+
+  it('hands back what it has no budget for, and a second call carries on from what the first read', async () => {
+    gh.repo('team/deep', Object.fromEntries(Array.from({ length: 45 }, (_, i) => {
+      const name = `skill-${String(i).padStart(2, '0')}`;
+      return [`skills/${name}/SKILL.md`, skillMd(name)];
+    })));
+    const input = { repo: 'team/deep', skills: [{ name: 'skill-44' }] };
+    expect(await browser().skills.addMany(input)).toEqual({ added: [], failed: [], rest: ['skill-44'] });
+    expect(await browser().skills.addMany(input)).toEqual({ added: ['skill-44'], failed: [], rest: [] });
+  }, 15_000);
+
+  it('rejects Machine tokens and unauthenticated clients', async () => {
+    const { client } = await registerMachine();
+    for (const caller of [client, rpcClient(env)]) {
+      await expect(caller.skills.addMany({ repo: 'emil/skills', skills: [{ name: 'animate' }] })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    }
+  });
+});
+
 describe('Skill collections', () => {
   it('browses every page at one commit and can add a skill beyond the direct lookup budget', async () => {
     gh.repo('team/collection', Object.fromEntries(Array.from({ length: 35 }, (_, i) => {
@@ -364,6 +419,15 @@ describe('Skill collections', () => {
     await browser().skills.collection({ repo: 'team/collection', commit: current.commit, offset: current.next! });
     expect((await browser().skills.add({ repo: 'team/collection', name: 'skill-33' })).name).toBe('skill-33');
   }, 15_000); // The fixture reads 70 real git blobs while exercising both immutable repository snapshots.
+
+  it('says a skill past the read budget isn’t found yet, not that it doesn’t exist, and finds it when asked again', async () => {
+    gh.repo('team/deep', Object.fromEntries(Array.from({ length: 45 }, (_, i) => {
+      const name = `skill-${String(i).padStart(2, '0')}`;
+      return [`skills/${name}/SKILL.md`, skillMd(name)];
+    })));
+    await expect(browser().skills.add({ repo: 'team/deep', name: 'skill-44' })).rejects.toMatchObject({ code: 'UNSUPPORTED_SKILL' });
+    expect((await browser().skills.add({ repo: 'team/deep', name: 'skill-44' })).name).toBe('skill-44');
+  }, 15_000);
 
   it('does not offer private, unsafe or unsupported skills in a collection', async () => {
     gh.repo('team/collection', {

@@ -13,9 +13,7 @@ import { getTemplate, putTemplate, templateHistory, templateRevisionText } from 
 import { getVariables, putVariables, variablesHistory } from '../db/variables';
 import { pollDeviceFlow, startDeviceFlow } from '../device';
 import type { Env } from '../env';
-import { NotFoundError, UpstreamError } from '../skills/github';
-import { UnsupportedSkillFolder } from '../skills/hash';
-import { NameTakenError, NoMatchingCommitError, skillsService } from '../skills/service';
+import { skillFailure, skillsService } from '../skills/service';
 
 export interface RPCContext {
   env: Env;
@@ -90,12 +88,10 @@ async function skillCall<T>(errors: SkillErrors, work: () => Promise<T>): Promis
   try {
     return await work();
   } catch (error) {
-    if (error instanceof NotFoundError) throw errors.NOT_FOUND();
-    if (error instanceof UnsupportedSkillFolder) throw errors.UNSUPPORTED_SKILL({ data: { reason: error.message } });
-    if (error instanceof NameTakenError) throw errors.SKILL_NAME_TAKEN();
-    if (error instanceof NoMatchingCommitError) throw errors.NO_MATCHING_COMMIT();
-    if (error instanceof UpstreamError) throw errors.UPSTREAM_UNAVAILABLE();
-    throw error;
+    const failure = skillFailure(error);
+    if (!failure) throw error;
+    console.warn(`Skills call failed: ${failure.code}: ${(error as Error).message}`);
+    throw failure.code === 'UNSUPPORTED_SKILL' ? errors.UNSUPPORTED_SKILL({ data: { reason: failure.reason } }) : errors[failure.code]();
   }
 }
 
@@ -228,6 +224,8 @@ export const router = os.router({
       skillsService(context.env).setIgnored(context.userId, input.repo, input.names, input.ignored)),
     add: os.skills.add.use(auth).handler(({ context, input, errors }) =>
       skillCall(errors, () => skillsService(context.env).add(context.userId, input))),
+    addMany: os.skills.addMany.use(auth).handler(({ context, input, errors }) =>
+      skillCall(errors, () => skillsService(context.env).addMany(context.userId, input))),
     assign: os.skills.assign.use(auth).handler(({ context, input, errors }) =>
       skillCall(errors, () => skillsService(context.env).assign(context.userId, input.skillId, input.assignment))),
     update: os.skills.update.use(auth).handler(({ context, input, errors }) =>

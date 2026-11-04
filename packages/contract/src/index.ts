@@ -402,6 +402,9 @@ const invalidVariableNameError = {
   },
 };
 
+/** How many skills one `skills.addMany` call takes, so each call stays within a Worker's request budget. */
+export const ADD_BATCH_SIZE = 6;
+
 const skillErrors = {
   NOT_FOUND: { status: 404 },
   /** The repository or folder can't be a Skill: private, a symlink or submodule inside, no SKILL.md, a bad name. */
@@ -560,6 +563,26 @@ const skills = {
   add: sessionProcedure
     .input(z.object({ repo: repoNameSchema, name: skillNameSchema, machineId: id.optional() }))
     .output(skillSchema)
+    .errors(skillErrors),
+  /**
+   * Add several skills of one repository, as `add` does, reading the repository only once. One skill's
+   * failure doesn't stop the others. `rest` holds the skills not tried yet, because the call ran out of
+   * budget or GitHub stopped answering (then the last of `failed` says UPSTREAM_UNAVAILABLE).
+   */
+  addMany: sessionProcedure
+    .input(z.object({
+      repo: repoNameSchema,
+      skills: z.array(z.object({ name: skillNameSchema, machineId: id.optional() })).min(1).max(ADD_BATCH_SIZE),
+    }))
+    .output(z.object({
+      added: z.array(skillNameSchema),
+      failed: z.array(z.object({
+        name: skillNameSchema,
+        code: z.enum(['NOT_FOUND', 'UNSUPPORTED_SKILL', 'SKILL_NAME_TAKEN', 'NO_MATCHING_COMMIT', 'UPSTREAM_UNAVAILABLE']),
+        reason: z.string().optional(),
+      })),
+      rest: z.array(skillNameSchema),
+    }))
     .errors(skillErrors),
   assign: sessionProcedure
     .input(skillIdInput.extend({ assignment: skillAssignmentSchema }))
