@@ -15,6 +15,7 @@ import { loginHref } from '../login';
 import { ErrorPage } from '../components/ErrorPage';
 import { rpc } from '../rpc';
 import appCss from '../styles.css?url';
+import favicon from '../favicon.svg?url';
 
 export interface RouterContext {
   user: User | null;
@@ -45,7 +46,10 @@ export const Route = createRootRouteWithContext<RouterContext>()({
       { name: 'theme-color', content: '#ffffff' },
       { title: 'AgentSync' },
     ],
-    links: [{ rel: 'stylesheet', href: appCss }],
+    links: [
+      { rel: 'stylesheet', href: appCss },
+      { rel: 'icon', type: 'image/svg+xml', href: favicon },
+    ],
   }),
   shellComponent: DocumentShell,
   component: Layout,

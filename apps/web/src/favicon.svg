@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">
+  <!-- BrandMark (src/components/Icon.tsx), with its colour tokens resolved from styles.css. -->
+  <rect x="8" y="1.5" width="12" height="14" rx="1.5" fill="none" stroke="#5b3fd9" stroke-width="1.5"/>
+  <rect x="5" y="4" width="12" height="14" rx="1.5" fill="#f3f4f6" stroke="#5b3fd9" stroke-width="1.5"/>
+  <rect x="2" y="6.5" width="12" height="14" rx="1.5" fill="#1a1b25"/>
+  <path d="M5 11.5h6M5 14.5h4" stroke="#f3f4f6" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

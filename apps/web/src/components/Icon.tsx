@@ -32,7 +32,7 @@ export function GitHubMark() {
   );
 }
 
-/** Stacked sheets: one master, its copies offset behind it. */
+/** Stacked sheets: one master, its copies offset behind it. src/favicon.svg copies it; keep the two in sync. */
 export function BrandMark() {
   return (
     <svg className="brand-mark" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
