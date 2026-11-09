@@ -114,4 +114,31 @@ describe('Template editor', () => {
     await act(async () => new Promise(requestAnimationFrame));
     expect(editor.value).toBe('{{if machine.os != "windows"}}');
   });
+
+  it('completes names and values anywhere in a compound condition', async () => {
+    routeMocks.loaderData = { ...data(1, ''), machines: [machine('alpha')], variables: [{}] };
+    document.execCommand = () => false;
+    render(<Editor />);
+    const editor = screen.getByLabelText<HTMLTextAreaElement>('Template');
+    const listbox = (name: string) => screen.queryByRole('listbox', { name });
+
+    // After && (and !, or a parenthesis) a name is offered, and accepting it starts the comparison.
+    fireEvent.change(editor, { target: { value: '{{if agent == "pi" && !(machine.o' } });
+    fireEvent.keyDown(editor, { key: 'Enter' });
+    await act(async () => new Promise(requestAnimationFrame));
+    expect(editor.value).toBe('{{if agent == "pi" && !(machine.os == "');
+    expect(within(listbox('Values of machine.os')!).getByRole('option', { name: /linux/ })).toBeTruthy();
+
+    // {{else if}} completes like {{if}}; nothing is offered where an operator belongs.
+    fireEvent.change(editor, { target: { value: '{{else if machine.os == "l' } });
+    expect(listbox('Values of machine.os')).toBeTruthy();
+    fireEvent.change(editor, { target: { value: '{{if agent ' } });
+    expect(listbox('Variables')).toBeNull();
+
+    // Inside an in [...] list only the value is closed, so the list can go on.
+    fireEvent.change(editor, { target: { value: '{{if machine.os in ["macos", "l' } });
+    fireEvent.keyDown(editor, { key: 'Enter' });
+    await act(async () => new Promise(requestAnimationFrame));
+    expect(editor.value).toBe('{{if machine.os in ["macos", "linux"');
+  });
 });

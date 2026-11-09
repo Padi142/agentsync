@@ -85,6 +85,109 @@ describe('render', () => {
     expect(render(template, codexOnLinux).text).toBe('linux');
   });
 
+  describe('conditions', () => {
+    const on = (os: string, agent: string, variables: Record<string, string> = {}): RenderContext => ({
+      variables,
+      builtins: { machine: { hostname: 'box', nickname: 'Box', os }, agent },
+    });
+    const show = (condition: string, context: RenderContext) =>
+      render(`{{if ${condition}}}yes{{else}}no{{end}}`, context).text;
+
+    it.each([
+      ['machine.os == "linux" && agent == "claude"', ['yes', 'no', 'no']],
+      ['machine.os == "linux" || agent == "claude"', ['yes', 'yes', 'yes']],
+      ['!(machine.os == "linux")', ['no', 'no', 'yes']],
+      ['!machine.os == "linux" && agent == "claude"', ['no', 'no', 'yes']],
+    ])('evaluates %s', (condition, expected) => {
+      const contexts = [on('linux', 'claude'), on('linux', 'codex'), on('macos', 'claude')];
+      expect(contexts.map((context) => show(condition, context))).toEqual(expected);
+    });
+
+    it('binds && tighter than ||, and parentheses override it', () => {
+      const context = on('macos', 'claude');
+      expect(show('agent == "claude" || agent == "codex" && machine.os == "linux"', context)).toBe('yes');
+      expect(show('(agent == "claude" || agent == "codex") && machine.os == "linux"', context)).toBe('no');
+    });
+
+    it('ignores whitespace and line breaks between tokens', () => {
+      expect(show('(machine.os==\n"linux")&&!(agent!="claude")', on('linux', 'claude'))).toBe('yes');
+    });
+
+    it('renders the first {{else if}} branch that holds', () => {
+      const template = [
+        '{{if machine.os == "macos"}}',
+        'brew',
+        '{{else if machine.os == "linux" && agent == "codex"}}',
+        'apt for codex',
+        '{{else if machine.os == "linux"}}',
+        'apt',
+        '{{else}}',
+        'winget',
+        '{{end}}',
+      ].join('\n');
+      expect(render(template, on('macos', 'codex')).text).toBe('brew\n');
+      expect(render(template, on('linux', 'codex')).text).toBe('apt for codex\n');
+      expect(render(template, on('linux', 'claude')).text).toBe('apt\n');
+      expect(render(template, on('windows', 'claude')).text).toBe('winget\n');
+    });
+
+    it('warns only about Variables it had to look up, at the Variable', () => {
+      const template = '{{if agent == "codex" && pager == "less"}}x{{else if editor == "vim" || shell == "fish"}}y{{end}}';
+      expect(render(template, on('linux', 'claude', { editor: 'vim' })).warnings).toEqual([]);
+      expect(render(template, on('linux', 'codex', { editor: 'helix' })).warnings).toMatchObject([
+        { variable: 'pager', line: 1, column: template.indexOf('pager') + 1 },
+        { variable: 'shell', line: 1, column: template.indexOf('shell') + 1 },
+      ]);
+    });
+
+    it('lists the Variables of every condition and branch', () => {
+      expect(
+        referencedVariables('{{if a == "1" && !(b == "2" || agent == "pi")}}{{c}}{{else if d != "4"}}{{e}}{{end}}'),
+      ).toEqual(['a', 'b', 'c', 'd', 'e']);
+    });
+
+    it('does not count {{else if}} towards the nesting limit', () => {
+      const chain = '{{if agent == "x"}}' + '{{else if agent == "x"}}'.repeat(200) + '{{else}}ok{{end}}';
+      expect(render(chain, laptop).text).toBe('ok');
+    });
+
+    it('tests whether a Variable is set, without warning when it is not', () => {
+      const template = '{{if work_email}}Mail {{work_email}}.{{else if !pager}}No pager.{{end}}';
+      expect(render(template, on('linux', 'pi', { work_email: 'a@b.c' }))).toEqual({ text: 'Mail a@b.c.', warnings: [] });
+      expect(render(template, on('linux', 'pi'))).toEqual({ text: 'No pager.', warnings: [] });
+      // An empty value counts as no value, as in ${x:-default}.
+      expect(render(template, on('linux', 'pi', { work_email: '', pager: 'less' })).text).toBe('');
+      expect(referencedVariables(template)).toEqual(['work_email', 'pager']);
+    });
+
+    it('tests membership in a list', () => {
+      const condition = 'agent in ["claude", "pi",] && !(machine.os in ["windows"])';
+      expect(['claude', 'pi', 'codex'].map((agent) => show(condition, on('linux', agent)))).toEqual(['yes', 'yes', 'no']);
+      expect(show(condition, on('windows', 'claude'))).toBe('no');
+    });
+
+    it('matches globs against the whole value', () => {
+      const hostname = (name: string): RenderContext => ({
+        variables: {},
+        builtins: { machine: { hostname: name, nickname: name, os: 'linux' }, agent: 'claude' },
+      });
+      const condition = 'machine.hostname matches "build-?.*"';
+      expect(['build-1.ci', 'build-2.', 'build-10.ci', 'xbuild-1.ci', 'build-1'].map((h) => show(condition, hostname(h))))
+        .toEqual(['yes', 'yes', 'no', 'no', 'no']);
+      // Everything but * and ? is literal, regular expression syntax included.
+      expect(show('machine.hostname matches "a+(b)|[c]"', hostname('a+(b)|[c]'))).toBe('yes');
+      expect(show('machine.hostname matches "a+(b)|[c]"', hostname('aa(b)'))).toBe('no');
+      expect(show('machine.hostname matches "*"', hostname('line\nbreak'))).toBe('yes');
+    });
+
+    it('rejects conditions nested deeper than 64', () => {
+      expect(validate(`{{if ${'!'.repeat(64)}agent == "x"}}{{end}}`)).toMatchObject({
+        message: 'Conditions can only be nested 64 deep',
+      });
+      expect(validate(`{{if ${'!'.repeat(63)}agent == "x"}}{{end}}`)).toBeNull();
+    });
+  });
+
   it.each([
     ['}}', '==', 'yes'],
     ['}}', '!=', 'no'],
@@ -106,7 +209,7 @@ describe('render', () => {
     const { text, warnings } = render('{{if pager == ""}}none{{end}}', laptop);
     expect(text).toBe('none');
     expect(warnings).toMatchObject([
-      { kind: 'missing-variable', variable: 'pager', line: 1, column: 1 },
+      { kind: 'missing-variable', variable: 'pager', line: 1, column: 6 },
     ]);
   });
 
@@ -209,6 +312,15 @@ describe('render', () => {
     });
   });
 
+  it('renders a default for a missing or empty Variable, without a warning', () => {
+    const template = '{{editor ?? "vim"}} {{ pager??"less" }} {{shell ?? "a}}b"}}';
+    expect(render(template, laptop)).toEqual({ text: 'helix less fish', warnings: [] });
+    expect(render('[{{pager ?? "less"}}]', { ...laptop, variables: { pager: '' } }).text).toBe('[less]');
+    const mark = (value: string, name: string) => `<${name}:${value}>`;
+    expect(render('{{pager ?? "less"}}', laptop, { mark }).text).toBe('<pager:less>');
+    expect(referencedVariables('{{pager ?? "less"}}')).toEqual(['pager']);
+  });
+
   it('treats a Variable set to an empty string as present', () => {
     const context = { ...laptop, variables: { pager: '' } };
     expect(render('[{{pager}}]', context)).toEqual({
@@ -250,27 +362,36 @@ describe('validate', () => {
       'Unclosed Expression: add a matching }}',
     ],
     ['an empty Expression', 'Hi {{ }}', 1, 4, 'Empty Expression'],
-    [
-      'an if without a comparison',
-      '{{if editor}}x{{end}}',
-      1,
-      1,
-      'Malformed {{if}}: expected {{if name == "value"}} or {{if name != "value"}}',
-    ],
-    [
-      'an if with an unquoted value',
-      '{{if editor == vim}}x{{end}}',
-      1,
-      1,
-      'Malformed {{if}}: expected {{if name == "value"}} or {{if name != "value"}}',
-    ],
-    [
-      'an if combining conditions',
-      '{{if editor == "vim" and agent == "claude"}}x{{end}}',
-      1,
-      1,
-      'Malformed {{if}}: expected {{if name == "value"}} or {{if name != "value"}}',
-    ],
+    ['an if without a condition', '{{if}}x{{end}}', 1, 5, 'Expected a condition such as agent == "claude"'],
+    ['a value without an operator', '{{if editor "vim"}}x{{end}}', 1, 13, 'Expected ==, !=, in or matches before "vim"'],
+    ['a Built-in Variable tested for being set', '{{if machine.os}}x{{end}}', 1, 6, 'Built-in Variables are always set: compare machine.os with == or != instead'],
+    ['in without a list', '{{if agent in "pi"}}x{{end}}', 1, 15, 'Expected a list after in, such as ["claude", "pi"]'],
+    ['an empty list', '{{if agent in []}}x{{end}}', 1, 16, 'Expected a quoted value after [, such as "linux"'],
+    ['an unclosed list', '{{if agent in ["pi"}}x{{end}}', 1, 20, 'Unclosed [: add a matching ]'],
+    ['not in', '{{if agent not in ["pi"]}}x{{end}}', 1, 12, 'Put ! in front instead: !(agent in …)'],
+    ['two names in a row', '{{if agent codex}}x{{end}}', 1, 12, 'Expected ==, !=, in or matches before codex'],
+    ['an unquoted value with a dash', '{{if machine.hostname matches build-*}}x{{end}}', 1, 36, 'Unexpected - in a condition: quote values, such as "linux"'],
+    ['~= for patterns', '{{if machine.hostname ~= "a*"}}x{{end}}', 1, 23, 'Unexpected ~ in a condition: match a pattern with matches, such as machine.hostname matches "build-*"'],
+    ['elif', '{{if a}}{{elif b}}{{end}}', 1, 9, 'Use {{else if …}} instead'],
+    ['endif', '{{if a}}{{endif}}', 1, 9, 'Use {{end}} instead'],
+    ['|| for a default', '{{editor || "vim"}}', 1, 1, 'Use ?? for a default, such as {{editor ?? "vim"}}'],
+    ['a list without commas', '{{if agent in ["pi" "codex"]}}x{{end}}', 1, 21, 'Expected , or ] before "codex"'],
+    ['an unquoted pattern', '{{if agent matches cl*}}x{{end}}', 1, 22, 'Unexpected * in a condition: quote a pattern, such as "build-*"'],
+    ['matches without a pattern', '{{if agent matches}}x{{end}}', 1, 19, 'Expected a quoted value after matches, such as "linux"'],
+    ['a malformed default', '{{editor ?? vim}}', 1, 1, 'Malformed default: expected {{name ?? "default"}}'],
+    ['a default on an invalid name', '{{first name ?? "x"}}', 1, 1, 'Invalid Variable name "first name"'],
+    ['an if with an unquoted value', '{{if editor == vim}}x{{end}}', 1, 16, 'Expected a quoted value after ==, such as "linux"'],
+    ['a single-quoted value', "{{if editor == 'vim'}}x{{end}}", 1, 16, 'Unexpected \' in a condition: quote values with "'],
+    ['a single =', '{{if editor = "vim"}}x{{end}}', 1, 13, 'Unexpected = in a condition: compare with =='],
+    ['and spelled out', '{{if editor == "vim" and agent == "claude"}}x{{end}}', 1, 22, 'Use && instead of and'],
+    ['not spelled out', '{{if not editor == "vim"}}x{{end}}', 1, 6, 'Use ! instead of not'],
+    ['comparisons without an operator between them', '{{if a == "1" b == "2"}}x{{end}}', 1, 15, 'Expected && or || before b'],
+    ['a dangling &&', '{{if a == "1" &&}}x{{end}}', 1, 17, 'Expected a condition such as agent == "claude"'],
+    ['an unclosed (', '{{if (a == "1" || b == "2"}}x{{end}}', 1, 6, 'Unclosed (: add a matching )'],
+    ['a stray )', '{{if a == "1")}}x{{end}}', 1, 14, 'Unexpected ): it has no matching ('],
+    ['an else if without an if', '{{else if a == "1"}}', 1, 1, '{{else if}} has no matching {{if}}'],
+    ['an else if after else', '{{if a == "1"}}{{else}}{{else if a == "2"}}{{end}}', 1, 24, '{{else if}} must come before {{else}}'],
+    ['a position on a later line of a tag', '{{if a == "1"\n   && b "x"}}x{{end}}', 2, 9, 'Expected ==, !=, in or matches before "x"'],
     [
       'an invalid Variable name',
       '{{first name}}',
@@ -294,9 +415,9 @@ describe('validate', () => {
     ],
     [
       'an unknown Built-in Variable in a condition',
-      '{{if machine.arch == "arm64"}}x{{end}}',
+      '{{if agent == "pi" || machine.arch == "arm64"}}x{{end}}',
       1,
-      1,
+      23,
       'Unknown Built-in Variable "machine.arch"',
     ],
   ])('rejects %s with its position', (_, template, line, column, message) => {

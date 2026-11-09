@@ -22,33 +22,45 @@ export interface EditorHandle {
 }
 
 /**
- * What is being typed at the caret: a name inside `{{` (a substitution) or after `{{if ` (a
- * condition), or the quoted value a condition compares `variable` with.
+ * What is being typed at the caret: a name inside `{{` (a substitution) or in an `{{if}}` or
+ * `{{else if}}` condition, or the quoted value a condition tests `variable` with: after `==`,
+ * `!=` or `matches`, or in an `in [...]` list.
  */
-interface Completion {
+type Completion = {
   query: string;
   /** Where the typed part starts. */
   from: number;
-  kind: 'substitution' | 'condition' | 'value';
-  variable?: string;
+} & ({ kind: 'substitution' | 'condition' } | { kind: 'value'; variable: string; inList: boolean });
+
+/** The text after the last `{{` before the caret, if that Expression is unescaped and still open. */
+function openExpression(before: string): string | null {
+  const start = before.lastIndexOf('{{');
+  if (start === -1 || before[start - 1] === '\\') return null;
+  const inside = before.slice(start + 2);
+  // A `}}` outside quotes has closed it.
+  return inside.replace(/"[^"]*("|$)/g, '').includes('}}') ? null : inside;
 }
 
-/** An unescaped `{{`, optionally `if`, then the start of a name, right before the caret. */
-const OPEN_EXPRESSION = /(\\?)\{\{\s*(?:(if)\s+)?([A-Za-z_][\w.]*)?$/;
-/** An unescaped `{{if name == "` (or `!=`) and the start of its value, right before the caret. */
-const OPEN_VALUE = /(\\?)\{\{\s*if\s+([A-Za-z_][\w.]*)\s*[!=]=\s*"([^"\n]*)$/;
-
 function completionAt(value: string, caret: number): Completion | null {
-  const before = value.slice(0, caret);
-  const quoted = OPEN_VALUE.exec(before);
-  if (quoted) {
-    const query = quoted[3]!;
-    return quoted[1] ? null : { query, from: caret - query.length, kind: 'value', variable: quoted[2] };
+  const inside = openExpression(value.slice(0, caret));
+  if (inside === null) return null;
+  const at = (query: string) => ({ query, from: caret - query.length });
+  const conditional = /^\s*(?:else\s+)?if\b/.exec(inside);
+  if (!conditional) {
+    const name = /^\s*([A-Za-z_][\w.]*)?$/.exec(inside);
+    return name ? { ...at(name[1] ?? ''), kind: 'substitution' } : null;
   }
-  const match = OPEN_EXPRESSION.exec(before);
-  if (!match || match[1]) return null;
-  const query = match[3] ?? '';
-  return { query, from: caret - query.length, kind: match[2] ? 'condition' : 'substitution' };
+  const condition = inside.slice(conditional[0].length);
+  // An odd number of quotes: the caret is inside the value a name is compared with.
+  if (condition.split('"').length % 2 === 0) {
+    const quoted = /([A-Za-z_][\w.]*)\s*(?:[!=]=|matches|(in\s*\[(?:\s*"[^"]*"\s*,)*))\s*"([^"\n]*)$/.exec(condition);
+    return quoted ? { ...at(quoted[3]!), kind: 'value', variable: quoted[1]!, inList: quoted[2] !== undefined } : null;
+  }
+  // A name opens the condition or follows &&, ||, ! or (.
+  const query = /[A-Za-z_][\w.]*$/.exec(condition)?.[0] ?? '';
+  const lead = condition.slice(0, condition.length - query.length);
+  const head = lead.replace(/[\s(!]+$/, '');
+  return lead !== '' && (head === '' || /(&&|\|\|)$/.test(head)) ? { ...at(query), kind: 'condition' } : null;
 }
 
 /** Replace the textarea's `from`–`to` with `text` the way typing would, so undo still works. */
@@ -124,7 +136,7 @@ export function CodeEditor({ ref, value, onChange, marks = [], label, readOnly =
   const key = completion ? `${completion.from}:${completion.query}` : null;
   const matches = !completion ? []
     : completion.kind === 'value'
-      ? (Object.hasOwn(values, completion.variable!) ? values[completion.variable!]! : []).filter((s) => s.name.toLowerCase().startsWith(completion.query.toLowerCase()))
+      ? (Object.hasOwn(values, completion.variable) ? values[completion.variable]! : []).filter((s) => s.name.toLowerCase().startsWith(completion.query.toLowerCase()))
       : suggestions.filter((s) => s.name.startsWith(completion.query));
   const open = !!completion && matches.length > 0 && dismissed !== key;
   const current = Math.min(active, matches.length - 1);
@@ -145,7 +157,9 @@ export function CodeEditor({ ref, value, onChange, marks = [], label, readOnly =
       // Replace the whole value up to its closing quote, then close what is still open.
       const to = caret + /^[^"\n]*/.exec(value.slice(caret))![0].length;
       const quoted = value[to] === '"';
-      const text = quoted ? suggestion.name : `${suggestion.name}"${/^\s*\}\}/.test(value.slice(to)) ? '' : '}}'}`;
+      // A list may go on, so only its value is closed there.
+      const closed = completion.inList || /^\s*\}\}/.test(value.slice(to));
+      const text = quoted ? suggestion.name : `${suggestion.name}"${closed ? '' : '}}'}`;
       // Leave the caret past the closing quote.
       insert(textarea.current, from, to, text, onChange, from + text.length + (quoted ? 1 : 0));
       setDismissed(`${from}:${suggestion.name}`);

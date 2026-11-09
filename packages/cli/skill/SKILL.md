@@ -20,9 +20,9 @@ Run every command with `--json --yes`. Stdout is one JSON document (`ok`, the da
 
 ## Template syntax
 
-- `{{name}}` is a Variable of this Machine. A missing one Renders as empty, with a warning.
+- `{{name}}` is a Variable of this Machine. A missing one Renders as empty, with a warning. `{{name ?? "default"}}` Renders the default instead when it is missing or empty.
 - Built-in Variables: `{{machine.nickname}}` (the editable name a person gives the Machine), `{{machine.hostname}}` (the computer's own hostname), `{{machine.os}}` (`macos`, `linux`, `windows`), `{{agent}}` (`claude`, `codex`, `pi`, …: the agent whose Target is being Rendered).
-- `{{if agent == "codex"}} … {{else}} … {{end}}`, also `!=`. Blocks nest. There is no `and`/`or`.
+- `{{if agent == "codex"}} … {{else if machine.os == "linux"}} … {{else}} … {{end}}`. Test a Variable with `== "value"`, `!= "value"`, `in ["a", "b"]`, `matches "glob-*"` (`*` any text, `?` one character), or a bare name (set and non-empty). Combine with `&&`, `||` and `!`, and group with parentheses: `{{if machine.os == "linux" && (agent in ["claude", "pi"] || gpu)}}`. Blocks nest.
 - `\{{` is a literal `{{`.
 - A malformed Expression is a hard error: the save is rejected with its line and column.
 
