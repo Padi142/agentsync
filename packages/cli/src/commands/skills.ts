@@ -120,7 +120,7 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
             const record = recordOf(managed, name)!;
             const leftover = after.folders.get(name);
             let left = leftover?.present ?? [];
-            // `skills` keeps the shared `~/.agents/skills` copy while another agent it knows (Cursor, say)
+            // `skills` keeps the shared `~/.agents/skills` copy while another agent it knows (Cursor or OpenCode, say)
             // reads that directory. If it's still AgentSync's unedited copy, finish the removal here.
             const ours = leftover !== undefined && !foreign(leftover, record) &&
               (overwrite || leftover.hash === record.installedHash);
