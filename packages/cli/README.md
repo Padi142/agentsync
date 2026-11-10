@@ -134,10 +134,12 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
 - **Skill Drift.** A folder is hashed on disk as git would (a tree hash), leaving out what
   `skills` never copies (`metadata.json`, `.git`, `__pycache__`, `__pypackages__`), and compared
   with the Pin's installed hash from the server. The lock's own hash is never trusted.
-- **Removing.** `skills remove … -g -y -a claude-code codex pi opencode` removes every copy, so AgentSync
-  only asks it to remove its own undrifted copies, and checks the disk afterwards. `skills` keeps
-  the shared `~/.agents/skills` copy while another agent it knows reads that directory (Cursor,
-  say); AgentSync then removes that copy, which it owns, and its lock entry itself.
+- **Removing.** `skills remove … -g -y -a claude-code codex pi` removes every copy, so AgentSync
+  only asks it to remove its own undrifted copies, and checks the disk afterwards. Never
+  `-a opencode`: `skills remove` also deletes the name from each agent's own global directory, and
+  OpenCode's (`~/.config/opencode/skills`) holds the person's skills, not AgentSync's. `skills` keeps
+  the shared `~/.agents/skills` copy while another agent it knows reads that directory (Cursor or
+  OpenCode, say); AgentSync then removes that copy, which it owns, and its lock entry itself.
 - **Failures.** A Skill `skills` reports as failed counts as failed. A copy still at the earlier Pin
   keeps that record; one `skills` wrote only part of is AgentSync's and the next sync finishes it.
 - **Reporting.** `skills sync` and `init` send a scan and their results to the server; `agentsync
@@ -182,8 +184,8 @@ SessionStart JSON: `hookSpecificOutput.additionalContext` carries it to the mode
 `systemMessage` tells the person what changed and points at `agentsync history` (left out
 when only the model needs to know, e.g. the server was unreachable). The pi extension shows
 the line as a notice and appends it to the system prompt. The OpenCode plugin appends it to
-the system prompt of every request (`experimental.chat.system.transform` in 1.x, the session
-`context` hook in 2.x).
+the system prompt of every request (`experimental.chat.system.transform` in 1.x, which also
+covers its title requests, and the session `context` hook in 2.x).
 
 ### Does a change apply to the current session? Not for Claude Code or Codex; yes for pi and OpenCode
 
