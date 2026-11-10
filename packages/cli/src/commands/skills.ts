@@ -120,7 +120,7 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
             const record = recordOf(managed, name)!;
             const leftover = after.folders.get(name);
             let left = leftover?.present ?? [];
-            // `skills` keeps the shared `~/.agents/skills` copy while another agent it knows (Cursor, say)
+            // `skills` keeps the shared `~/.agents/skills` copy while another agent it knows (Cursor or OpenCode, say)
             // reads that directory. If it's still AgentSync's unedited copy, finish the removal here.
             const ours = leftover !== undefined && !foreign(leftover, record) &&
               (overwrite || leftover.hash === record.installedHash);
@@ -149,7 +149,7 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
       for (const group of groups.values()) {
         const { repo, commit } = group[0]!.desired;
         if (!agents.length) {
-          for (const step of group) result(step.name, commit, 'failed', 'No agent on this Machine takes Skills: AgentSync installs them for Claude Code, Codex and pi.');
+          for (const step of group) result(step.name, commit, 'failed', 'No agent on this Machine takes Skills: AgentSync installs them for Claude Code, Codex, pi and OpenCode.');
           continue;
         }
         // The disk may have changed while earlier groups installed: act only on what still holds.

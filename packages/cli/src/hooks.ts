@@ -67,23 +67,18 @@ export const hookHandler = (ctx: Context, agent: Agent): Handler => ({
 });
 
 /**
- * The pi extension that runs `command`. pi awaits an extension's factory before it reads
- * AGENTS.md, so the session that is starting gets the update. The `AgentSync:` line goes to the
- * person as a notice and to the model at the end of the system prompt.
+ * The part of a hook file that runs `command`: `run()` resolves to the line it printed, or `''`.
  *
- * Whatever happens, the promise resolves by the deadline, so pi always starts. At the deadline
- * the extension lets go of the command's output pipe, so pi can still exit, and kills the
+ * Whatever happens, the promise resolves by the deadline, so the agent always starts. At the
+ * deadline it lets go of the command's output pipe, so the agent can still exit, and kills the
  * command's whole process group: killing only the shell would leave the command running.
  */
-export const piExtension = (command: string, timeoutMs = HOOK_TIMEOUT_SECONDS * 1000) => `// Written by AgentSync: it syncs your Global Instructions when a pi session starts.
-// AgentSync updates this file while it is unchanged, and \`agentsync logout\` removes it.
-import { type ChildProcess, spawn } from 'node:child_process';
-import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+const runner = (command: string, timeoutMs: number) => `import { type ChildProcess, spawn } from 'node:child_process';
 
 const COMMAND = ${JSON.stringify(command)};
 const windows = process.platform === 'win32';
 
-/** Stop the command and everything it started. A failure here must not take pi down with it. */
+/** Stop the command and everything it started. A failure here must not take the agent down with it. */
 function stop(child: ChildProcess) {
   child.stdout?.destroy();
   child.unref();
@@ -101,8 +96,9 @@ function stop(child: ChildProcess) {
   } catch {}
 }
 
-export default async function agentsync(pi: ExtensionAPI) {
-  const line = await new Promise<string>((resolve) => {
+/** Run the hook. Resolves to its \`AgentSync:\` line, or '' when it printed nothing, failed or ran out of time. */
+function run() {
+  return new Promise<string>((resolve) => {
     let stdout = '';
     try {
       // Its own process group (on POSIX), so the deadline can stop it as a whole.
@@ -126,6 +122,20 @@ export default async function agentsync(pi: ExtensionAPI) {
       resolve('');
     }
   });
+}`;
+
+/**
+ * The pi extension that runs `command`. pi awaits an extension's factory before it reads
+ * AGENTS.md, so the session that is starting gets the update. The `AgentSync:` line goes to the
+ * person as a notice and to the model at the end of the system prompt.
+ */
+export const piExtension = (command: string, timeoutMs = HOOK_TIMEOUT_SECONDS * 1000) => `// Written by AgentSync: it syncs your Global Instructions when a pi session starts.
+// AgentSync updates this file while it is unchanged, and \`agentsync logout\` removes it.
+import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+${runner(command, timeoutMs)}
+
+export default async function agentsync(pi: ExtensionAPI) {
+  const line = await run();
   if (!line) return;
   pi.on('session_start', (_event, ctx) => {
     if (ctx.hasUI) ctx.ui.notify(line, 'info');
@@ -135,14 +145,56 @@ export default async function agentsync(pi: ExtensionAPI) {
 `;
 
 /**
+ * The OpenCode plugin that runs `command` when OpenCode starts. One file works in OpenCode 1.x,
+ * which calls `server`, and 2.x, which calls `setup`; each ignores the other's. Both await the
+ * plugin before the first request, and OpenCode reads AGENTS.md for each request, so the first
+ * session gets the update. The `AgentSync:` line goes to the model at the end of the system prompt.
+ */
+export const opencodePlugin = (command: string, timeoutMs = HOOK_TIMEOUT_SECONDS * 1000) => `// Written by AgentSync: it syncs your Global Instructions when OpenCode starts.
+// AgentSync updates this file while it is unchanged, and \`agentsync logout\` removes it.
+${runner(command, timeoutMs)}
+
+type SystemPart = { type: 'text'; text: string };
+type Session = { hook(name: 'context', run: (event: { system: SystemPart[] }) => void): Promise<unknown> };
+
+export default {
+  id: 'agentsync',
+  // OpenCode 1.x
+  async server() {
+    const line = await run();
+    if (!line) return {};
+    return {
+      async 'experimental.chat.system.transform'(_input: unknown, output: { system: string[] }) {
+        output.system.push(line);
+      },
+    };
+  },
+  // OpenCode 2.x
+  async setup(ctx: { session: Session }) {
+    const line = await run();
+    if (!line) return;
+    await ctx.session.hook('context', (event) => {
+      event.system.push({ type: 'text', text: line });
+    });
+  },
+};
+`;
+
+/** The hook files AgentSync writes whole, for agents without a hook config. */
+const hookFiles = {
+  'pi-extension': piExtension,
+  'opencode-plugin': opencodePlugin,
+} satisfies Record<Exclude<Agent['hookKind'], 'json'>, (command: string) => string>;
+
+/**
  * Install the hook into `agent`'s config and remember exactly what was written. Returns false
- * when a pi extension was left alone because someone wrote or changed it.
+ * when a hook file was left alone because someone wrote or changed it.
  */
 export function installHook(ctx: Context, agent: Agent): boolean {
   const file = agent.hooksFile(ctx.io);
   const handler = hookHandler(ctx, agent);
-  if (agent.hookKind === 'pi-extension') {
-    const written = writeOwned((ctx.config.extensions ??= {}), file, piExtension(handler.command!));
+  if (agent.hookKind !== 'json') {
+    const written = writeOwned((ctx.config.extensions ??= {}), file, hookFiles[agent.hookKind](handler.command!));
     if (written) ctx.save();
     return written;
   }

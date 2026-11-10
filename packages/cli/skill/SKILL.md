@@ -1,6 +1,6 @@
 ---
 name: agentsync
-description: AgentSync CLI that syncs the user's Global Instructions (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.pi/agent/AGENTS.md) across Machines. Use when changing those global instruction files, when the user asks why their instructions or an agent's behavior changed, when an `AgentSync:` line reports an update, Drift, a Conflict or Skills to install, or when an `agentsync` command exits 3, 4 or 5.
+description: AgentSync CLI that syncs the user's Global Instructions (~/.claude/CLAUDE.md, ~/.codex/AGENTS.md, ~/.pi/agent/AGENTS.md, ~/.config/opencode/AGENTS.md) across Machines. Use when changing those global instruction files, when the user asks why their instructions or an agent's behavior changed, when an `AgentSync:` line reports an update, Drift, a Conflict or Skills to install, or when an `agentsync` command exits 3, 4 or 5.
 ---
 
 # AgentSync
@@ -21,7 +21,7 @@ Run every command with `--json --yes`. Stdout is one JSON document (`ok`, the da
 ## Template syntax
 
 - `{{name}}` is a Variable of this Machine. A missing one Renders as empty, with a warning. `{{name ?? "default"}}` Renders the default instead when it is missing or empty.
-- Built-in Variables: `{{machine.nickname}}` (the editable name a person gives the Machine), `{{machine.hostname}}` (the computer's own hostname), `{{machine.os}}` (`macos`, `linux`, `windows`), `{{agent}}` (`claude`, `codex`, `pi`, …: the agent whose Target is being Rendered).
+- Built-in Variables: `{{machine.nickname}}` (the editable name a person gives the Machine), `{{machine.hostname}}` (the computer's own hostname), `{{machine.os}}` (`macos`, `linux`, `windows`), `{{agent}}` (`claude`, `codex`, `pi`, `opencode`, …: the agent whose Target is being Rendered).
 - `{{if agent == "codex"}} … {{else if machine.os == "linux"}} … {{else}} … {{end}}`. Test a Variable with `== "value"`, `!= "value"`, `in ["a", "b"]`, `matches "glob-*"` (`*` any text, `?` one character), or a bare name (set and non-empty). Combine with `&&`, `||` and `!`, and group with parentheses: `{{if machine.os == "linux" && (agent in ["claude", "pi"] || gpu)}}`. Blocks nest.
 - `\{{` is a literal `{{`.
 - A malformed Expression is a hard error: the save is rejected with its line and column.
@@ -55,9 +55,9 @@ A Conflict is a Template edit saved after the Template had already moved on. The
 
 ## `AgentSync:` lines at session start
 
-The hook (a SessionStart hook, or for pi an extension) runs `agentsync sync --hook <agent>` and prints at most one line:
+The hook (a SessionStart hook, for pi an extension, for OpenCode a plugin) runs `agentsync sync --hook <agent>` and prints at most one line:
 
-- **updated `<path>`**: if the line says this session loaded the previous version (Claude Code, Codex), read `<path>` when the current instructions matter for the task. Without that note (pi), the hook ran before the instructions were read, so this session already has them.
+- **updated `<path>`**: if the line says this session loaded the previous version (Claude Code, Codex), read `<path>` when the current instructions matter for the task. Without that note (pi, OpenCode), the hook ran before the instructions were read, so this session already has them.
 - **Drift**: the Target was skipped. Offer to [fold it into the Template](#fold-drift-into-the-template).
 - **open Conflict**: offer to [resolve it](#resolve-a-conflict).
 - **N Skills to install, M updates; run `agentsync skills sync`**: Skills set on the dashboard are waiting. The hook never installs them. Tell the user, and run `agentsync skills sync --json` if they want them now (see [Skills](#skills)).

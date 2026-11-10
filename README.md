@@ -9,7 +9,7 @@ Template, Machines and their Variables (with revision history), Conflicts, and
 Machine registration through the WorkOS device flow, and Skills (agent skills from public GitHub
 repositories, pinned to a commit; see `docs/adr/0002-…`). The `agentsync` CLI
 (`packages/cli`) Renders the Template into each agent's Global Instructions and keeps
-them current from Claude Code and Codex `SessionStart` hooks and a pi extension.
+them current from Claude Code and Codex `SessionStart` hooks, a pi extension and an OpenCode plugin.
 
 The web UI has four sections. **Template** edits the Template (live syntax
 errors, Cmd/Ctrl+S) beside a per-Machine, per-agent preview that renders the

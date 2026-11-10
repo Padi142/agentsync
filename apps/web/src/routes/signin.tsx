@@ -36,6 +36,7 @@ const HARNESSES = [
   { agent: 'claude', name: 'Claude Code', file: '~/.claude/CLAUDE.md' },
   { agent: 'codex', name: 'Codex', file: '~/.codex/AGENTS.md' },
   { agent: 'pi', name: 'pi', file: '~/.pi/agent/AGENTS.md' },
+  { agent: 'opencode', name: 'OpenCode', file: '~/.config/opencode/AGENTS.md' },
 ] as const;
 
 /** Example rows for the Skills section, worded like the real Skills page. */
@@ -118,7 +119,7 @@ function SignIn() {
         </li>
         <li>
           <h2>Register your computers</h2>
-          <p>One command, or a prompt you paste into Claude Code, Codex or pi. It finds your agents and their files.</p>
+          <p>One command, or a prompt you paste into Claude Code, Codex, pi or OpenCode. It finds your agents and their files.</p>
         </li>
         <li>
           <h2>Start a session</h2>

@@ -48,8 +48,8 @@ export interface Io {
   progress(text: string, style: PromptStyle): Progress;
   /** Open `file` in the person's editor and wait until it closes. */
   edit(file: string): Promise<void>;
-  /** Start `agent` (e.g. `claude`) in the terminal with `prompt` and wait until it exits. */
-  launchAgent(agent: string, prompt: string): Promise<void>;
+  /** Start `agent`'s command (e.g. `claude`) in the terminal with `args` and wait until it exits. */
+  launchAgent(agent: string, args: string[]): Promise<void>;
   sleep(ms: number): Promise<void>;
   /**
    * Run the pinned `skills` CLI with `args` (an argument array, never a shell), with no terminal and

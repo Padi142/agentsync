@@ -2,8 +2,8 @@
 
 The AgentSync CLI. It Renders your one Template (stored on the AgentSync server) with
 this Machine's Variables into every Target, such as `~/.claude/CLAUDE.md`,
-`~/.codex/AGENTS.md` and `~/.pi/agent/AGENTS.md`, and keeps them current from a hook that
-runs when each agent's session starts. It also installs the Skills you pick on the dashboard
+`~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md` and `~/.config/opencode/AGENTS.md`, and keeps
+them current from a hook that runs when each agent's session starts. It also installs the Skills you pick on the dashboard
 with `agentsync skills sync`.
 See `GLOSSARY.md` at the repo root for the terms.
 
@@ -71,8 +71,9 @@ and without `--yes`, `--json` or `--hook`. Prompts and spinners go to stderr; re
   `$AGENTSYNC_CONFIG_DIR`) with mode `0600`, and sent as `Authorization: Bearer`. The CLI
   sends no Origin header and no cookies, which is what lets it past the server's CSRF check.
 - **Agents.** Claude Code is detected by `~/.claude` (or `$CLAUDE_CONFIG_DIR`), Codex by
-  `~/.codex` (or `$CODEX_HOME`), pi by `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`).
-  `--target <agent>=<path>` adds a Target for any other
+  `~/.codex` (or `$CODEX_HOME`), pi by `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), OpenCode
+  by `~/.config/opencode` (or `$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as
+  OpenCode itself resolves it). `--target <agent>=<path>` adds a Target for any other
   agent. Targets are stored on the server as `~/…`, so they read the same on every Machine.
   A Target path must be absolute or start with `~/`: hooks run in whatever project the
   agent opens, so a relative path would mean a different file each time. `sync` skips one
@@ -102,7 +103,8 @@ and without `--yes`, `--json` or `--hook`. Prompts and spinners go to stderr; re
   `<SERVER_URL>` in it with the server's origin, and every `<INSTALL_DIR>` with the folder to
   clone into.
 - **Hand-off.** At a terminal, Drift and Conflicts can be handed to an agent: the CLI
-  starts `claude`, `codex` or `pi` with a prompt. Your choice is remembered per Machine.
+  starts `claude`, `codex`, `pi` or `opencode` with a prompt (`opencode --prompt`, since its
+  bare argument is a project directory). Your choice is remembered per Machine.
 
 ## Skills
 
@@ -117,7 +119,7 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
 
 - **Installing.** `skills sync` runs `skills add <owner/repo>#<commit> --skill <names…> -g -a <agents> -y --json`,
   once per repository and commit. The agents are those the Machine has Targets for (`claude` →
-  `claude-code`, `codex`, `pi`). The canonical copy goes to `~/.agents/skills/<name>`, with a
+  `claude-code`, `codex`, `pi`, `opencode`). The canonical copy goes to `~/.agents/skills/<name>`, with a
   symlink for Claude Code; with Claude Code alone, a copy in its `skills/` directory.
 - **Ownership.** `skills` itself replaces any folder silently, so AgentSync keeps its own record in
   `skills.json` beside the config: each Skill it installed or adopted, with its Pin, the
@@ -133,9 +135,11 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
   `skills` never copies (`metadata.json`, `.git`, `__pycache__`, `__pypackages__`), and compared
   with the Pin's installed hash from the server. The lock's own hash is never trusted.
 - **Removing.** `skills remove … -g -y -a claude-code codex pi` removes every copy, so AgentSync
-  only asks it to remove its own undrifted copies, and checks the disk afterwards. `skills` keeps
-  the shared `~/.agents/skills` copy while another agent it knows reads that directory (Cursor,
-  say); AgentSync then removes that copy, which it owns, and its lock entry itself.
+  only asks it to remove its own undrifted copies, and checks the disk afterwards. Never
+  `-a opencode`: `skills remove` also deletes the name from each agent's own global directory, and
+  OpenCode's (`~/.config/opencode/skills`) holds the person's skills, not AgentSync's. `skills` keeps
+  the shared `~/.agents/skills` copy while another agent it knows reads that directory (Cursor or
+  OpenCode, say); AgentSync then removes that copy, which it owns, and its lock entry itself.
 - **Failures.** A Skill `skills` reports as failed counts as failed. A copy still at the earlier Pin
   keeps that record; one `skills` wrote only part of is AgentSync's and the next sync finishes it.
 - **Reporting.** `skills sync` and `init` send a scan and their results to the server; `agentsync
@@ -156,13 +160,18 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
   pi loads extensions there by itself, so there is nothing to trust. pi waits for it, so it
   gives up after 10 seconds: it kills the command's process group and pi starts with the
   existing file.
+- OpenCode: a plugin, `~/.config/opencode/plugins/agentsync.ts`, since OpenCode has no hook
+  config either. OpenCode loads plugins there by itself. It runs the plugin once when it
+  starts in a project, not for each session, and waits for it with the same 10-second limit.
+  One file serves OpenCode 1.x (`opencode-ai`, which calls the default export's `server`) and
+  2.x (`@opencode/cli`, which calls its `setup`); each ignores the other's.
 
 The hook command is `agentsync` when the CLI is installed on `PATH`, otherwise the
 absolute Node and script path (`npx`'s temporary directory does not count). The config
 records the exact handler it installed. Re-running `init` replaces that handler, and
 `logout` removes it, only while it is unchanged. Any other handler, even one that mentions
-`agentsync`, is left alone. The pi extension is a whole file, so it is tracked like the
-skill: by a SHA-256 of what AgentSync wrote. A file that differs is left alone with a warning.
+`agentsync`, is left alone. The pi extension and the OpenCode plugin are whole files, so they
+are tracked like the skill: by a SHA-256 of what AgentSync wrote. A file that differs is left alone with a warning.
 
 Hook mode fails open. It never prompts, waits at most 2 seconds for the server, keeps the
 existing files when it cannot reach the server, always exits 0, and prints at most one
@@ -174,9 +183,11 @@ a day has passed, so the dashboard knows when the Machine last checked in. For C
 SessionStart JSON: `hookSpecificOutput.additionalContext` carries it to the model, and
 `systemMessage` tells the person what changed and points at `agentsync history` (left out
 when only the model needs to know, e.g. the server was unreachable). The pi extension shows
-the line as a notice and appends it to the system prompt.
+the line as a notice and appends it to the system prompt. The OpenCode plugin appends it to
+the system prompt of every request (`experimental.chat.system.transform` in 1.x, which also
+covers its title requests, and the session `context` hook in 2.x).
 
-### Does a change apply to the current session? Not for Claude Code or Codex; yes for pi
+### Does a change apply to the current session? Not for Claude Code or Codex; yes for pi and OpenCode
 
 Claude Code and Codex read their instructions file before the `SessionStart` hook's write
 can reach them, so a Template change the hook writes takes effect from the next session.
@@ -205,11 +216,21 @@ it when the current instructions matter. The skill says the same.
   hook runs for those too. Tested with pi 0.73.1 (`pi -p` against a local model endpoint,
   with the generated extension running a command that rewrites `AGENTS.md`): the first
   request's system prompt held the new file and ended with the `AgentSync:` line.
+- **OpenCode.** Both versions await the plugin before the first request, and both read
+  `AGENTS.md` for each request: 1.x reads it from disk every time
+  (`Instruction.system()`), 2.x watches it and reloads it on change. So the first session gets
+  the update, and a long-running OpenCode picks up a Target that another agent's hook or
+  `agentsync sync` rewrote, from its next request. 1.x falls back to `~/.claude/CLAUDE.md`
+  only while `~/.config/opencode/AGENTS.md` is missing; once AgentSync writes that file, it
+  reads that one. Tested with OpenCode 1.19.5 and 2.2.7 (`opencode run` against a local model
+  endpoint, with the generated plugin running a command that rewrites `AGENTS.md`): the first
+  request's system prompt held the new file and ended with the `AgentSync:` line, and a command
+  that hung past the deadline was killed while OpenCode went on with the existing file.
 
 ## Agent skill
 
 `init` installs `skill/SKILL.md` as the `agentsync` skill: `~/.claude/skills/agentsync/`
-for Claude Code and `~/.agents/skills/agentsync/` for Codex and pi, which both read it there. The config keeps a SHA-256 of
+for Claude Code and `~/.agents/skills/agentsync/` for Codex, pi and OpenCode, which all read it there. The config keeps a SHA-256 of
 each skill file it writes. `init` updates, and `logout` removes, only a file that still
 matches it. A skill file AgentSync did not write, or that was changed since, is left alone
 with a warning. A symlinked `skills/agentsync/` directory stays: `logout` removes only the

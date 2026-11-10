@@ -84,7 +84,7 @@ const io: Io = {
   ...terminal,
   // $EDITOR may carry arguments, such as `code --wait`, so it runs through the shell.
   edit: (file) => wait(`${process.env.VISUAL || process.env.EDITOR || 'vi'} ${quote(file)}`, [], true),
-  launchAgent: (agent, prompt) => wait(agent, [prompt], false),
+  launchAgent: (agent, args) => wait(agent, args, false),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   runSkills,
   get self() {

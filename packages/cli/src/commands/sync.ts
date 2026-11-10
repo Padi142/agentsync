@@ -275,7 +275,7 @@ async function hookSync(ctx: Context): Promise<Outcome> {
     const list = (results: TargetResult[]) => results.map((result) => result.path).join(', ');
     if (own.length) {
       const update = `updated ${list(own)} to Template revision ${payload.template.revision}`;
-      // pi reads its instructions after the hook; Claude Code and Codex read them before it.
+      // pi and OpenCode read their instructions after the hook; Claude Code and Codex read them before it.
       parts.push({
         model: findAgent(agent)?.readsAfterHook
           ? update

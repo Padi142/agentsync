@@ -28,7 +28,7 @@ export type SkillStep =
 
 const absent: Folder = { present: [], skill: false, hash: null, lockSource: null, lockOther: false };
 
-/** The directories a Skill must be in for these `skills` agents: Claude Code reads its own, Codex and pi `~/.agents/skills`. */
+/** The directories a Skill must be in for these `skills` agents: Claude Code reads its own, Codex, pi and OpenCode `~/.agents/skills`. */
 export function requiredPlaces(agents: readonly string[]): Place[] {
   return [...(agents.some((agent) => agent !== 'claude-code') ? ['agents' as const] : []), ...(agents.includes('claude-code') ? ['claude' as const] : [])];
 }

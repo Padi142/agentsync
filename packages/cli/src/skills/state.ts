@@ -6,7 +6,7 @@ import type { Io } from '../io.js';
 import { configDir } from '../paths.js';
 
 /**
- * One of the two global skills directories: `agents` is `~/.agents/skills` (Codex, pi, and the
+ * One of the two global skills directories: `agents` is `~/.agents/skills` (Codex, pi, OpenCode, and the
  * canonical copy), `claude` is Claude Code's `skills/`.
  */
 export type Place = 'agents' | 'claude';

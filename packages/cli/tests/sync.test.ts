@@ -115,9 +115,22 @@ describe('sync', () => {
     const result = await t.cli('sync');
 
     expect(result.code).toBe(0);
-    expect(t.launched).toMatchObject([{ agent: 'claude', prompt: expect.stringContaining('+hand edit') }]);
+    expect(t.launched).toMatchObject([{ agent: 'claude', args: [expect.stringContaining('+hand edit')] }]);
     const config = JSON.parse(read(t.path('.config/agentsync/config.json')));
     expect(config.handoffAgent).toBe('claude');
+  });
+
+  it('starts OpenCode with the hand-off as its prompt, not as a project directory', async () => {
+    const t = setup();
+    t.registered(undefined, { '~/.claude/CLAUDE.md': 'one\n' });
+    t.write('.claude/CLAUDE.md', 'one\nhand edit\n');
+    mkdirSync(t.path('.config/opencode'), { recursive: true });
+    t.server.putTemplate('one\n');
+    t.answer('agent', 'opencode');
+
+    await t.cli('sync');
+
+    expect(t.launched).toMatchObject([{ agent: 'opencode', args: ['--prompt', expect.stringContaining('+hand edit')] }]);
   });
 
   it('writes nothing while the account has no Template yet', async () => {

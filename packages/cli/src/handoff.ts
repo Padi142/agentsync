@@ -1,4 +1,4 @@
-import { AGENTS, detectAgents } from './agents.js';
+import { AGENTS, detectAgents, findAgent } from './agents.js';
 import type { Context } from './context.js';
 
 /** The agent this Machine hands Drift and Conflicts to: asked once, then remembered. */
@@ -23,5 +23,5 @@ async function handoffAgent(ctx: Context): Promise<string> {
 export async function handOff(ctx: Context, prompt: string): Promise<void> {
   const agent = await handoffAgent(ctx);
   ctx.say(`Starting ${agent}…`);
-  await ctx.io.launchAgent(agent, prompt);
+  await ctx.io.launchAgent(agent, findAgent(agent)?.launchArgs(prompt) ?? [prompt]);
 }

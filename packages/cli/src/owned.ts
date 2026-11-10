@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { readText, removeFile, writeText } from './files.js';
 
 /**
- * Whole files AgentSync writes, such as the agent skill and the pi extension. `record` maps each
- * file to a SHA-256 of what AgentSync last wrote there (kept in the config), so a file someone
- * wrote or changed is never replaced or removed.
+ * Whole files AgentSync writes, such as the agent skill, the pi extension and the OpenCode plugin.
+ * `record` maps each file to a SHA-256 of what AgentSync last wrote there (kept in the config), so
+ * a file someone wrote or changed is never replaced or removed.
  */
 export type Owned = Record<string, string>;
 
