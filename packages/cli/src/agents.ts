@@ -6,7 +6,7 @@ import { expandHome, tildify } from './paths.js';
 
 /** An agent AgentSync knows how to set up: where it reads Global Instructions, skills and hooks. */
 export interface Agent {
-  id: 'claude' | 'codex' | 'pi';
+  id: 'claude' | 'codex' | 'pi' | 'opencode';
   name: string;
   /** The agent's own config directory. It existing is how we detect the agent. */
   home(io: Io): string;
@@ -14,12 +14,14 @@ export interface Agent {
   skillFile(io: Io): string;
   hooksFile(io: Io): string;
   /**
-   * How the SessionStart hook is installed: `json` adds a handler to the JSON hook config in
-   * `hooksFile`; `pi-extension` writes `hooksFile` whole, as a pi extension.
+   * How the hook is installed: `json` adds a SessionStart handler to the JSON hook config in
+   * `hooksFile`; `pi-extension` and `opencode-plugin` write `hooksFile` whole.
    */
-  hookKind: 'json' | 'pi-extension';
+  hookKind: 'json' | 'pi-extension' | 'opencode-plugin';
   /** The agent's name in the `skills` CLI (`-a`), which installs Skills for it. */
-  skillsAgent: 'claude-code' | 'codex' | 'pi';
+  skillsAgent: 'claude-code' | 'codex' | 'pi' | 'opencode';
+  /** The arguments that start the agent in the terminal with `prompt` as its first message. */
+  launchArgs(prompt: string): string[];
   /** The agent reads its Global Instructions after the hook ran, so the starting session gets an update. */
   readsAfterHook: boolean;
   /**
@@ -45,6 +47,7 @@ export const AGENTS: readonly Agent[] = [
     },
     hookKind: 'json',
     skillsAgent: 'claude-code',
+    launchArgs: (prompt) => [prompt],
     readsAfterHook: false,
     hookJson: true,
   },
@@ -62,6 +65,7 @@ export const AGENTS: readonly Agent[] = [
     },
     hookKind: 'json',
     skillsAgent: 'codex',
+    launchArgs: (prompt) => [prompt],
     readsAfterHook: false,
     hookJson: true,
   },
@@ -81,8 +85,31 @@ export const AGENTS: readonly Agent[] = [
     },
     hookKind: 'pi-extension',
     skillsAgent: 'pi',
+    launchArgs: (prompt) => [prompt],
     readsAfterHook: true,
     // The extension shows the line to the person itself.
+    hookJson: false,
+  },
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    // Where OpenCode 1.x and 2.x both look: $OPENCODE_CONFIG_DIR replaces the XDG config directory.
+    home: (io) => io.env.OPENCODE_CONFIG_DIR || join(io.env.XDG_CONFIG_HOME || join(io.home, '.config'), 'opencode'),
+    instructions(io) {
+      return join(this.home(io), 'AGENTS.md');
+    },
+    // OpenCode reads user skills from ~/.agents/skills too, so it shares Codex's copy.
+    skillFile: (io) => join(io.home, '.agents', 'skills', 'agentsync', 'SKILL.md'),
+    // OpenCode has no hook config. A plugin runs the hook, and OpenCode awaits it before the first request.
+    hooksFile(io) {
+      return join(this.home(io), 'plugins', 'agentsync.ts');
+    },
+    hookKind: 'opencode-plugin',
+    skillsAgent: 'opencode',
+    // A bare argument is the project directory to open.
+    launchArgs: (prompt) => ['--prompt', prompt],
+    readsAfterHook: true,
+    // The plugin adds the line to the system prompt itself.
     hookJson: false,
   },
 ];

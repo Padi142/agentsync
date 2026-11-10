@@ -40,16 +40,19 @@ describe('sync --hook', () => {
     );
   });
 
-  it('for pi, which reads its instructions after the hook, only says what it updated', async () => {
+  it.each([
+    ['pi', '.pi/agent/AGENTS.md'],
+    ['opencode', '.config/opencode/AGENTS.md'],
+  ])('for %s, which reads its instructions after the hook, only says what it updated', async (agent, file) => {
     const t = setup();
-    t.registered([{ path: '~/.pi/agent/AGENTS.md', agent: 'pi' }]);
+    t.registered([{ path: `~/${file}`, agent }]);
     t.server.putTemplate('one\n');
 
-    const result = await t.cli('sync', '--hook', 'pi');
+    const result = await t.cli('sync', '--hook', agent);
 
     expect(result.code).toBe(0);
-    expect(read(t.path('.pi/agent/AGENTS.md'))).toBe('one\n');
-    expect(result.stdout).toBe('AgentSync: updated ~/.pi/agent/AGENTS.md to Template revision 1.\n');
+    expect(read(t.path(file))).toBe('one\n');
+    expect(result.stdout).toBe(`AgentSync: updated ~/${file} to Template revision 1.\n`);
   });
 
   it('keeps the existing files and exits 0 when the server cannot be reached', async () => {

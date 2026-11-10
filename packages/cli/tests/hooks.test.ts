@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { piExtension, withHook, withoutHook } from '../src/hooks.js';
+import { opencodePlugin, piExtension, withHook, withoutHook } from '../src/hooks.js';
 
 const ours = { type: 'command', command: 'agentsync sync --hook claude', timeout: 10 } as const;
 const ourGroup = { hooks: [ours] };
@@ -178,5 +178,47 @@ describe('piExtension', () => {
     expect(piExtension(`'/opt/node' "/my dir/index.js" sync --hook pi`)).toContain(
       `const COMMAND = "'/opt/node' \\"/my dir/index.js\\" sync --hook pi";`,
     );
+  });
+});
+
+describe('opencodePlugin', () => {
+  type SystemPart = { type: 'text'; text: string };
+
+  /** Write the plugin for `command` and import it the way OpenCode does. */
+  async function importPlugin(command: string) {
+    const file = join(mkdtempSync(join(tmpdir(), 'agentsync-opencode-')), 'agentsync.ts');
+    writeFileSync(file, opencodePlugin(command));
+    return (await import(pathToFileURL(file).href)).default;
+  }
+
+  /** Start the plugin the way OpenCode 2.x does, and return the session hooks it registered. */
+  async function setUp(plugin: { setup: (ctx: unknown) => Promise<void> }) {
+    const hooks: Record<string, (event: { system: SystemPart[] }) => void> = {};
+    await plugin.setup({ session: { hook: async (name: string, run: (typeof hooks)[string]) => void (hooks[name] = run) } });
+    return hooks;
+  }
+
+  it('runs the hook before OpenCode 1.x or 2.x goes on, then adds its line to the system prompt', async () => {
+    const plugin = await importPlugin(`node -e "console.log('AgentSync: updated it')"`);
+
+    const v1 = await plugin.server();
+    const prompt = { system: ['You are OpenCode.'] };
+    await v1['experimental.chat.system.transform']({}, prompt);
+    expect(prompt.system).toEqual(['You are OpenCode.', 'AgentSync: updated it']);
+
+    const v2 = await setUp(plugin);
+    const context = { system: [{ type: 'text' as const, text: 'You are OpenCode.' }] };
+    v2.context!(context);
+    expect(context.system).toEqual([
+      { type: 'text', text: 'You are OpenCode.' },
+      { type: 'text', text: 'AgentSync: updated it' },
+    ]);
+  });
+
+  it('adds nothing when the hook prints nothing', async () => {
+    const plugin = await importPlugin('node -e ""');
+
+    expect(await plugin.server()).toEqual({});
+    expect(await setUp(plugin)).toEqual({});
   });
 });

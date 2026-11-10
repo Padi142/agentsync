@@ -37,7 +37,7 @@ export interface Config {
   hooks?: Record<string, Handler>;
   /** A SHA-256 of each skill file AgentSync wrote, so a file someone changed is left alone. */
   skills?: Owned;
-  /** The same for each pi extension AgentSync wrote as a hook. */
+  /** The same for each hook file AgentSync wrote whole: the pi extension and the OpenCode plugin. */
   extensions?: Owned;
   written: Record<string, string>;
   /** The Template and Variables revisions each Target in `written` was Rendered from, for the history. */

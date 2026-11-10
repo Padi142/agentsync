@@ -1,5 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
@@ -213,6 +215,43 @@ describe('init', () => {
     const [machine] = t.server.state.machines.values();
     expect(machine!.targets).toEqual([{ path: '~/custom-pi/AGENTS.md', agent: 'pi' }]);
     expect(existsSync(t.path('custom-pi/extensions/agentsync.ts'))).toBe(true);
+  });
+
+  it('sets up OpenCode with a plugin as its hook, sharing the skill with Codex', async () => {
+    const t = setup();
+    mkdirSync(t.path('.config/opencode'), { recursive: true });
+    mkdirSync(t.path('.codex'));
+
+    const result = await t.cli('init', '--yes', '--json', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toContainEqual({ path: '~/.config/opencode/AGENTS.md', agent: 'opencode' });
+    const plugin = readFileSync(t.path('.config/opencode/plugins/agentsync.ts'), 'utf8');
+    expect(plugin).toContain('const COMMAND = "agentsync sync --hook opencode";');
+    expect(result.json()).toMatchObject({
+      hooks: ['~/.codex/hooks.json', '~/.config/opencode/plugins/agentsync.ts'],
+      skills: ['~/.agents/skills/agentsync/SKILL.md'],
+    });
+  });
+
+  it('finds OpenCode where OpenCode looks: $OPENCODE_CONFIG_DIR, else $XDG_CONFIG_HOME/opencode', async () => {
+    const xdgHome = mkdtempSync(join(tmpdir(), 'agentsync-xdg-'));
+    mkdirSync(join(xdgHome, 'opencode'));
+    const xdg = setup({ env: { XDG_CONFIG_HOME: xdgHome } });
+    expect((await xdg.cli('init', '--yes', '--server', xdg.server.url)).code).toBe(0);
+    expect([...xdg.server.state.machines.values()][0]!.targets).toEqual([
+      { path: join(xdgHome, 'opencode', 'AGENTS.md'), agent: 'opencode' },
+    ]);
+
+    // $OPENCODE_CONFIG_DIR wins over an XDG opencode directory that exists too.
+    const otherXdg = mkdtempSync(join(tmpdir(), 'agentsync-xdg-'));
+    mkdirSync(join(otherXdg, 'opencode'));
+    const dir = mkdtempSync(join(tmpdir(), 'agentsync-opencode-'));
+    const custom = setup({ env: { OPENCODE_CONFIG_DIR: dir, XDG_CONFIG_HOME: otherXdg } });
+    expect((await custom.cli('init', '--yes', '--server', custom.server.url)).code).toBe(0);
+    expect([...custom.server.state.machines.values()][0]!.targets).toEqual([{ path: join(dir, 'AGENTS.md'), agent: 'opencode' }]);
+    expect(existsSync(join(dir, 'plugins', 'agentsync.ts'))).toBe(true);
   });
 
   it('leaves a pi extension AgentSync did not write alone, and says so', async () => {

@@ -92,7 +92,7 @@ describe('edit', () => {
 
       expect(result.code).toBe(4);
       const [conflict] = t.server.state.conflicts;
-      expect(t.launched).toMatchObject([{ agent: 'codex', prompt: expect.stringContaining(conflict!.id) }]);
+      expect(t.launched).toMatchObject([{ agent: 'codex', args: [expect.stringContaining(conflict!.id)] }]);
     });
   });
 

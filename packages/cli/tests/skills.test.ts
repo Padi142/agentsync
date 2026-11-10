@@ -114,7 +114,7 @@ describe('skills sync', () => {
 
     expect(result.code).toBe(3);
     expect(statuses(result)).toEqual({ animate: 'removed', polish: 'drifted' });
-    expect(t.skills.calls).toEqual([['remove', 'animate', '-g', '-y', '-a', 'claude-code', 'codex', 'pi']]);
+    expect(t.skills.calls).toEqual([['remove', 'animate', '-g', '-y', '-a', 'claude-code', 'codex', 'pi', 'opencode']]);
     expect(existsSync(t.path('.agents/skills/animate'))).toBe(false);
     expect(existsSync(t.path('.claude/skills/animate'))).toBe(false);
     expect(readFileSync(t.path('.agents/skills/polish/SKILL.md'), 'utf8')).toBe('polish, edited by hand');

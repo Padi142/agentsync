@@ -1,4 +1,5 @@
 import { gitShaSchema, repoNameSchema, skillNameSchema } from '@agentsync/contract';
+import { AGENTS } from '../agents.js';
 import type { Context } from '../context.js';
 
 /** What `skills add --json` says about each skill. */
@@ -51,5 +52,5 @@ export async function addSkills(ctx: Context, repo: string, commit: string, name
  */
 export async function removeSkills(ctx: Context, names: readonly string[]) {
   for (const name of names) if (!skillNameSchema.safeParse(name).success) throw new Error(`"${name}" is not a valid Skill name.`);
-  await ctx.io.runSkills(['remove', ...names, '-g', '-y', '-a', 'claude-code', 'codex', 'pi']);
+  await ctx.io.runSkills(['remove', ...names, '-g', '-y', '-a', ...AGENTS.map((agent) => agent.skillsAgent)]);
 }

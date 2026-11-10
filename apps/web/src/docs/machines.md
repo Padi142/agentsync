@@ -11,6 +11,7 @@ A **Target** is a file a Machine writes the Template into, such as `~/.claude/CL
 | Claude Code | `~/.claude` (or `$CLAUDE_CONFIG_DIR`) | `~/.claude/CLAUDE.md` |
 | Codex | `~/.codex` (or `$CODEX_HOME`) | `~/.codex/AGENTS.md` |
 | pi | `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`) | `~/.pi/agent/AGENTS.md` |
+| OpenCode | `~/.config/opencode` (or `$OPENCODE_CONFIG_DIR`, `$XDG_CONFIG_HOME/opencode`) | `~/.config/opencode/AGENTS.md` |
 
 Add a Target for any other agent with `--target`:
 

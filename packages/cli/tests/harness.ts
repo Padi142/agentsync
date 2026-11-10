@@ -120,7 +120,7 @@ export function setup(options: { env?: Record<string, string> } = {}) {
   /** Answers in order: a choice's value, several values separated by commas, or text. */
   const answers: string[] = [];
   const edits: ((file: string) => void)[] = [];
-  const launched: { agent: string; prompt: string }[] = [];
+  const launched: { agent: string; args: string[] }[] = [];
   const sleeps: number[] = [];
   const questions: string[] = [];
   let interactive = false;
@@ -165,7 +165,7 @@ export function setup(options: { env?: Record<string, string> } = {}) {
         if (!edit) throw new Error(`Unexpected edit of ${file}`);
         edit(file);
       },
-      launchAgent: async (agent, prompt) => void launched.push({ agent, prompt }),
+      launchAgent: async (agent, args) => void launched.push({ agent, args }),
       sleep: async (ms) => void sleeps.push(ms),
       runSkills: (args) => skills.run(args),
       self: 'agentsync',

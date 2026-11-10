@@ -3,7 +3,7 @@ import { BUILTIN_VARIABLES } from '@agentsync/template';
 import type { Suggestion } from './components/CodeEditor';
 
 /** The agents the CLI sets up, offered even before any Machine has a Target for them. */
-const AGENTS = ['claude', 'codex', 'pi'];
+const AGENTS = ['claude', 'codex', 'pi', 'opencode'];
 
 /** The Variables set on any Machine, for suggesting next to the Built-in ones. */
 export function ownVariables(variables: readonly Record<string, string>[], machines: number): Suggestion[] {
