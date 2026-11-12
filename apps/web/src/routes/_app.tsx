@@ -7,7 +7,11 @@ export const Route = createFileRoute('/_app')({
     const { authError } = location.search as { authError?: string };
     // Come back here after signing in, e.g. to a Conflict linked from the CLI.
     const returnTo = authError || location.pathname === '/' ? undefined : location.href;
-    if (!context.user) throw redirect({ to: '/signin', search: { authError, returnTo } });
+    if (!context.user) {
+      // The home page shows the landing page in place: the address bar keeps saying `/`.
+      const mask = location.pathname === '/' ? { to: '/' } as const : undefined;
+      throw redirect({ to: '/signin', search: { authError, returnTo }, mask });
+    }
     return { user: context.user };
   },
 });
