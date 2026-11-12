@@ -97,6 +97,8 @@ function Layout() {
   useIdentify(user);
   const loading = useRouterState({ select: (state) => state.status === 'pending' });
   const path = useRouterState({ select: (state) => state.location.pathname });
+  // The landing page's `returnTo` (set when a signed-out visit was sent there) applies here too.
+  const returnTo = useRouterState({ select: (state) => state.location.search.returnTo });
   return (
     <>
       {loading ? <div className="loading-bar" aria-hidden="true" /> : null}
@@ -136,8 +138,8 @@ function Layout() {
                 </form>
               </div>
             </>
-          ) : path === '/signin' ? null : (
-            <a className="button small" href={loginHref(undefined)}>Sign in</a>
+          ) : (
+            <a className="button small" href={loginHref(returnTo)}>Sign in</a>
           )}
         </div>
       </header>
