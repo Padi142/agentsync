@@ -3454,6 +3454,72 @@ button.sk-row {
   flex: 1;
 }
 
+/* ---------- Sign in ---------- */
+
+.signin-dialog {
+  width: min(360px, calc(100vw - 32px));
+}
+
+.signin-body,
+.signin-body form {
+  display: grid;
+  gap: 10px;
+}
+
+.signin-body {
+  padding: 20px;
+}
+
+.signin-body .button {
+  min-height: 40px;
+}
+
+.signin-or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0;
+  color: var(--graphite);
+  font-size: 12px;
+}
+
+.signin-or::before,
+.signin-or::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--rule);
+}
+
+/* 16px keeps iOS from zooming the page when the field is focused. */
+.signin-body .input {
+  min-height: 40px;
+  font-size: 16px;
+}
+
+.signin-code {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+
+.signin-sent,
+.signin-body .field-issue {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.signin-restart {
+  justify-self: center;
+  padding: 4px;
+  border: 0;
+  background: none;
+  color: var(--graphite);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .sk-results {
   max-height: 340px;
   overflow: auto;

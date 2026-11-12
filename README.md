@@ -90,8 +90,13 @@ creating the authorization URL.
 
 ## Authentication and data migration
 
-- `GET /login` immediately redirects to AuthKit, using PKCE and a signed,
-  short-lived HttpOnly login cookie to validate the OAuth state.
+- "Sign in" opens the app's own dialog, so people do not pass through the hosted
+  AuthKit page. `GET /login?provider=google|github` redirects straight to that
+  provider, using PKCE and a signed, short-lived HttpOnly login cookie to validate
+  the OAuth state. Without a provider it redirects to the hosted AuthKit page.
+- `POST /login/email` emails a six-digit code (WorkOS Magic Auth, which must be
+  enabled in the WorkOS dashboard) and `POST /login/email/verify` exchanges it for
+  the session. The CLI's device approval page is still hosted by WorkOS.
 - `GET /callback` exchanges the authorization code, provisions the local user,
   and sets an encrypted HttpOnly session cookie. Cookies are Secure on HTTPS.
 - `GET /login?returnTo=/conflicts/<id>` comes back to that path after sign-in. The

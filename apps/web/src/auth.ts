@@ -1,10 +1,15 @@
-import { WorkOS } from '@workos-inc/node';
+import {
+  BadRequestException, RateLimitExceededException, UnprocessableEntityException, WorkOS,
+  type AuthenticationResponse,
+} from '@workos-inc/node';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
 import { HTTPException } from 'hono/http-exception';
 import { findUser, provisionUser, type AppUser } from './db/users';
 import type { Env } from './env';
+import type { EmailLoginError } from './login';
 import { SIGNUP_COOKIE } from './signup';
+import { z } from 'zod';
 
 const SESSION_COOKIE = 'wos-session';
 const LOGIN_COOKIE = 'wos-login';
@@ -65,18 +70,25 @@ export function returnPath(value: string | undefined, origin: string): string {
   return url.origin === origin && SAFE_PATH.test(path) && path.length <= MAX_RETURN_PATH ? path : '/';
 }
 
+/** Our sign-in dialog's buttons, as WorkOS names them. Anything else gets WorkOS's hosted page. */
+const PROVIDERS: Record<string, string> = { google: 'GoogleOAuth', github: 'GitHubOAuth' };
+
+/**
+ * `GET /login?provider=google|github` goes straight to that provider, so people never see the
+ * hosted AuthKit page. Without a provider (a login WorkOS itself starts) it goes to that page.
+ */
 export async function handleLogin(c: AuthContext) {
   const workos = getWorkOS(c.env);
   const origin = getAppOrigin(c.env);
   const returnTo = returnPath(c.req.query('returnTo'), origin);
   // The login cookie and callback must live on the same origin.
   if (new URL(c.req.url).origin !== origin) {
-    const query = returnTo === '/' ? '' : `?returnTo=${encodeURIComponent(returnTo)}`;
+    const query = new URL(c.req.url).search;
     return c.redirect(`${origin}/login${query}`);
   }
 
   const { url, state, codeVerifier } = await workos.userManagement.getAuthorizationUrlWithPKCE({
-    provider: 'authkit',
+    provider: PROVIDERS[c.req.query('provider') ?? ''] ?? 'authkit',
     clientId: c.env.WORKOS_CLIENT_ID,
     redirectUri: c.env.WORKOS_REDIRECT_URI,
   });
@@ -113,12 +125,7 @@ export async function handleCallback(c: AuthContext) {
       codeVerifier: login.codeVerifier,
       session: { sealSession: true, cookiePassword: c.env.WORKOS_COOKIE_PASSWORD },
     });
-    if (!result.sealedSession) throw new Error('Missing sealed session');
-    const isNew = !await findUser(c.env, result.user.id);
-    await provisionUser(c.env, result.user);
-    // Readable by the page, which reports the sign-up and removes it.
-    if (isNew) setCookie(c, SIGNUP_COOKIE, '1', { ...cookieOptions(c), httpOnly: false, maxAge: LOGIN_TTL });
-    setSession(c, result.sealedSession);
+    await startSession(c, result);
     // Checked again on the way out, so the redirect never leaves the app.
     const returnTo = typeof login.returnTo === 'string' ? login.returnTo : undefined;
     return c.redirect(returnPath(returnTo, getAppOrigin(c.env)), 303);
@@ -127,6 +134,73 @@ export async function handleCallback(c: AuthContext) {
     console.error('[AuthKit] Callback failed. Check WorkOS configuration and local user provisioning.');
     return c.redirect('/?authError=callback', 303);
   }
+}
+
+/** Provision the local user for a completed WorkOS sign-in and set the session cookie. */
+async function startSession(c: AuthContext, result: AuthenticationResponse) {
+  if (!result.sealedSession) throw new Error('Missing sealed session');
+  const isNew = !await findUser(c.env, result.user.id);
+  await provisionUser(c.env, result.user);
+  // Readable by the page, which reports the sign-up and removes it.
+  if (isNew) setCookie(c, SIGNUP_COOKIE, '1', { ...cookieOptions(c), httpOnly: false, maxAge: LOGIN_TTL });
+  setSession(c, result.sealedSession);
+}
+
+/** What WorkOS's Radar uses to spot abuse of the email endpoints. */
+const requester = (c: AuthContext) => ({
+  ipAddress: c.req.header('CF-Connecting-IP'), userAgent: c.req.header('User-Agent'),
+});
+
+const EmailStart = z.object({ email: z.email().max(254) });
+const EmailVerify = EmailStart.extend({
+  code: z.string().trim().regex(/^\d{6}$/),
+  returnTo: z.string().optional(),
+});
+const emailError = (c: AuthContext, error: EmailLoginError, status: 400 | 429 | 503) => c.json({ error }, status);
+
+/** `POST /login/email`: email a six-digit code (WorkOS Magic Auth) to sign in or sign up with. */
+export async function handleEmailStart(c: AuthContext) {
+  const workos = getWorkOS(c.env);
+  const input = EmailStart.safeParse(await c.req.json().catch(() => null));
+  if (!input.success) return emailError(c, 'invalid_email', 400);
+  try {
+    await workos.userManagement.createMagicAuth({ email: input.data.email, ...requester(c) });
+    return c.body(null, 204);
+  } catch (error) {
+    if (error instanceof UnprocessableEntityException) return emailError(c, 'invalid_email', 400);
+    if (error instanceof RateLimitExceededException) return emailError(c, 'too_many', 429);
+    // Magic Auth is switched off in this WorkOS environment.
+    if (error instanceof BadRequestException) return emailError(c, 'unavailable', 503);
+    console.error('[AuthKit] Could not send a sign-in code.');
+    return emailError(c, 'unavailable', 503);
+  }
+}
+
+/** `POST /login/email/verify`: exchange the emailed code for a session, and say where to go next. */
+export async function handleEmailVerify(c: AuthContext) {
+  const workos = getWorkOS(c.env);
+  const input = EmailVerify.safeParse(await c.req.json().catch(() => null));
+  if (!input.success) return emailError(c, 'invalid_code', 400);
+  let result: AuthenticationResponse;
+  try {
+    result = await workos.userManagement.authenticateWithMagicAuth({
+      clientId: c.env.WORKOS_CLIENT_ID,
+      code: input.data.code,
+      email: input.data.email,
+      session: { sealSession: true, cookiePassword: c.env.WORKOS_COOKIE_PASSWORD },
+      ...requester(c),
+    });
+  } catch (error) {
+    if (error instanceof RateLimitExceededException) return emailError(c, 'too_many', 429);
+    // A wrong, used or expired code, or an email no code was sent to.
+    if (typeof (error as { status?: unknown }).status === 'number' && (error as { status: number }).status < 500) {
+      return emailError(c, 'invalid_code', 400);
+    }
+    console.error('[AuthKit] Could not verify a sign-in code.');
+    return emailError(c, 'unavailable', 503);
+  }
+  await startSession(c, result);
+  return c.json({ returnTo: returnPath(input.data.returnTo, getAppOrigin(c.env)) });
 }
 
 async function authenticate(c: AuthContext) {

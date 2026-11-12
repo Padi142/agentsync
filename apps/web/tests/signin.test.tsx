@@ -16,20 +16,20 @@ async function open(path: string) {
 
 afterEach(cleanup);
 
-/** Where the two Sign in links (the topbar's and the landing page's) go. */
-const signInLinks = async () =>
-  (await screen.findAllByRole('link', { name: 'Sign in' })).map((link) => link.getAttribute('href'));
+/** Where the sign-in dialogs (the topbar's and the landing page's) send someone who picks Google. */
+const googleLinks = async () =>
+  (await screen.findAllByRole('link', { name: 'Continue with Google', hidden: true })).map((link) => link.getAttribute('href'));
 
 describe('signing in from a link', () => {
   it('sends a signed-out user to sign in and back to the Conflict they opened', async () => {
     const router = await open('/conflicts/c1');
     expect(router.state.location.pathname).toBe('/signin');
-    expect(await signInLinks()).toEqual(Array(2).fill('/login?returnTo=%2Fconflicts%2Fc1'));
+    expect(await googleLinks()).toEqual(Array(2).fill('/login?provider=google&returnTo=%2Fconflicts%2Fc1'));
   });
 
   it('signs in plainly from the home page, whose address stays `/`', async () => {
     const router = await open('/');
     expect(router.history.location.href).toBe('/');
-    expect(await signInLinks()).toEqual(['/login', '/login']);
+    expect(await googleLinks()).toEqual(Array(2).fill('/login?provider=google'));
   });
 });

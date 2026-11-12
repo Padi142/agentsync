@@ -11,7 +11,7 @@ import type { ReactNode } from 'react';
 import { clearProfile } from '@databuddy/sdk';
 import { Analytics, useIdentify } from '../analytics';
 import { BrandMark, GitHubMark, Icon } from '../components/Icon';
-import { loginHref } from '../login';
+import { SignInButton } from '../components/SignIn';
 import { ErrorPage } from '../components/ErrorPage';
 import { rpc } from '../rpc';
 import appCss from '../styles.css?url';
@@ -139,7 +139,7 @@ function Layout() {
               </div>
             </>
           ) : (
-            <a className="button small" href={loginHref(returnTo)}>Sign in</a>
+            <SignInButton className="button small" returnTo={returnTo} />
           )}
         </div>
       </header>

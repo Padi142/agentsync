@@ -16,6 +16,7 @@ const isApiPath = (pathname: string) =>
   pathname === '/rpc' ||
   pathname.startsWith('/rpc/') ||
   pathname === '/login' ||
+  pathname.startsWith('/login/') ||
   pathname === '/callback' ||
   pathname === '/logout' ||
   pathname === '/api/auth/get-session';

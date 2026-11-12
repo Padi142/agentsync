@@ -5,7 +5,7 @@ import { AgentLogo } from '../components/AgentLogo';
 import { highlight } from '../components/CodeEditor';
 import { Icon } from '../components/Icon';
 import { MarkedText } from '../components/Markdown';
-import { loginHref } from '../login';
+import { SignInButton } from '../components/SignIn';
 import { renderMarked } from '../preview';
 
 export const Route = createFileRoute('/signin')({
@@ -61,7 +61,7 @@ function SignIn() {
             computers, and fills in what's different on each one.
           </p>
           <div className="hero-actions">
-            <a className="button" href={loginHref(returnTo)}>Sign in</a>
+            <SignInButton returnTo={returnTo} />
             <Link className="button secondary" to="/docs/$page" params={{ page: 'getting-started' }}>Read the docs</Link>
           </div>
           {authError ? (

@@ -8,10 +8,12 @@ import { createTestEnv, fakeWorkOSDevice, origin, resetDb, rpcClient } from './h
 
 const sdk = vi.hoisted(() => ({
   exchange: vi.fn(), authenticate: vi.fn(), refresh: vi.fn(), logout: vi.fn(),
+  sendCode: vi.fn(), verifyCode: vi.fn(),
 }));
 vi.mock('@workos-inc/node', async (importOriginal) => {
-  const { WorkOS } = await importOriginal<typeof import('@workos-inc/node')>();
-  return { WorkOS: class extends WorkOS {
+  const original = await importOriginal<typeof import('@workos-inc/node')>();
+  const { WorkOS } = original;
+  return { ...original, WorkOS: class extends WorkOS {
     constructor(...args: ConstructorParameters<typeof WorkOS>) {
       super(...args);
       this.userManagement.authenticateWithCode = sdk.exchange;
@@ -19,6 +21,8 @@ vi.mock('@workos-inc/node', async (importOriginal) => {
         authenticate: sdk.authenticate, refresh: sdk.refresh,
       })) as never;
       this.userManagement.getLogoutUrl = sdk.logout;
+      this.userManagement.createMagicAuth = sdk.sendCode;
+      this.userManagement.authenticateWithMagicAuth = sdk.verifyCode;
     }
   } };
 });
@@ -56,6 +60,51 @@ function sessionRequest(cookie = 'wos-session=sealed-fixture') {
   return api.request(`${origin}/api/auth/get-session`, { headers: { Cookie: cookie } }, env);
 }
 const client = () => rpcClient(env, { cookie: 'wos-session=sealed-fixture' });
+
+const post = (path: string, body: unknown) => api.request(`${origin}${path}`, {
+  method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+}, env);
+
+describe('signing in without the hosted page', () => {
+  it('goes straight to Google or GitHub, and to the hosted page otherwise', async () => {
+    for (const [provider, expected] of [['google', 'GoogleOAuth'], ['github', 'GitHubOAuth'], ['evil', 'authkit']]) {
+      const res = await api.request(`${origin}/login?provider=${provider}`, {}, env);
+      expect(new URL(res.headers.get('Location')!).searchParams.get('provider')).toBe(expected);
+    }
+  });
+
+  it('emails a code, then exchanges it for a session and a safe return path', async () => {
+    sdk.sendCode.mockResolvedValue({});
+    sdk.verifyCode.mockResolvedValue({ user: identity, sealedSession: 'sealed-fixture' });
+    expect((await post('/login/email', { email: 'alice@example.com' })).status).toBe(204);
+    expect(sdk.sendCode).toHaveBeenCalledWith(expect.objectContaining({ email: 'alice@example.com' }));
+
+    const res = await post('/login/email/verify', { email: 'alice@example.com', code: '123456', returnTo: '//evil.test' });
+    expect(await res.json()).toEqual({ returnTo: '/' });
+    expect(res.headers.getSetCookie().some((c) => c.startsWith('wos-session=sealed-fixture'))).toBe(true);
+    expect((await (await sessionRequest()).json() as { user: { email: string } }).user.email).toBe('alice@example.com');
+  });
+
+  it('rejects a bad email or code without asking WorkOS, and a code WorkOS refuses', async () => {
+    expect(await (await post('/login/email', { email: 'nope' })).json()).toEqual({ error: 'invalid_email' });
+    expect(await (await post('/login/email/verify', { email: 'alice@example.com', code: '12' })).json())
+      .toEqual({ error: 'invalid_code' });
+    expect(sdk.sendCode).not.toHaveBeenCalled();
+    expect(sdk.verifyCode).not.toHaveBeenCalled();
+
+    sdk.verifyCode.mockRejectedValue(Object.assign(new Error('nope'), { status: 400 }));
+    const res = await post('/login/email/verify', { email: 'alice@example.com', code: '123456' });
+    expect(res.status).toBe(400);
+    expect(res.headers.getSetCookie()).toEqual([]);
+  });
+
+  it('refuses to send a code for another site', async () => {
+    const res = await api.request(`${origin}/login/email`, {
+      method: 'POST', headers: { Origin: 'https://evil.test' }, body: JSON.stringify({ email: 'alice@example.com' }),
+    }, env);
+    expect(res.status).toBe(403);
+  });
+});
 
 describe('AuthKit routes', () => {
   it('starts login immediately with the explicit callback and PKCE', async () => {

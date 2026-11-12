@@ -3,7 +3,10 @@ import { RPCHandler } from '@orpc/server/fetch';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { router, createRPCContext } from './router';
-import { getAppOrigin, handleLogin, handleCallback, handleLogout, getSession, type AuthSession } from '../auth';
+import {
+  getAppOrigin, handleLogin, handleCallback, handleLogout, handleEmailStart, handleEmailVerify, getSession,
+  type AuthSession,
+} from '../auth';
 import type { Env } from '../env';
 
 type HonoEnv = { Bindings: Env };
@@ -26,6 +29,8 @@ api.use('*', async (c, next) => {
 });
 
 api.get('/login', handleLogin);
+api.post('/login/email', handleEmailStart);
+api.post('/login/email/verify', handleEmailVerify);
 api.get('/callback', handleCallback);
 api.post('/logout', handleLogout);
 api.get('/api/auth/get-session', async (c) => c.json(await getSession(c)));
