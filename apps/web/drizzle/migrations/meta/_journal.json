@@ -43,6 +43,13 @@
       "when": 1793549843838,
       "tag": "0006_skill_exclusions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1794485522431,
+      "tag": "0007_workos_production",
+      "breakpoints": true
     }
   ]
 }

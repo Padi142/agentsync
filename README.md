@@ -65,8 +65,18 @@ For this development server, register `http://100.82.53.91:3000/callback`
 as a redirect URI in WorkOS and use the same value in `.dev.vars`.
 Set the **Initiate login URI** to `http://100.82.53.91:3000/login` and the
 **Sign-out redirect** to `http://100.82.53.91:3000/` in the WorkOS dashboard.
-For production, use your HTTPS domain for all three URLs. Login redirects to
-its configured origin so that the login cookie is available at the callback.
+Login redirects to its configured origin so that the login cookie is available
+at the callback.
+
+Development uses the WorkOS **sandbox** environment (`.dev.vars`); the deployed
+Worker uses **production**. Production's client ID and redirect URI are `vars` in
+`wrangler.jsonc`, and `WORKOS_API_KEY` and `WORKOS_COOKIE_PASSWORD` are Worker
+secrets. In the production environment, register the HTTPS versions of the three
+URLs above, enable CLI Auth for Machine registration, and give each social
+provider (Google) your own OAuth credentials: the sandbox's shared ones do not
+work there. The environments share no users, so each has its own WorkOS user
+IDs; migration `0007_workos_production.sql` cleared the sandbox IDs when production
+went live, and people reclaimed their accounts by verified email.
 
 Enable your desired sign-in methods (including Google) in the WorkOS dashboard.
 The application delegates account creation, email verification, and password
