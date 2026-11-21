@@ -65,6 +65,7 @@ function TextFile({ origin, shareToken, file, paths, onOpen, kind, src }: FileVi
     const openInViewer = (event: MouseEvent) => {
       const link = (event.target as Element).closest('a');
       if (!link || event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+      if (!URL.canParse(link.href)) return;
       const url = new URL(link.href);
       const path = url.searchParams.get('file');
       if (url.origin !== origin || url.pathname !== `/s/${shareToken}` || !path) return;

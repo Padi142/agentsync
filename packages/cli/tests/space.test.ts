@@ -36,6 +36,8 @@ describe('space create, push and pull', () => {
     t.registered();
     t.write('site/index.html', '<h1>Hi</h1>\n');
     t.write('site/css/style.css', 'h1 { color: red }\n');
+    // Two files in one new folder: pull makes it from parallel downloads.
+    t.write('site/css/print.css', 'p');
     t.write('site/..notes.md', 'n');
     t.write('site/.git/config', 'secret');
     t.write('site/node_modules/x/index.js', 'x');
@@ -49,6 +51,7 @@ describe('space create, push and pull', () => {
     expect(space.title).toBe('site');
     expect(Object.fromEntries([...space.files].map(([path, file]) => [path, file.contentType]))).toEqual({
       '..notes.md': 'text/markdown; charset=utf-8',
+      'css/print.css': 'text/css; charset=utf-8',
       'css/style.css': 'text/css; charset=utf-8',
       'index.html': 'text/html; charset=utf-8',
     });
@@ -60,15 +63,15 @@ describe('space create, push and pull', () => {
     // Readers need no config at all.
     rmSync(t.path('.config'), { recursive: true });
     const inspected = await t.cli('space', 'inspect', shareUrl, '--json');
-    expect(inspected.json()).toMatchObject({ space: { title: 'site', summary: 'A page', status: 'active', files: expect.arrayContaining([{ path: '..notes.md' }, { path: 'css/style.css' }, { path: 'index.html' }].map((file) => expect.objectContaining(file))) } });
+    expect(inspected.json()).toMatchObject({ space: { title: 'site', summary: 'A page', status: 'active', files: expect.arrayContaining([{ path: '..notes.md' }, { path: 'css/print.css' }, { path: 'css/style.css' }, { path: 'index.html' }].map((file) => expect.objectContaining(file))) } });
     expect((await t.cli('space', 'get', shareUrl, 'index.html')).stdout).toBe('<h1>Hi</h1>\n');
 
     const pulled = await t.cli('space', 'pull', shareUrl, t.path('copy'), '--json');
     expect(pulled.code).toBe(0);
-    expect(tree(t.path('copy'))).toEqual({ '..notes.md': 'n', 'index.html': '<h1>Hi</h1>\n', 'css/style.css': 'h1 { color: red }\n' });
+    expect(tree(t.path('copy'))).toEqual({ '..notes.md': 'n', 'css/print.css': 'p', 'index.html': '<h1>Hi</h1>\n', 'css/style.css': 'h1 { color: red }\n' });
     const again = await t.cli('space', 'pull', shareUrl, t.path('copy'), '--json');
     const { downloaded, unchanged } = again.json() as { downloaded: string[]; unchanged: string[] };
-    expect({ downloaded, unchanged: unchanged.sort() }).toEqual({ downloaded: [], unchanged: ['..notes.md', 'css/style.css', 'index.html'] });
+    expect({ downloaded, unchanged: unchanged.sort() }).toEqual({ downloaded: [], unchanged: ['..notes.md', 'css/print.css', 'css/style.css', 'index.html'] });
   });
 
   it('mirrors a directory with push: uploads only what changed and deletes what is gone, once confirmed', async () => {

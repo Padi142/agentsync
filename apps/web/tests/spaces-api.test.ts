@@ -8,7 +8,7 @@ import type { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api';
 import { hashSecret } from '../src/db/machines';
-import { deleteSpaceRow } from '../src/db/spaces';
+import { deleteSpaceRow, getSpaceByWriteToken } from '../src/db/spaces';
 import type { Env } from '../src/env';
 import { spacesService } from '../src/spaces/service';
 import { createTestEnv, fakeSpaceHub, fakeWorkOSDevice, origin, resetDb, rpcClient } from './helpers';
@@ -117,7 +117,12 @@ describe('who may act on a Space', () => {
       await put(b.space.id, 'b.txt', a.writeToken, 'theirs'),
       await call('DELETE', SPACE_WRITER_ROUTES.file(b.space.id, 'b.txt'), { token: a.writeToken }),
       await call('DELETE', SPACE_WRITER_ROUTES.space(b.space.id), { token: a.writeToken }),
-    ]) expect(response.status).toBe(404);
+      await call('GET', SPACE_WRITER_ROUTES.space('no-such-space'), { token: a.writeToken }),
+    ]) {
+      // Like a wrong token: nothing tells whether Space B exists.
+      expect(response.status).toBe(401);
+      expect(await errorCode(response)).toBe('UNAUTHORIZED');
+    }
     const raw = await call('GET', SPACE_PUBLIC_ROUTES.raw(b.shareToken, 'b.txt'));
     expect(await raw.text()).toBe('mine');
   });
@@ -358,6 +363,7 @@ describe('lifecycle', () => {
 
   it('turns the old Share Link off when it is rotated', async () => {
     const { space, shareToken } = await createSpace();
+    await call('GET', SPACE_PUBLIC_ROUTES.ws(shareToken), { headers: { Upgrade: 'websocket' } });
     const rotated = await browser().spaces.rotateLink({ spaceId: space.id });
     const fresh = parseShareUrl(rotated.shareUrl)!.shareToken;
     expect(fresh).not.toBe(shareToken);
@@ -436,16 +442,22 @@ describe('public Share Link routes', () => {
     expect(await markdown.text()).toContain('# Hello');
     expect(await (await call('GET', SPACE_PUBLIC_ROUTES.space(shareToken))).text()).toMatch(/^# Report\n/);
     expect((await call('GET', SPACE_PUBLIC_ROUTES.json('A'.repeat(32)))).status).toBe(404);
+    const slash = await call('GET', `${SPACE_PUBLIC_ROUTES.space(shareToken)}/`, { headers: { Accept: 'application/json' } });
+    expect(await slash.json()).toMatchObject({ id: space.id });
+    const preferred = await call('GET', SPACE_PUBLIC_ROUTES.space(shareToken), { headers: { Accept: 'text/markdown;q=0.5, application/json' } });
+    expect(preferred.headers.get('Content-Type')).toBe('application/json');
   });
 
   it('forwards a WebSocket upgrade to the hub of an active Space only, with the token it checked', async () => {
     const { space, shareToken } = await createSpace();
     expect((await call('GET', SPACE_PUBLIC_ROUTES.ws(shareToken))).status).toBe(400);
     const upgraded = await call('GET', SPACE_PUBLIC_ROUTES.ws(shareToken), {
-      headers: { Upgrade: 'websocket', 'X-AgentSync-Share-Token': 'forged', 'X-AgentSync-Expires-At': 'never' },
+      headers: { Upgrade: 'websocket', 'X-AgentSync-Hub-State': JSON.stringify({ token: 'forged', expiresAt: null, version: 9e15 }) },
     });
     expect(await upgraded.text()).toBe('upgraded by the fake SpaceHub');
-    expect(hub.upgrades).toEqual([{ spaceId: space.id, token: shareToken, expiresAt: String(space.expiresAt!.getTime()) }]);
+    expect(hub.upgrades).toEqual([{
+      spaceId: space.id, state: { token: shareToken, expiresAt: space.expiresAt!.getTime(), version: space.updatedAt.getTime() },
+    }]);
     await setExpiresAt(space.id, Date.now() - 1000);
     expect((await call('GET', SPACE_PUBLIC_ROUTES.ws(shareToken), { headers: { Upgrade: 'websocket' } })).status).toBe(410);
   });
@@ -461,6 +473,20 @@ describe('public Share Link routes', () => {
     expect(hub.upgrades).toEqual([]);
   });
 
+  it('refuses an upgrade checked just before the Space was made private or deleted', async () => {
+    for (const change of ['private', 'deleted'] as const) {
+      const { space, shareToken } = await createSpace();
+      hub.beforeUpgrade = async () => {
+        hub.beforeUpgrade = undefined;
+        if (change === 'private') await browser().spaces.update({ spaceId: space.id, private: true });
+        else await browser().spaces.delete({ spaceId: space.id });
+      };
+      const response = await call('GET', SPACE_PUBLIC_ROUTES.ws(shareToken), { headers: { Upgrade: 'websocket' } });
+      expect([change, response.status]).toEqual([change, 404]);
+    }
+    expect(hub.upgrades).toEqual([]);
+  });
+
   it('catches up a hub that missed a rotation', async () => {
     const { space, shareToken } = await createSpace();
     await call('GET', SPACE_PUBLIC_ROUTES.ws(shareToken), { headers: { Upgrade: 'websocket' } });
@@ -470,7 +496,7 @@ describe('public Share Link routes', () => {
     hub.failing = false;
     const response = await call('GET', SPACE_PUBLIC_ROUTES.ws(fresh), { headers: { Upgrade: 'websocket' } });
     expect(await response.text()).toBe('upgraded by the fake SpaceHub');
-    expect(hub.tokens.get(space.id)).toBe(fresh);
+    expect(hub.states.get(space.id)?.token).toBe(fresh);
     expect(hub.eventsOf(space.id)).toEqual([{ type: 'closed', reason: 'rotated' }]);
   });
 
@@ -504,5 +530,46 @@ describe('public Share Link routes', () => {
     } finally {
       await rm(dir, { recursive: true });
     }
+  });
+});
+
+describe('failures part way through', () => {
+  it('deletes the new R2 object when recording the upload fails', async () => {
+    const { space, writeToken } = await createSpace();
+    const broken: Env = { ...env, DB: new Proxy(env.DB, { get(target, property) {
+      if (property === 'batch') return () => Promise.reject(new Error('D1 is down'));
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } }) };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const request = new Request(`${origin}${SPACE_WRITER_ROUTES.file(space.id, 'a.txt')}`, {
+      method: 'PUT', body: 'hi', headers: { Authorization: `Bearer ${writeToken}` },
+    });
+    expect((await api.fetch(request, broken)).status).toBe(500);
+    expect(await objectKeys(`${space.id}/`)).toEqual([]);
+  });
+
+  it('still removes the file and tells viewers when its R2 object cannot be deleted', async () => {
+    const { space, writeToken } = await createSpace();
+    await put(space.id, 'a.txt', writeToken, 'hi');
+    const flaky: Env = { ...env, SPACES_BUCKET: new Proxy(env.SPACES_BUCKET, { get(target, property) {
+      if (property === 'delete') return () => Promise.reject(new Error('R2 is down'));
+      const value: unknown = Reflect.get(target, property);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } }) };
+    vi.spyOn(console, 'error').mockImplementationOnce(() => {});
+    const request = new Request(`${origin}${SPACE_WRITER_ROUTES.file(space.id, 'a.txt')}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${writeToken}` },
+    });
+    expect((await api.fetch(request, flaky)).status).toBe(204);
+    expect(hub.eventsOf(space.id).at(-1)).toEqual({ type: 'fileDeleted', path: 'a.txt' });
+  });
+
+  it('keeps an extension made while a rename was in flight', async () => {
+    const { space, writeToken } = await createSpace();
+    const stale = (await getSpaceByWriteToken(env, writeToken))!;
+    await browser().spaces.update({ spaceId: space.id, expires: 'never' });
+    const renamed = await spacesService(env).update(stale, { title: 'Renamed' });
+    expect(renamed).toMatchObject({ title: 'Renamed', expiresAt: null });
   });
 });

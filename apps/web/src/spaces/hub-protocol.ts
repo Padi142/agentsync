@@ -1,13 +1,31 @@
-import type { SpaceEvent } from '@agentsync/contract';
+import type { SpaceRow } from '../db/spaces';
 
 /**
- * Headers the Worker sets when it forwards a checked WebSocket upgrade to a `SpaceHub`, overwriting any
- * the client sent: the Share Link token it checked, and when the Space expires (ms since the epoch, or `never`).
- * Kept apart from `hub.ts`, which only loads inside the Workers runtime.
+ * What a `SpaceHub` needs to know of its Space, as D1 had it at `version` (the row's `updatedAt`, ms):
+ * the current Share Link token and when it expires (ms, `null`: never). The Worker sends it with every
+ * upgrade and broadcast; the hub keeps the newest it has seen and ignores older ones, so a stale request
+ * can't bring back a rotated link or an old expiry. Kept apart from `hub.ts`, which only loads in workerd.
  */
-export const HUB_SHARE_TOKEN_HEADER = 'X-AgentSync-Share-Token';
-export const HUB_EXPIRES_AT_HEADER = 'X-AgentSync-Expires-At';
-/** `SpaceHub` answers an upgrade with this status when the token isn't the Share Link it knows. */
-export const HUB_STALE_TOKEN_STATUS = 409;
+export interface HubState {
+  token: string;
+  expiresAt: number | null;
+  version: number;
+}
 
-export type HubCloseReason = Extract<SpaceEvent, { type: 'closed' }>['reason'];
+/** The hub state of a Space that isn't private. */
+export const hubStateOf = (row: SpaceRow): HubState => ({
+  token: row.shareToken,
+  expiresAt: row.expiresAt?.getTime() ?? null,
+  version: row.updatedAt.getTime(),
+});
+
+/** The header the Worker sets (as JSON `HubState`) when it forwards a checked upgrade, overwriting any the client sent. */
+export const HUB_STATE_HEADER = 'X-AgentSync-Hub-State';
+/**
+ * `SpaceHub` answers an upgrade with this status when it knows newer state than the upgrade carries, or
+ * the Space was closed (made private, deleted) or has expired: the Worker then checks D1 again.
+ */
+export const HUB_STALE_STATUS = 409;
+
+/** The `closed` reasons the Worker asks for; the hub itself sends `rotated` and `expired`. */
+export type HubCloseReason = 'private' | 'deleted';

@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { ORPCError } from '@orpc/client';
 import { Context, type Flags, type Outcome } from './context.js';
 import { CliError, describeError, EXIT, exitCodeFor, usage } from './exit.js';
 import type { Io } from './io.js';
@@ -344,7 +345,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       return EXIT.ok;
     }
     if (flags.json) {
-      const details = error instanceof CliError ? error.details : {};
+      const details = error instanceof CliError ? error.details : error instanceof ORPCError ? { code: error.code } : {};
       io.out(JSON.stringify({ ok: false, error: { message, exitCode: code, ...details } }, null, 2));
     } else {
       const color = flags.color && !flags.plain && !io.env.NO_COLOR && io.tty.stderr && io.env.TERM !== 'dumb';

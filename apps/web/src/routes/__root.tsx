@@ -31,7 +31,9 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   // Every route loads in the browser, where same-origin RPC calls carry the session cookie.
   ssr: false,
   // Runs on every navigation, which keeps the open Conflicts count current.
-  beforeLoad: async () => {
+  beforeLoad: async ({ location }) => {
+    // A Share Link needs no account, so its viewer never waits on (or fails with) the session.
+    if (location.pathname.startsWith('/s/')) return { user: null, openConflicts: 0 };
     const user = await (session ??= rpc.session().catch((error: unknown) => {
       session = undefined; // Ask again next time.
       throw error;

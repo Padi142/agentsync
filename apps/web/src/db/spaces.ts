@@ -16,14 +16,17 @@ const base64url = (bytes: Uint8Array) =>
 export const newShareToken = () => base64url(crypto.getRandomValues(new Uint8Array(24)));
 const newWriteToken = () => `asw_${base64url(crypto.getRandomValues(new Uint8Array(32)))}`;
 
-/** Create an empty Space. The Write Token is returned here once; only its hash is stored. */
+/**
+ * Create an empty Space, unless the user already has `maxSpaces` (`null`), checked in the same statement
+ * so racing creates can't pass it. The Write Token is returned here once; only its hash is stored.
+ */
 export async function createSpace(
   env: Pick<Env, 'DB'>,
-  input: { userId: string; title: string; summary: string | null; expiresAt: Date | null },
-): Promise<{ row: SpaceRow; writeToken: string }> {
+  input: { userId: string; title: string; summary: string | null; expiresAt: Date | null; maxSpaces: number },
+): Promise<{ row: SpaceRow; writeToken: string } | null> {
   const writeToken = newWriteToken();
   const now = new Date();
-  const [row] = await createDb(env).insert(space).values({
+  const row: SpaceRow = {
     id: crypto.randomUUID(),
     userId: input.userId,
     title: input.title,
@@ -35,8 +38,13 @@ export async function createSpace(
     totalBytes: 0,
     createdAt: now,
     updatedAt: now,
-  }).returning();
-  return { row: row!, writeToken };
+  };
+  const result = await env.DB.prepare(
+    `INSERT INTO space (id, user_id, title, summary, share_token, write_token_hash, is_private, expires_at, total_bytes, created_at, updated_at)
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, 0, ?8, ?8 WHERE (SELECT count(*) FROM space WHERE user_id = ?2) < ?9`,
+  ).bind(row.id, row.userId, row.title, row.summary, row.shareToken, row.writeTokenHash,
+    row.expiresAt?.getTime() ?? null, now.getTime(), input.maxSpaces).run();
+  return result.meta.changes === 1 ? { row, writeToken } : null;
 }
 
 /** A user's own Space; other users' Spaces look like they don't exist. */
@@ -76,13 +84,19 @@ export function getSpaceFile(env: Pick<Env, 'DB'>, spaceId: string, path: string
   return createDb(env).select().from(spaceFile).where(and(eq(spaceFile.spaceId, spaceId), eq(spaceFile.path, path))).get();
 }
 
+/**
+ * `updated_at` for a change made at `now`: later than the last one even within the same millisecond, so
+ * a Space's `updatedAt` orders its changes (the `SpaceHub` relies on it, see `HubState`).
+ */
+const nextUpdatedAt = (now: number) => sql`max(${space.updatedAt} + 1, ${now})`;
+
 /** Change a Space's settings (title, summary, expiry, private, Share Link). Bumps `updatedAt`. */
 export async function updateSpaceRow(
   env: Pick<Env, 'DB'>,
   spaceId: string,
   changes: Partial<Pick<SpaceRow, 'title' | 'summary' | 'expiresAt' | 'isPrivate' | 'shareToken'>>,
 ) {
-  const [row] = await createDb(env).update(space).set({ ...changes, updatedAt: new Date() })
+  const [row] = await createDb(env).update(space).set({ ...changes, updatedAt: nextUpdatedAt(Date.now()) })
     .where(eq(space.id, spaceId)).returning();
   return row;
 }
@@ -115,7 +129,7 @@ export async function putSpaceFile(
   const [old, grown, upserted] = await env.DB.batch([
     env.DB.prepare('SELECT r2_key FROM space_file WHERE space_id = ?1 AND path = ?2').bind(file.spaceId, file.path),
     env.DB.prepare(
-      `UPDATE space SET total_bytes = total_bytes - ${oldSize} + ?3, updated_at = ?4
+      `UPDATE space SET total_bytes = total_bytes - ${oldSize} + ?3, updated_at = max(updated_at + 1, ?4)
        WHERE id = ?1 AND total_bytes - ${oldSize} + ?3 <= ?5
          AND (SELECT sum(total_bytes) FROM space WHERE user_id = ?6) - ${oldSize} + ?3 <= ?7`,
     ).bind(file.spaceId, file.path, file.size, now, SPACE_LIMITS.spaceBytes, userId, SPACE_LIMITS.userBytes),
@@ -137,7 +151,7 @@ export async function deleteSpaceFile(env: Pick<Env, 'DB'>, spaceId: string, pat
   const [, deleted] = await env.DB.batch([
     env.DB.prepare(
       `UPDATE space SET total_bytes = total_bytes - coalesce((SELECT size FROM space_file WHERE space_id = ?1 AND path = ?2), 0),
-         updated_at = ?3
+         updated_at = max(updated_at + 1, ?3)
        WHERE id = ?1 AND EXISTS (SELECT 1 FROM space_file WHERE space_id = ?1 AND path = ?2)`,
     ).bind(spaceId, path, Date.now()),
     env.DB.prepare('DELETE FROM space_file WHERE space_id = ?1 AND path = ?2 RETURNING r2_key').bind(spaceId, path),
@@ -157,10 +171,6 @@ export function spacesToPurge(env: Pick<Env, 'DB'>, now: Date, limit: number) {
   )).orderBy(asc(space.expiresAt)).limit(limit).all();
 }
 
-export async function countUserSpaces(env: Pick<Env, 'DB'>, userId: string) {
-  const row = await createDb(env).select({ count: sql<number>`count(*)` }).from(space).where(eq(space.userId, userId)).get();
-  return row?.count ?? 0;
-}
 
 export async function countSpaceFiles(env: Pick<Env, 'DB'>, spaceId: string) {
   const row = await createDb(env).select({ count: sql<number>`count(*)` }).from(spaceFile).where(eq(spaceFile.spaceId, spaceId)).get();

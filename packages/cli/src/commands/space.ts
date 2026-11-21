@@ -192,10 +192,11 @@ async function push(ctx: Context, flags: SpaceFlags): Promise<Outcome> {
   const [space, files] = await ctx.during('Comparing…', async () => {
     const [space, { files, skipped }] = await Promise.all([client.get(), walkDirectory(root)]);
     if (skipped.length) ctx.warn(`Skipped ${plural(skipped.length, 'symlink or unusual name')}: ${skipped.join(', ')}`);
+    // Before reading anything, so a huge file fails fast instead of filling memory.
+    checkLimits(files);
     const hashed = await inPool(files, async (file) => ({ ...file, sha256: sha256(await readFile(file.abs)) }));
     return [space, hashed] as const;
   });
-  checkLimits(files);
 
   const remote = new Map(space.files.map((file) => [file.path, file.sha256]));
   const local = new Set(files.map((file) => file.path));

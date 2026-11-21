@@ -6,9 +6,7 @@ import type { ContractClient, SpaceEvent } from '@agentsync/contract';
 import { vi } from 'vitest';
 import { api } from '../src/api';
 import type { Env } from '../src/env';
-import {
-  HUB_EXPIRES_AT_HEADER, HUB_SHARE_TOKEN_HEADER, HUB_STALE_TOKEN_STATUS, type HubCloseReason,
-} from '../src/spaces/hub-protocol';
+import { HUB_STALE_STATUS, HUB_STATE_HEADER, type HubCloseReason, type HubState } from '../src/spaces/hub-protocol';
 
 export const origin = 'http://app.test';
 
@@ -137,17 +135,17 @@ export function fakeWorkOSDevice() {
 }
 
 /**
- * A fake `SPACE_HUB` namespace: records the events the Worker sends each Space's `SpaceHub`
- * (`close` and `rotate` are recorded as the `closed` event they send) and the upgrades it accepts.
- * Like the real hub, it remembers each Space's Share Link token and refuses upgrades for another
- * with `HUB_STALE_TOKEN_STATUS`. `beforeUpgrade` runs before each upgrade is answered, to stage races.
- * Set `failing` to make every call throw, like a Durable Object outage.
+ * A fake `SPACE_HUB` namespace: records the events the Worker sends each Space's `SpaceHub` (`close`,
+ * and a sync to a new token, are recorded as the `closed` event they send) and the upgrades it accepts.
+ * Like the real hub it keeps the newest `HubState` per Space and refuses, with `HUB_STALE_STATUS`, an
+ * upgrade carrying older state or arriving after a close. `beforeUpgrade` runs before each upgrade is
+ * answered, to stage races. Set `failing` to make every call throw, like a Durable Object outage.
  */
 export function fakeSpaceHub() {
   const fake = {
     events: [] as { spaceId: string; event: SpaceEvent }[],
-    upgrades: [] as { spaceId: string; token: string | null; expiresAt: string | null }[],
-    tokens: new Map<string, string>(),
+    upgrades: [] as { spaceId: string; state: HubState }[],
+    states: new Map<string, HubState & { closed: HubCloseReason | null }>(),
     failing: false,
     beforeUpgrade: undefined as (() => Promise<void>) | undefined,
     namespace: undefined as unknown as Env['SPACE_HUB'],
@@ -156,7 +154,7 @@ export function fakeSpaceHub() {
     reset() {
       fake.events.length = 0;
       fake.upgrades.length = 0;
-      fake.tokens.clear();
+      fake.states.clear();
       fake.failing = false;
       fake.beforeUpgrade = undefined;
     },
@@ -166,24 +164,33 @@ export function fakeSpaceHub() {
       if (fake.failing) throw new Error('SpaceHub is down');
       return work();
     };
-    const closed = (reason: HubCloseReason) => fake.events.push({ spaceId, event: { type: 'closed', reason } });
+    const apply = (incoming: HubState) => {
+      const stored = fake.states.get(spaceId);
+      if (stored && (stored.closed === 'deleted' || incoming.version < stored.version ||
+          (incoming.version === stored.version && (stored.closed || stored.token !== incoming.token)))) return stored;
+      if (stored && stored.token !== incoming.token) fake.events.push({ spaceId, event: { type: 'closed', reason: 'rotated' } });
+      const next = { ...incoming, closed: null };
+      fake.states.set(spaceId, next);
+      return next;
+    };
     return {
-      broadcast: (event: SpaceEvent) => call(() => { fake.events.push({ spaceId, event }); }),
-      close: (reason: HubCloseReason) => call(() => {
-        closed(reason);
-        if (reason === 'deleted') fake.tokens.delete(spaceId);
+      broadcast: (event: SpaceEvent, state: HubState) => call(() => {
+        if (!apply(state).closed) fake.events.push({ spaceId, event });
       }),
-      rotate: (token: string) => call(() => {
-        fake.tokens.set(spaceId, token);
-        closed('rotated');
+      sync: (state: HubState) => call(() => { apply(state); }),
+      close: (reason: HubCloseReason, version: number) => call(() => {
+        fake.events.push({ spaceId, event: { type: 'closed', reason } });
+        const stored = fake.states.get(spaceId);
+        fake.states.set(spaceId, { token: stored?.token ?? '', expiresAt: null, version: Math.max(version, stored?.version ?? 0), closed: reason });
       }),
       fetch: (request: Request) => call(async () => {
         await fake.beforeUpgrade?.();
-        const token = request.headers.get(HUB_SHARE_TOKEN_HEADER);
-        const current = fake.tokens.get(spaceId);
-        if (current && current !== token) return new Response('stale', { status: HUB_STALE_TOKEN_STATUS });
-        if (token) fake.tokens.set(spaceId, token);
-        fake.upgrades.push({ spaceId, token, expiresAt: request.headers.get(HUB_EXPIRES_AT_HEADER) });
+        const incoming = JSON.parse(request.headers.get(HUB_STATE_HEADER)!) as HubState;
+        const state = apply(incoming);
+        if (state.closed || state.token !== incoming.token || state.version !== incoming.version) {
+          return new Response('stale', { status: HUB_STALE_STATUS });
+        }
+        fake.upgrades.push({ spaceId, state: incoming });
         return new Response('upgraded by the fake SpaceHub');
       }),
     };

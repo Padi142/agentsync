@@ -28,7 +28,7 @@ describe('spaceActions', () => {
 
   it('offers what fits each status', () => {
     expect(ids('active')).toEqual(['extend', 'permanent', 'private', 'rotate', 'delete']);
-    expect(ids('active', null)).toEqual(['extend', 'private', 'rotate', 'delete']);
+    expect(ids('active', null)).toEqual(['private', 'rotate', 'delete']);
     expect(ids('expired')).toEqual(['revive', 'revive-permanent', 'private', 'delete']);
     expect(ids('private')).toEqual(['public', 'rotate', 'delete']);
   });

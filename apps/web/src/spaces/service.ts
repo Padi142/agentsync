@@ -5,13 +5,14 @@ import {
 } from '@agentsync/contract';
 import { getAppOrigin } from '../auth';
 import {
-  countSpaceFiles, countUserSpaces, createSpace, deleteSpaceFile, deleteSpaceRow, getSpaceFile, getUserSpace, listSpaceFiles, listUserSpaces,
+  countSpaceFiles, createSpace, deleteSpaceFile, deleteSpaceRow, getSpaceFile, getUserSpace, listSpaceFiles, listUserSpaces,
   newShareToken, purgeCutoff, putSpaceFile, spacesToPurge, updateSpaceRow, userUsedBytes,
   type SpaceFileRow, type SpaceRow,
 } from '../db/spaces';
 import type { Env } from '../env';
 import { contentTypeFor } from './content-type';
 import type { SpaceHub } from './hub';
+import { hubStateOf } from './hub-protocol';
 import { spaceDigest } from './digest';
 import { BodyTooLarge, deleteObjectsByPrefix, newObjectKey, readLimited, sha256Hex } from './storage';
 import { zipStream } from './zip';
@@ -74,9 +75,24 @@ export function spacesService(env: Env) {
       console.error(`[spaces] SpaceHub of ${spaceId} failed:`, error);
     }
   }
-  /** Send `event` to the viewers of an active Space; a private or expired one had them closed. */
+  /**
+   * Send `event` to the viewers of an active Space (a private or expired one had them closed), with the
+   * Space's state as `row` has it, so a hub that missed a rotation or an expiry change catches up.
+   */
   const broadcast = (row: SpaceRow, event: SpaceEvent) =>
-    spaceStatus(row) === 'active' ? hub(row.id, (stub) => stub.broadcast(event)) : Promise.resolve();
+    spaceStatus(row) === 'active' ? hub(row.id, (stub) => stub.broadcast(event, hubStateOf(row))) : Promise.resolve();
+
+  /**
+   * Delete an R2 object no row points at any more. A failure only leaves an orphan under the Space's
+   * prefix (swept when the Space goes), so it is logged rather than failing the request.
+   */
+  async function discard(r2Key: string) {
+    try {
+      await env.SPACES_BUCKET.delete(r2Key);
+    } catch (error) {
+      console.error(`[spaces] could not delete ${r2Key}:`, error);
+    }
+  }
 
   /**
    * Delete the Space's rows, then sweep its R2 prefix. Rows go first, so an upload still in flight
@@ -86,7 +102,7 @@ export function spacesService(env: Env) {
   async function destroy(spaceId: string, options: { expiredBefore?: Date } = {}) {
     if (!await deleteSpaceRow(env, spaceId, options)) return false;
     await deleteObjectsByPrefix(env, `${spaceId}/`);
-    await hub(spaceId, (stub) => stub.close('deleted'));
+    await hub(spaceId, (stub) => stub.close('deleted', Date.now()));
     return true;
   }
 
@@ -94,16 +110,18 @@ export function spacesService(env: Env) {
     meta,
 
     async create(userId: string, input: { title: string; summary?: string | undefined; expires?: SpaceExpiry | undefined }): Promise<CreatedSpace> {
-      const [used, count] = await Promise.all([userUsedBytes(env, userId), countUserSpaces(env, userId)]);
-      if (used >= SPACE_LIMITS.userBytes) throw new SpaceError('QUOTA_EXCEEDED', 'Your Spaces use all your storage. Delete some first.');
-      if (count >= MAX_SPACES_PER_USER) throw new SpaceError('QUOTA_EXCEEDED', `You can have at most ${MAX_SPACES_PER_USER} Spaces. Delete some first.`);
-      const { row, writeToken } = await createSpace(env, {
+      if (await userUsedBytes(env, userId) >= SPACE_LIMITS.userBytes) {
+        throw new SpaceError('QUOTA_EXCEEDED', 'Your Spaces use all your storage. Delete some first.');
+      }
+      const created = await createSpace(env, {
         userId,
         title: input.title,
         summary: input.summary || null,
         expiresAt: spaceExpiresAt(input.expires ?? `${SPACE_LIMITS.defaultDays}d`),
+        maxSpaces: MAX_SPACES_PER_USER,
       });
-      return { space: { ...meta(row), files: [] }, writeToken };
+      if (!created) throw new SpaceError('QUOTA_EXCEEDED', `You can have at most ${MAX_SPACES_PER_USER} Spaces. Delete some first.`);
+      return { space: { ...meta(created.row), files: [] }, writeToken: created.writeToken };
     },
 
     async list(userId: string) {
@@ -130,10 +148,10 @@ export function spacesService(env: Env) {
      */
     async update(row: SpaceRow, changes: SpaceChanges): Promise<SpaceRow> {
       const now = new Date();
-      let expiresAt = changes.expires === undefined ? row.expiresAt : spaceExpiresAt(changes.expires, now);
-      if (changes.private === false && changes.expires === undefined && expiresAt && expiresAt <= now) {
-        expiresAt = new Date(now.getTime() + SPACE_LIMITS.defaultDays * DAY_MS);
-      }
+      const lapsed = changes.private === false && row.expiresAt !== null && row.expiresAt <= now;
+      // Left out unless it changes, so a rename can't undo an extension made meanwhile.
+      const expiresAt = changes.expires !== undefined ? spaceExpiresAt(changes.expires, now)
+        : lapsed ? new Date(now.getTime() + SPACE_LIMITS.defaultDays * DAY_MS) : undefined;
       const updated = await updateSpaceRow(env, row.id, {
         title: changes.title,
         summary: changes.summary === undefined ? undefined : changes.summary || null,
@@ -141,8 +159,8 @@ export function spacesService(env: Env) {
         isPrivate: changes.private,
       });
       if (!updated) throw new SpaceError('NOT_FOUND', 'No such Space.');
-      // The `space` event also moves the hub's expiry alarm.
-      if (updated.isPrivate && !row.isPrivate) await hub(row.id, (stub) => stub.close('private'));
+      // The state sent with the `space` event also moves the hub's expiry alarm.
+      if (updated.isPrivate) await hub(row.id, (stub) => stub.close('private', updated.updatedAt.getTime()));
       else await broadcast(updated, { type: 'space', space: meta(updated, now) });
       return updated;
     },
@@ -151,7 +169,8 @@ export function spacesService(env: Env) {
     async rotateLink(row: SpaceRow) {
       const updated = await updateSpaceRow(env, row.id, { shareToken: newShareToken() });
       if (!updated) throw new SpaceError('NOT_FOUND', 'No such Space.');
-      await hub(row.id, (stub) => stub.rotate(updated.shareToken));
+      // A private Space's hub stays closed; it learns the new link when the Space is made public.
+      if (!updated.isPrivate) await hub(row.id, (stub) => stub.sync(hubStateOf(updated)));
       return updated;
     },
 
@@ -200,9 +219,15 @@ export function spacesService(env: Env) {
       const contentType = contentTypeFor(path, upload.contentType);
       const r2Key = newObjectKey(row.id);
       await env.SPACES_BUCKET.put(r2Key, bytes, { sha256, httpMetadata: { contentType } });
-      const stored = await putSpaceFile(env, row.userId, { spaceId: row.id, path, size: bytes.byteLength, contentType, sha256, r2Key });
+      let stored: Awaited<ReturnType<typeof putSpaceFile>>;
+      try {
+        stored = await putSpaceFile(env, row.userId, { spaceId: row.id, path, size: bytes.byteLength, contentType, sha256, r2Key });
+      } catch (error) {
+        await discard(r2Key);
+        throw error;
+      }
       if (!stored.ok) {
-        await env.SPACES_BUCKET.delete(r2Key);
+        await discard(r2Key);
         // Another upload took the room meanwhile, or the Space is gone: say which limit it hits now.
         const [fresh, freshFile, nowUsed] = await Promise.all([
           getUserSpace(env, row.userId, row.id), getSpaceFile(env, row.id, path), userUsedBytes(env, row.userId),
@@ -212,11 +237,7 @@ export function spacesService(env: Env) {
         room.user = SPACE_LIMITS.userBytes - (nowUsed - (freshFile?.size ?? 0));
         throw limitError(bytes.byteLength) ?? new SpaceError('QUOTA_EXCEEDED', 'A storage limit was reached.');
       }
-      if (stored.replacedKey) {
-        await env.SPACES_BUCKET.delete(stored.replacedKey).catch((error: unknown) => {
-          console.error(`[spaces] could not delete ${stored.replacedKey}:`, error);
-        });
-      }
+      if (stored.replacedKey) await discard(stored.replacedKey);
       const file: SpaceFile = { path, size: bytes.byteLength, contentType, sha256, updatedAt: stored.updatedAt };
       await broadcast(row, { type: 'file', file });
       return file;
@@ -225,7 +246,7 @@ export function spacesService(env: Env) {
     async deleteFile(row: SpaceRow, path: string) {
       const r2Key = await deleteSpaceFile(env, row.id, path);
       if (!r2Key) throw new SpaceError('NOT_FOUND', 'No such file.');
-      await env.SPACES_BUCKET.delete(r2Key);
+      await discard(r2Key);
       await broadcast(row, { type: 'fileDeleted', path });
     },
 

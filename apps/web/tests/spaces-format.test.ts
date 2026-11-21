@@ -73,6 +73,29 @@ ${contents['site/index.html']}
     expect(digest).not.toContain('## Contents');
     expect(digest).not.toContain('secret-ish');
   });
+
+  it('reads at most 30 files, the first by path, a few at a time', async () => {
+    const files = Array.from({ length: 40 }, (_, i) => file(`doc-${String(i).padStart(2, '0')}.md`, 10, 'text/markdown'));
+    const value: PublicSpace = {
+      id: 'space-1', title: 'Many', summary: null, status: 'active', expiresAt: null, shareUrl: `https://agentsync.test/s/${token}`,
+      totalBytes: 400, files, createdAt: at, updatedAt: at,
+    };
+    const read: string[] = [];
+    let open = 0;
+    let peak = 0;
+    const digest = await spaceDigest(value, async (path) => {
+      read.push(path);
+      peak = Math.max(peak, ++open);
+      await new Promise((resolve) => setTimeout(resolve, Math.random() * 5));
+      open--;
+      return `# ${path}\n`;
+    });
+    expect(read.sort()).toEqual(files.slice(0, 30).map((f) => f.path));
+    expect(peak).toBeLessThanOrEqual(6);
+    expect(digest).toContain('  - # doc-29.md');
+    expect(digest).not.toContain('  - # doc-30.md');
+    expect(digest).not.toContain('## Contents');
+  });
 });
 
 describe('spacesRoute', () => {
@@ -83,6 +106,12 @@ describe('spacesRoute', () => {
     [`/s/${token}`, 'application/json', 'api'],
     [`/s/${token}`, '*/*', 'api'],
     [`/s/${token}`, null, 'api'],
+    [`/s/${token}/`, html, 'app'],
+    [`/s/${token}/`, 'application/json', 'api'],
+    [`/s/${token}`, 'text/markdown, text/html;q=0.1', 'api'],
+    [`/s/${token}`, 'text/html, application/json', 'api'],
+    [`/s/${token}`, 'text/html, application/json;q=0.9', 'app'],
+    [`/s/${token}`, 'text/html;q=0', 'api'],
     [`/s/${token}.md`, html, 'api'],
     [`/s/${token}.json`, html, 'api'],
     [`/s/${token}/raw/index.html`, html, 'api'],

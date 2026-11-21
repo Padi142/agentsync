@@ -98,9 +98,9 @@ const CONTENT_TYPES: Record<string, string> = {
 /** The `Content-Type` to upload `path` with, from its extension. */
 export const contentTypeFor = (path: string) => CONTENT_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream';
 
-/** Whether bytes of `contentType` can be printed as text. */
+/** Whether bytes of `contentType` can be printed as text: the server's text types (`isTextType`), plus SVG. */
 export const isText = (contentType: string) =>
-  /^text\/|^application\/(json|xml|javascript)|^image\/svg\+xml/.test(contentType);
+  /^(text\/|application\/(json|xml|javascript|yaml|toml|x-sh)\b|image\/svg\+xml)|^[^;]*\+json\b/i.test(contentType.trim());
 
 /**
  * Where the Space path `remote` goes under `root`, or a thrown error if it can't go anywhere inside it,
@@ -130,8 +130,12 @@ async function parentDirectory(root: string, remote: string, create: boolean): P
       throw error;
     });
     if (stat === null && !create) return null;
-    if (stat === null) await mkdir(dir);
-    else if (!stat.isDirectory()) throw new CliError(`${dir} is in the way of ${remote}: it isn't a directory.`, EXIT.error);
+    // Parallel downloads make the same folder at once: someone else's mkdir is fine, if it made a real directory.
+    const made = stat ?? await mkdir(dir).then(() => null, async (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EEXIST') return lstat(dir);
+      throw error;
+    });
+    if (made && !made.isDirectory()) throw new CliError(`${dir} is in the way of ${remote}: it isn't a directory.`, EXIT.error);
   }
   return dir;
 }

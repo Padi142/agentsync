@@ -2,12 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { Miniflare } from 'miniflare';
 import { transformWithOxc } from 'vite';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { HUB_EXPIRES_AT_HEADER, HUB_SHARE_TOKEN_HEADER } from '../src/spaces/hub-protocol';
+import { HUB_STATE_HEADER, type HubState } from '../src/spaces/hub-protocol';
 
 /**
- * The real `SpaceHub` in workerd. A small Worker in front of it forwards upgrades with the Share Link token
- * and expiry from the query string, where the app's Worker takes them from D1, and turns
- * `POST /rpc/<method>` into RPC calls. (The compatibility date is the newest the installed workerd knows.)
+ * The real `SpaceHub` in workerd. A small Worker in front of it forwards upgrades with the `HubState` from
+ * the query string, where the app's Worker takes it from D1, and turns `POST /rpc/<method>` into RPC calls.
+ * (The compatibility date is the newest the installed workerd knows.)
  */
 let mf: Miniflare;
 
@@ -29,8 +29,7 @@ beforeAll(async () => {
             if (url.pathname === '/ws' || url.pathname === '/status') {
               const headers = new Headers(request.headers);
               headers.set('Upgrade', 'websocket');
-              headers.set('${HUB_SHARE_TOKEN_HEADER}', url.searchParams.get('token'));
-              headers.set('${HUB_EXPIRES_AT_HEADER}', url.searchParams.get('expires') ?? 'never');
+              headers.set('${HUB_STATE_HEADER}', url.searchParams.get('state'));
               const response = await hub.fetch(new Request(request, { headers }));
               if (url.pathname === '/ws') return response;
               // Only the status, for an upgrade the hub is expected to refuse.
@@ -51,16 +50,17 @@ beforeAll(async () => {
 afterAll(async () => { await mf?.dispose(); });
 
 /** The status the hub answers an upgrade with, for one it is expected to refuse. */
-const upgradeStatus = async (space: string, token: string) =>
-  (await mf.dispatchFetch(`http://hub.test/status?space=${space}&token=${token}`)).json();
+const upgradeStatus = async (space: string, state: HubState) =>
+  (await mf.dispatchFetch(`http://hub.test/status?space=${space}&state=${encodeURIComponent(JSON.stringify(state))}`)).json();
 
 /**
  * A viewer's socket (Node's own WebSocket client) with every message it got. `closed` resolves with the
  * reason once the hub has sent `closed` and started closing the socket. (Locally the TCP close itself
  * lags about ten seconds behind, so the close event is not waited for.)
  */
-async function connect(space: string, token: string, expires = 'never') {
-  const url = new URL(`ws?space=${space}&token=${token}&expires=${expires}`, (await mf.ready).href.replace(/^http/, 'ws'));
+async function connect(space: string, state: HubState) {
+  const query = `space=${space}&state=${encodeURIComponent(JSON.stringify(state))}`;
+  const url = new URL(`ws?${query}`, (await mf.ready).href.replace(/^http/, 'ws'));
   const socket = new WebSocket(url);
   const messages: unknown[] = [];
   let close: (reason: string) => void;
@@ -87,33 +87,48 @@ const rpc = (space: string, method: string, ...args: unknown[]) =>
   mf.dispatchFetch(`http://hub.test/rpc/${method}?space=${space}`, { method: 'POST', body: JSON.stringify(args) });
 const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
 
-it('closes old-link sockets on rotation and refuses old-link upgrades after it', async () => {
-  const old = await connect('rotating', 'old-token');
-  await rpc('rotating', 'rotate', 'new-token');
+const state = (token: string, version: number, expiresAt: number | null = null): HubState => ({ token, version, expiresAt });
+const event = { type: 'fileDeleted', path: 'a.txt' } as const;
+
+it('moves to a new Share Link on newer state, and refuses upgrades with older state', async () => {
+  const old = await connect('rotating', state('old', 1));
+  // A rotation the hub missed: the next broadcast carries the new token.
+  await rpc('rotating', 'broadcast', event, state('new', 2));
   expect(await old.closed).toBe('rotated');
   expect(old.messages).toEqual([{ type: 'closed', reason: 'rotated' }]);
 
-  expect(await upgradeStatus('rotating', 'old-token')).toBe(409);
-  const fresh = await connect('rotating', 'new-token');
-  await rpc('rotating', 'broadcast', { type: 'fileDeleted', path: 'a.txt' });
+  expect(await upgradeStatus('rotating', state('old', 1))).toBe(409);
+  const fresh = await connect('rotating', state('new', 2));
+  await rpc('rotating', 'broadcast', event, state('old', 1)); // Stale state: ignored, the event still goes out.
   await settle();
-  expect(fresh.messages).toEqual([{ type: 'fileDeleted', path: 'a.txt' }]);
+  expect(fresh.messages).toEqual([event]);
 });
 
-it('tells viewers when the Space expires, and moves the alarm when it is extended', async () => {
-  const viewer = await connect('expiring', 'token', String(Date.now() + 300));
-  await rpc('expiring', 'broadcast', { type: 'space', space: { status: 'active', expiresAt: new Date(Date.now() + 60_000).toISOString() } });
+it('tells viewers when the Space expires, and a stale upgrade cannot bring back an old expiry', async () => {
+  const viewer = await connect('expiring', state('t', 1, Date.now() + 300));
+  await rpc('expiring', 'broadcast', event, state('t', 2, null)); // Made permanent.
+  expect(await upgradeStatus('expiring', state('t', 1, Date.now() + 300))).toBe(409);
   await new Promise((resolve) => setTimeout(resolve, 600));
-  expect(viewer.messages.map((m) => (m as { type: string }).type)).toEqual(['space']);
+  expect(viewer.messages).toEqual([event]);
 
-  await rpc('expiring', 'broadcast', { type: 'space', space: { status: 'active', expiresAt: new Date(Date.now() + 200).toISOString() } });
+  await rpc('expiring', 'sync', state('t', 3, Date.now() + 200));
   expect(await viewer.closed).toBe('expired');
   expect(viewer.messages.at(-1)).toEqual({ type: 'closed', reason: 'expired' });
+  expect(await upgradeStatus('expiring', state('t', 3, Date.now() - 1))).toBe(409);
 });
 
-it('forgets a deleted Space, so a new link may connect', async () => {
-  const viewer = await connect('deleted', 'token');
-  await rpc('deleted', 'close', 'deleted');
+it('refuses upgrades once the Space is made private, until newer state reopens it', async () => {
+  const viewer = await connect('private', state('t', 1));
+  await rpc('private', 'close', 'private', 2);
+  expect(await viewer.closed).toBe('private');
+  expect(await upgradeStatus('private', state('t', 1))).toBe(409);
+  expect(await upgradeStatus('private', state('t', 2))).toBe(409);
+  expect(await upgradeStatus('private', state('t', 3))).toBe(101);
+});
+
+it('refuses every upgrade once the Space is deleted', async () => {
+  const viewer = await connect('deleted', state('t', 1));
+  await rpc('deleted', 'close', 'deleted', 2);
   expect(await viewer.closed).toBe('deleted');
-  expect(await upgradeStatus('deleted', 'other-token')).toBe(101);
+  expect(await upgradeStatus('deleted', state('t', 99))).toBe(409);
 });

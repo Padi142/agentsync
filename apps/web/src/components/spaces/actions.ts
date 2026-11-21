@@ -36,8 +36,8 @@ export function spaceActions(space: Pick<Space, 'status' | 'expiresAt' | 'title'
   switch (space.status) {
     case 'active':
       return [
-        { id: 'extend', label: 'Extend 7 days' },
-        ...(space.expiresAt ? [{ id: 'permanent', label: 'Make permanent' } as const] : []),
+        // A permanent Space has nothing to extend: "7 more days" would make it expire.
+        ...(space.expiresAt ? [{ id: 'extend', label: 'Extend 7 days' }, { id: 'permanent', label: 'Make permanent' }] as const : []),
         { id: 'private', label: 'Make private' },
         rotate,
         remove,

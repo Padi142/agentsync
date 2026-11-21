@@ -4,6 +4,9 @@ import { isTextType, mimeEssence } from './content-type';
 /** Markdown and HTML files up to this size are read for their outline. */
 const OUTLINE_MAX_BYTES = 256 * 1024;
 const OUTLINE_MAX_ITEMS = 40;
+/** At most this many files are read for one digest (outlines or inlined text), this many at a time. */
+const MAX_READS = 30;
+const READ_CONCURRENCY = 6;
 /** A Space whose only file is text and at most this big is inlined in full. */
 const INLINE_SINGLE_MAX_BYTES = 100 * 1024;
 /** A Space of text files only, together at most this big, is inlined in full. */
@@ -91,15 +94,22 @@ export async function spaceDigest(space: PublicSpace, readText: (path: string) =
 
   const allText = files.length > 0 && files.every((file) => isTextType(file.contentType));
   const textBytes = files.reduce((sum, file) => sum + file.size, 0);
-  const inline = allText && (files.length === 1 ? textBytes <= INLINE_SINGLE_MAX_BYTES : textBytes <= INLINE_ALL_MAX_BYTES);
+  const inline = allText && files.length <= MAX_READS &&
+    (files.length === 1 ? textBytes <= INLINE_SINGLE_MAX_BYTES : textBytes <= INLINE_ALL_MAX_BYTES);
 
+  // The first `MAX_READS` outlined files by path, so the same Space always gets the same outlines.
+  const toRead = inline ? files : files.filter((file) =>
+    (isMarkdown(file.path, file.contentType) || isHtml(file.path, file.contentType)) && file.size <= OUTLINE_MAX_BYTES,
+  ).slice(0, MAX_READS);
   const contents = new Map<string, string>();
-  for (const file of files) {
-    const outlined = (isMarkdown(file.path, file.contentType) || isHtml(file.path, file.contentType)) && file.size <= OUTLINE_MAX_BYTES;
-    if (!inline && !outlined) continue;
-    const text = await readText(file.path);
-    if (text !== null) contents.set(file.path, text);
-  }
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, toRead.length) }, async () => {
+    while (next < toRead.length) {
+      const file = toRead[next++]!;
+      const text = await readText(file.path);
+      if (text !== null) contents.set(file.path, text);
+    }
+  }));
 
   const out: string[] = [`# ${space.title}`, ''];
   if (space.summary) out.push(...space.summary.split('\n').map((line) => `> ${line}`.trimEnd()), '');

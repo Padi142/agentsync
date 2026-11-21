@@ -5,7 +5,8 @@ import { Hono, type Context } from 'hono';
 import { getSpaceByShareToken, getSpaceByWriteToken } from '../db/spaces';
 import type { Env } from '../env';
 import { isInertType } from '../spaces/content-type';
-import { HUB_EXPIRES_AT_HEADER, HUB_SHARE_TOKEN_HEADER, HUB_STALE_TOKEN_STATUS } from '../spaces/hub-protocol';
+import { acceptQuality } from '../spaces/routing';
+import { HUB_STALE_STATUS, HUB_STATE_HEADER, hubStateOf } from '../spaces/hub-protocol';
 import { SpaceError, spacesService } from '../spaces/service';
 
 type HonoEnv = { Bindings: Env };
@@ -46,14 +47,16 @@ function pathIn(c: SpaceContext, prefix: RegExp): string {
 }
 
 /**
- * The Space whose Write Token the request carries, if it is the one in the URL. With `write`, it must
+ * The Space whose Write Token the request carries, if it is the one in the URL (else `UNAUTHORIZED`). With `write`, it must
  * not be expired: every mutation fails with `SPACE_EXPIRED` until the owner revives it.
  */
 async function writer(c: SpaceContext, { write }: { write: boolean }) {
   const token = c.req.header('Authorization')?.match(/^Bearer (asw_\S+)$/i)?.[1];
   const row = token ? await getSpaceByWriteToken(c.env, token) : undefined;
-  if (!row) throw new SpaceError('UNAUTHORIZED', 'A valid Write Token is required (Authorization: Bearer asw_…).');
-  if (row.id !== c.req.param('id')) throw new SpaceError('NOT_FOUND', 'No such Space.');
+  // Another Space's token answers like a wrong one, so neither reveals whether the id exists.
+  if (!row || row.id !== c.req.param('id')) {
+    throw new SpaceError('UNAUTHORIZED', 'A valid Write Token for this Space is required (Authorization: Bearer asw_…).');
+  }
   if (write && spaceStatus(row) === 'expired') {
     throw new SpaceError('SPACE_EXPIRED', 'This Space has expired. Its owner can revive it at /spaces.');
   }
@@ -112,11 +115,11 @@ spacesApi.delete('/api/spaces/:id/files/*', async (c) => {
 // Public Share Link routes.
 
 /** `/s/<token>` (by `Accept`: JSON, else the Markdown digest; browsers get the viewer before this), `.md`, `.json`. */
-spacesApi.get('/s/:name', async (c) => {
+spacesApi.on('GET', ['/s/:name', '/s/:name/'], async (c) => {
   const [, token, suffix] = c.req.param('name').match(/^(.*?)(\.md|\.json)?$/)!;
   const row = await shared(c, token!);
   const accept = c.req.header('Accept') ?? '';
-  const json = suffix === '.json' || (!suffix && accept.includes('application/json') && !accept.includes('text/markdown'));
+  const json = suffix === '.json' || (!suffix && acceptQuality(accept, ['application/json']) > acceptQuality(accept, ['text/markdown']));
   if (!suffix) c.header('Vary', 'Accept');
   const service = spacesService(c.env);
   if (json) return c.json(await service.publicSpace(row));
@@ -152,24 +155,25 @@ spacesApi.get('/s/:token/download.zip', async (c) => {
 
 /**
  * Upgrade to the Space's `SpaceHub`, which sends `SpaceEvent`s until the Share Link stops working. The hub
- * is told which token was checked; if it knows another, either the link was rotated meanwhile (D1 now
- * says so: 404) or the hub missed a rotation (D1 still has this token: catch the hub up and retry once).
+ * gets the Space's state as checked here; if it knows newer state, or that the link was turned off, D1 is
+ * read again: a link rotated, made private, deleted or expired meanwhile fails like any other, and otherwise
+ * the hub is caught up with the fresh state and the upgrade retried once.
  */
 spacesApi.get('/s/:token/ws', async (c) => {
-  const row = await shared(c, c.req.param('token'));
+  let row = await shared(c, c.req.param('token'));
   if (c.req.header('Upgrade')?.toLowerCase() !== 'websocket') {
     throw new SpaceError('INVALID_REQUEST', 'Expected a WebSocket upgrade.');
   }
   const hub = c.env.SPACE_HUB.get(c.env.SPACE_HUB.idFromName(row.id));
   const forward = () => {
     const headers = new Headers(c.req.raw.headers);
-    headers.set(HUB_SHARE_TOKEN_HEADER, row.shareToken);
-    headers.set(HUB_EXPIRES_AT_HEADER, row.expiresAt ? String(row.expiresAt.getTime()) : 'never');
+    headers.set(HUB_STATE_HEADER, JSON.stringify(hubStateOf(row)));
     return hub.fetch(new Request(c.req.raw, { headers }));
   };
-  const response = await forward();
-  if (response.status !== HUB_STALE_TOKEN_STATUS) return response;
-  await shared(c, row.shareToken);
-  await hub.rotate(row.shareToken);
-  return forward();
+  for (let attempt = 0; ; attempt++) {
+    const response = await forward();
+    if (response.status !== HUB_STALE_STATUS) return response;
+    if (attempt === 1) throw new SpaceError('NOT_FOUND', 'No such Space.');
+    row = await shared(c, row.shareToken);
+  }
 });

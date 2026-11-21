@@ -1,18 +1,26 @@
 import type { SpaceEvent } from '@agentsync/contract';
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env';
-import { HUB_EXPIRES_AT_HEADER, HUB_SHARE_TOKEN_HEADER, HUB_STALE_TOKEN_STATUS, type HubCloseReason } from './hub-protocol';
+import { HUB_STALE_STATUS, HUB_STATE_HEADER, type HubCloseReason, type HubState } from './hub-protocol';
+
+/** How long a deleted Space's hub keeps refusing upgrades (any still in flight) before it forgets everything. */
+const DELETED_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+/** What the hub stores: the newest `HubState` it has seen, and whether the Share Link was turned off since. */
+interface Stored extends HubState {
+  closed: HubCloseReason | null;
+}
 
 /**
  * One per Space (`idFromName(spaceId)`): holds the open WebSockets of its viewers (browsers and
  * `space pull --watch`) with the Hibernation API and sends them `SpaceEvent`s as JSON text frames.
  *
- * The Worker checks the Share Link in D1 before forwarding an upgrade, and calls `broadcast`, `rotate`
- * and `close` over RPC after each change. The hub remembers the current Share Link token and tags each
- * socket with the token it connected by, so an upgrade checked just before a rotation can't slip in after
- * it (it gets `HUB_STALE_TOKEN_STATUS`, and the Worker checks D1 again) and events reach only sockets of the current link.
- * An alarm at the Space's expiry tells viewers `closed: expired`. Clients send nothing but `ping`,
- * answered `pong` without waking the hub.
+ * The Worker checks the Share Link in D1 before forwarding an upgrade, and sends the Space's `HubState`
+ * with it and with every broadcast. The hub keeps the newest state (by `version`): a new token closes the
+ * sockets of the old one (`rotated`), the expiry is an alarm that closes them all (`expired`). Sockets are
+ * tagged with their token, and events reach only those of the current one. An upgrade carrying older state,
+ * or arriving after the Space was made private, deleted or expired, gets `HUB_STALE_STATUS`, and the Worker
+ * checks D1 again. Clients send nothing but `ping`, answered `pong` without waking the hub.
  */
 export class SpaceHub extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
@@ -20,55 +28,73 @@ export class SpaceHub extends DurableObject<Env> {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
   }
 
-  private currentToken() {
-    return this.ctx.storage.get<string>('shareToken');
+  private stored() {
+    return this.ctx.storage.get<Stored>('state');
   }
 
-  /** Expire at `expiresAt` (ms), or never (`null`). */
-  private async expireAt(expiresAt: number | null) {
-    if (expiresAt === null) await this.ctx.storage.deleteAlarm();
-    else await this.ctx.storage.setAlarm(expiresAt);
+  /** Adopt `incoming` unless the hub already knows newer state (or that the Space is gone). Returns what it holds now. */
+  private async apply(incoming: HubState): Promise<Stored> {
+    const stored = await this.stored();
+    if (stored && (stored.closed === 'deleted' || incoming.version < stored.version ||
+        (incoming.version === stored.version && (stored.closed || stored.token !== incoming.token)))) {
+      return stored;
+    }
+    const next: Stored = { ...incoming, closed: null };
+    await this.ctx.storage.put('state', next);
+    if (next.expiresAt === null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(next.expiresAt);
+    if (stored && stored.token !== next.token) {
+      this.closeAll(this.ctx.getWebSockets().filter((socket) => !this.ctx.getTags(socket).includes(next.token)), 'rotated');
+    }
+    return next;
   }
 
   override async fetch(request: Request) {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return new Response('Expected a WebSocket.', { status: 426 });
-    const token = request.headers.get(HUB_SHARE_TOKEN_HEADER);
-    if (!token) return new Response('Missing Share Link token.', { status: 400 });
-    const current = await this.currentToken();
-    if (current && current !== token) return new Response('Not the current Share Link.', { status: HUB_STALE_TOKEN_STATUS });
-    if (!current) await this.ctx.storage.put('shareToken', token);
-    const expiresAt = request.headers.get(HUB_EXPIRES_AT_HEADER);
-    if (expiresAt) await this.expireAt(expiresAt === 'never' ? null : Number(expiresAt));
+    let incoming: HubState;
+    try {
+      incoming = JSON.parse(request.headers.get(HUB_STATE_HEADER) ?? '') as HubState;
+    } catch {
+      return new Response('Missing hub state.', { status: 400 });
+    }
+    const state = await this.apply(incoming);
+    if (state.closed || state.token !== incoming.token || state.version !== incoming.version ||
+        (state.expiresAt !== null && state.expiresAt <= Date.now())) {
+      return new Response('Stale Share Link state.', { status: HUB_STALE_STATUS });
+    }
     const { 0: client, 1: server } = new WebSocketPair();
-    this.ctx.acceptWebSocket(server, [token]);
+    this.ctx.acceptWebSocket(server, [state.token]);
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  /** Send `event` to every socket of the current Share Link. A `space` event also moves the expiry alarm. */
-  async broadcast(event: SpaceEvent) {
-    if (event.type === 'space') {
-      await this.expireAt(event.space.status === 'active' && event.space.expiresAt ? new Date(event.space.expiresAt).getTime() : null);
-    }
-    const current = await this.currentToken();
-    if (current) this.send(this.ctx.getWebSockets(current), event);
+  /** Adopt `state` (if newer), then send `event` to every socket of the current Share Link. */
+  async broadcast(event: SpaceEvent, state: HubState) {
+    const current = await this.apply(state);
+    if (!current.closed) this.send(this.ctx.getWebSockets(current.token), event);
   }
 
-  /** The Share Link is now `token`: close every socket of an older one. */
-  async rotate(token: string) {
-    await this.ctx.storage.put('shareToken', token);
-    const stale = this.ctx.getWebSockets().filter((socket) => !this.ctx.getTags(socket).includes(token));
-    this.closeAll(stale, 'rotated');
+  /** Adopt `state` (if newer), e.g. after the Share Link was rotated. */
+  async sync(state: HubState) {
+    await this.apply(state);
   }
 
-  /** Tell every socket the Share Link stopped working, then close them. A deleted Space's hub forgets everything. */
-  async close(reason: HubCloseReason) {
+  /**
+   * The Share Link was turned off at `version`: tell every socket, close them, and refuse upgrades until
+   * newer state comes (a private Space made public again). A deleted Space's hub is cleared a day later.
+   */
+  async close(reason: HubCloseReason, version: number) {
     this.closeAll(this.ctx.getWebSockets(), reason);
-    if (reason === 'deleted') await this.ctx.storage.deleteAll();
+    const stored = await this.stored();
+    await this.ctx.storage.put('state', {
+      token: stored?.token ?? '', expiresAt: null, version: Math.max(version, stored?.version ?? 0), closed: reason,
+    } satisfies Stored);
+    if (reason === 'deleted') await this.ctx.storage.setAlarm(Date.now() + DELETED_RETENTION_MS);
     else await this.ctx.storage.deleteAlarm();
   }
 
   override async alarm() {
-    this.closeAll(this.ctx.getWebSockets(), 'expired');
+    if ((await this.stored())?.closed === 'deleted') await this.ctx.storage.deleteAll();
+    else this.closeAll(this.ctx.getWebSockets(), 'expired');
   }
 
   private send(sockets: WebSocket[], event: SpaceEvent) {
@@ -82,7 +108,7 @@ export class SpaceHub extends DurableObject<Env> {
     }
   }
 
-  private closeAll(sockets: WebSocket[], reason: HubCloseReason) {
+  private closeAll(sockets: WebSocket[], reason: Extract<SpaceEvent, { type: 'closed' }>['reason']) {
     this.send(sockets, { type: 'closed', reason });
     for (const socket of sockets) {
       try {
