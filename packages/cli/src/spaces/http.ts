@@ -42,7 +42,7 @@ function explain(code: SpaceErrorCode, message: string, side: Side): { text: str
     case 'FILE_TOO_LARGE':
       return { text: `${message} A Space file can be at most ${SPACE_LIMITS.fileBytes / 1024 / 1024} MB.`, exit: EXIT.error };
     case 'SPACE_FULL':
-      return { text: `${message} A Space holds at most ${SPACE_LIMITS.spaceBytes / 1024 / 1024} MB.`, exit: EXIT.error };
+      return { text: `${message} A Space holds at most ${SPACE_LIMITS.spaceBytes / 1024 / 1024} MB and ${SPACE_LIMITS.maxFiles} files.`, exit: EXIT.error };
     case 'QUOTA_EXCEEDED':
       return { text: `${message} Your Spaces can hold ${SPACE_LIMITS.userBytes / 1024 / 1024} MB in all; delete some at ${site}/spaces.`, exit: EXIT.error };
     case 'INVALID_PATH':

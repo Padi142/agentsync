@@ -190,7 +190,7 @@ and the Write Token, which is shown only this once and never saved.
   --summary <text>      A line for readers and agents about what the Space holds
   --expires <n>d|never  How long the Share Link works (default 7d, at most 365d)
 
-Symlinks, .git, node_modules and .DS_Store are skipped. A file can be at most 25 MB, a Space 100 MB.`,
+Symlinks, .git, node_modules and .DS_Store are skipped. A file can be at most 25 MB, a Space 100 MB and 500 files.`,
   'space put': `Usage: ${SPACE_USAGE.put}
 
 Upload one file, replacing any file at remote-path (default: the file's name).`,

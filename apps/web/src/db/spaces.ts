@@ -113,26 +113,51 @@ export async function deleteSpaceRow(env: Pick<Env, 'DB'>, spaceId: string, opti
 }
 
 /**
+ * Matches an existing `space_file.path` that collides with `?2` as an ancestor or descendant
+ * (`foo` vs `foo/bar`). Uses `length`/`substr` so `%`/`_` in names are never LIKE wildcards
+ * and deeply nested paths need no extra bound parameters.
+ */
+const PATH_CONFLICT =
+  "((length(path) < length(?2) AND substr(?2, 1, length(path) + 1) = path || '/') OR " +
+  "(length(path) > length(?2) AND substr(path, 1, length(?2) + 1) = ?2 || '/'))";
+
+/** An existing path in the Space that is an ancestor or descendant of `path`, or `null`. */
+export async function findSpacePathConflict(env: Pick<Env, 'DB'>, spaceId: string, path: string): Promise<string | null> {
+  const result = await env.DB.prepare(
+    `SELECT path FROM space_file WHERE space_id = ?1 AND ${PATH_CONFLICT} LIMIT 1`,
+  ).bind(spaceId, path).first<{ path: string }>();
+  return result?.path ?? null;
+}
+
+/**
  * Record a file's new version, already written to R2 at `file.r2Key`, and move the Space's
  * `totalBytes` by the size difference, in one batch. Nothing changes unless the Space and the
- * user both stay inside their limits, checked against what D1 holds at that moment, so racing
- * uploads can't overshoot. Returns the replaced version's R2 key (`null` for a new file), or
- * `{ ok: false }` when a limit would be passed.
+ * user stay inside their byte and file-count limits and no ancestor/descendant path conflicts,
+ * checked against what D1 holds at that moment so racing uploads can't overshoot or collide.
+ * Returns the replaced version's R2 key (`null` for a new file), or `{ ok: false, reason }`.
  */
 export async function putSpaceFile(
   env: Pick<Env, 'DB'>,
   userId: string,
   file: Omit<SpaceFileRow, 'updatedAt'>,
-): Promise<{ ok: true; replacedKey: string | null; updatedAt: Date } | { ok: false }> {
+): Promise<
+  | { ok: true; replacedKey: string | null; updatedAt: Date }
+  | { ok: false; reason: 'path_conflict'; conflictPath: string }
+  | { ok: false; reason: 'limit' }
+> {
   const now = Date.now();
   const oldSize = 'coalesce((SELECT size FROM space_file WHERE space_id = ?1 AND path = ?2), 0)';
-  const [old, grown, upserted] = await env.DB.batch([
+  const [old, conflict, grown, upserted] = await env.DB.batch([
     env.DB.prepare('SELECT r2_key FROM space_file WHERE space_id = ?1 AND path = ?2').bind(file.spaceId, file.path),
+    env.DB.prepare(`SELECT path FROM space_file WHERE space_id = ?1 AND ${PATH_CONFLICT} LIMIT 1`).bind(file.spaceId, file.path),
     env.DB.prepare(
       `UPDATE space SET total_bytes = total_bytes - ${oldSize} + ?3, updated_at = max(updated_at + 1, ?4)
        WHERE id = ?1 AND total_bytes - ${oldSize} + ?3 <= ?5
-         AND (SELECT sum(total_bytes) FROM space WHERE user_id = ?6) - ${oldSize} + ?3 <= ?7`,
-    ).bind(file.spaceId, file.path, file.size, now, SPACE_LIMITS.spaceBytes, userId, SPACE_LIMITS.userBytes),
+         AND (SELECT sum(total_bytes) FROM space WHERE user_id = ?6) - ${oldSize} + ?3 <= ?7
+         AND (EXISTS (SELECT 1 FROM space_file WHERE space_id = ?1 AND path = ?2)
+           OR (SELECT count(*) FROM space_file WHERE space_id = ?1) < ?8)
+         AND NOT EXISTS (SELECT 1 FROM space_file WHERE space_id = ?1 AND ${PATH_CONFLICT})`,
+    ).bind(file.spaceId, file.path, file.size, now, SPACE_LIMITS.spaceBytes, userId, SPACE_LIMITS.userBytes, SPACE_LIMITS.maxFiles),
     // `changes()` is the row count of the UPDATE just before: the file is recorded only if it passed.
     env.DB.prepare(
       `INSERT INTO space_file (space_id, path, size, content_type, sha256, r2_key, updated_at)
@@ -141,7 +166,11 @@ export async function putSpaceFile(
          sha256 = excluded.sha256, r2_key = excluded.r2_key, updated_at = excluded.updated_at`,
     ).bind(file.spaceId, file.path, file.size, file.contentType, file.sha256, file.r2Key, now),
   ]);
-  if (grown!.meta.changes !== 1 || upserted!.meta.changes !== 1) return { ok: false };
+  if (grown!.meta.changes !== 1 || upserted!.meta.changes !== 1) {
+    const conflictPath = (conflict!.results as { path: string }[])[0]?.path;
+    if (conflictPath) return { ok: false, reason: 'path_conflict', conflictPath };
+    return { ok: false, reason: 'limit' };
+  }
   const replaced = (old!.results as { r2_key: string }[])[0];
   return { ok: true, replacedKey: replaced?.r2_key ?? null, updatedAt: new Date(now) };
 }

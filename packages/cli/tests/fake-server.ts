@@ -340,6 +340,14 @@ export function fakeServer() {
       broadcast(space, { type: 'fileDeleted', path });
       return new Response(null, { status: 204 });
     }
+    for (const existing of space.files.keys()) {
+      if (existing !== path && (path.startsWith(`${existing}/`) || existing.startsWith(`${path}/`))) {
+        return fail('INVALID_PATH', `Path "${path}" conflicts with "${existing}".`);
+      }
+    }
+    if (!space.files.has(path) && space.files.size >= SPACE_LIMITS.maxFiles) {
+      return fail('SPACE_FULL', `A Space may hold at most ${SPACE_LIMITS.maxFiles} files.`);
+    }
     const bytes = new Uint8Array(await request.arrayBuffer());
     if (bytes.length > SPACE_LIMITS.fileBytes) return fail('FILE_TOO_LARGE');
     const hash = sha256(bytes);

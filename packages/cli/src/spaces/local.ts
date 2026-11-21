@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises';
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { normalizeSpacePath, SPACE_LIMITS } from '@agentsync/contract';
 import { CliError, EXIT } from '../exit.js';
 
@@ -50,8 +50,11 @@ export async function walkDirectory(root: string): Promise<{ files: LocalFile[];
   return { files: files.sort((a, b) => a.path.localeCompare(b.path)), skipped };
 }
 
-/** Fail before uploading anything the server would refuse for its size. */
+/** Fail before uploading anything the server would refuse for its file count or size. */
 export function checkLimits(files: readonly { path: string; size: number }[]): void {
+  if (files.length > SPACE_LIMITS.maxFiles) {
+    throw new CliError(`These are ${files.length} files; a Space holds at most ${SPACE_LIMITS.maxFiles} files.`, EXIT.error, { code: 'SPACE_FULL' });
+  }
   const big = files.find((file) => file.size > SPACE_LIMITS.fileBytes);
   if (big) {
     throw new CliError(`${big.path} is ${formatBytes(big.size)}; a Space file can be at most ${formatBytes(SPACE_LIMITS.fileBytes)}.`, EXIT.error, { code: 'FILE_TOO_LARGE' });
@@ -172,8 +175,29 @@ export async function writeLocal(root: string, remote: string, bytes: Uint8Array
   }
 }
 
-/** Remove `remote` under `root` if it is there (a symlink is removed, never followed). */
+/**
+ * Remove `remote` under `root` if it is there (a symlink is removed, never followed), then prune
+ * empty parent directories up to (never including) `root` so a later file at a former folder's
+ * path won't fail with `EISDIR`.
+ */
 export async function removeLocal(root: string, remote: string): Promise<void> {
   const file = await existing(root, remote);
-  if (file) await rm(file.target);
+  if (!file) return;
+  await rm(file.target);
+  const resolvedRoot = resolve(root);
+  let dir = dirname(file.target);
+  while (dir !== resolvedRoot) {
+    const rel = relative(resolvedRoot, dir);
+    if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) break;
+    const stat = await lstat(dir).catch(() => null);
+    if (!stat || stat.isSymbolicLink() || !stat.isDirectory()) break;
+    try {
+      await rmdir(dir);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EEXIST') break;
+      throw error;
+    }
+    dir = dirname(dir);
+  }
 }

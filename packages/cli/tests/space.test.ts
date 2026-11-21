@@ -206,4 +206,42 @@ describe('space pull --watch', () => {
     expect(result.stderr).toContain('the Space was deleted');
     expect(() => statSync(t.path('evil.txt'))).toThrow();
   });
+
+  it('prunes empty parent directories when a nested file is deleted so a file can replace the folder name', async () => {
+    const { t, id, url, token } = await withSpace({ 'foo/bar.txt': 'nested' });
+    vi.stubGlobal('WebSocket', t.server.WebSocket);
+    const out = t.path('out');
+    const watching = t.cli('space', 'pull', url, out, '--watch', '--json');
+    const open = () => t.server.state.sockets.filter((socket) => socket.open).length;
+    await vi.waitFor(() => expect(open()).toBe(1));
+    expect(tree(out)).toEqual({ 'foo/bar.txt': 'nested' });
+
+    // Remove foo/bar.txt (pruning empty out/foo/), then upload a file literally named `foo`.
+    expect((await t.cli('space', 'rm', id, 'foo/bar.txt', '--token', token)).code).toBe(0);
+    await vi.waitFor(() => expect(() => statSync(join(out, 'foo'))).toThrow());
+    // Root pull directory stays intact.
+    expect(statSync(out).isDirectory()).toBe(true);
+
+    t.write('foo', 'now a file');
+    expect((await t.cli('space', 'put', id, t.path('foo'), 'foo', '--token', token)).code).toBe(0);
+    await vi.waitFor(() => expect(tree(out)).toEqual({ foo: 'now a file' }));
+
+    await t.cli('space', 'delete', id, '--token', token, '--yes');
+    expect((await watching).code).toBe(0);
+  });
+});
+
+describe('space file count limit', () => {
+  it('fails fast before creating a Space when a directory exceeds SPACE_LIMITS.maxFiles', async () => {
+    const t = setup();
+    t.registered();
+    const dir = t.path('many');
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i <= SPACE_LIMITS.maxFiles; i++) writeFileSync(join(dir, `f-${i}.txt`), '');
+
+    const result = await t.cli('space', 'create', dir, '--title', 'Too Many', '--json');
+    expect(result.code).toBe(1);
+    expect(result.json()).toMatchObject({ ok: false, error: { code: 'SPACE_FULL' } });
+    expect(t.server.state.spaces.size).toBe(0);
+  });
 });

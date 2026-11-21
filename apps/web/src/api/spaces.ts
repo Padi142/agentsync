@@ -2,7 +2,8 @@ import {
   normalizeSpacePath, SPACE_ERROR_STATUS, shareTokenSchema, spaceStatus, spaceWriterUpdateSchema,
 } from '@agentsync/contract';
 import { Hono, type Context } from 'hono';
-import { getSpaceByShareToken, getSpaceByWriteToken } from '../db/spaces';
+import { getSession } from '../auth';
+import { getSpaceByShareToken, getSpaceByWriteToken, getUserSpace, type SpaceRow } from '../db/spaces';
 import type { Env } from '../env';
 import { isInertType } from '../spaces/content-type';
 import { acceptQuality } from '../spaces/routing';
@@ -71,8 +72,50 @@ async function shared(c: SpaceContext, token: string) {
   return row;
 }
 
+/**
+ * The signed-in owner's Space, in any status (active, private or expired). Refuses any
+ * `Authorization` header so Machine tokens and Write Tokens never reach owner routes.
+ */
+async function ownerSpace(c: SpaceContext): Promise<SpaceRow> {
+  if (c.req.header('Authorization') !== undefined) {
+    throw new SpaceError('UNAUTHORIZED', 'Use a browser session, not a token.');
+  }
+  const { user } = await getSession(c);
+  if (!user) throw new SpaceError('UNAUTHORIZED', 'Sign in to open this Space.');
+  const id = c.req.param('id');
+  const row = id ? await getUserSpace(c.env, user.id, id) : undefined;
+  if (!row) throw new SpaceError('NOT_FOUND', 'No such Space.');
+  return row;
+}
+
 const contentDisposition = (kind: 'inline' | 'attachment', path: string) =>
   `${kind}; filename*=UTF-8''${encodeURIComponent(path.slice(path.lastIndexOf('/') + 1))}`;
+
+async function rawFileResponse(c: SpaceContext, row: SpaceRow, path: string, { cors }: { cors: boolean }) {
+  const opened = await spacesService(c.env).openFile(row, path);
+  if (!opened) throw new SpaceError('NOT_FOUND', 'No such file.');
+  const { file, object } = opened;
+  const headers: Record<string, string> = {
+    'Content-Type': file.contentType,
+    'Content-Length': String(object.size),
+    ETag: object.httpEtag,
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': RAW_CSP,
+  };
+  if (cors) headers['Access-Control-Allow-Origin'] = '*';
+  if (!isInertType(file.contentType)) headers['Content-Disposition'] = contentDisposition('attachment', file.path);
+  return c.body(object.body, 200, headers);
+}
+
+async function zipResponse(c: SpaceContext, row: SpaceRow, { cors }: { cors: boolean }) {
+  const name = row.title.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'space';
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': contentDisposition('attachment', `${name}.zip`),
+  };
+  if (cors) headers['Access-Control-Allow-Origin'] = '*';
+  return c.body(await spacesService(c.env).zip(row), 200, headers);
+}
 
 // Write Token routes.
 
@@ -112,6 +155,18 @@ spacesApi.delete('/api/spaces/:id/files/*', async (c) => {
   return c.body(null, 204);
 });
 
+// Owner session routes (active, private, and expired Spaces; no CORS).
+
+spacesApi.get('/api/owner/spaces/:id/raw/*', async (c) => {
+  const row = await ownerSpace(c);
+  return rawFileResponse(c, row, pathIn(c, /^\/api\/owner\/spaces\/[^/]+\/raw\//), { cors: false });
+});
+
+spacesApi.get('/api/owner/spaces/:id/download.zip', async (c) => {
+  const row = await ownerSpace(c);
+  return zipResponse(c, row, { cors: false });
+});
+
 // Public Share Link routes.
 
 /** `/s/<token>` (by `Accept`: JSON, else the Markdown digest; browsers get the viewer before this), `.md`, `.json`. */
@@ -128,29 +183,12 @@ spacesApi.on('GET', ['/s/:name', '/s/:name/'], async (c) => {
 
 spacesApi.get('/s/:token/raw/*', async (c) => {
   const row = await shared(c, c.req.param('token'));
-  const opened = await spacesService(c.env).openFile(row, pathIn(c, /^\/s\/[^/]+\/raw\//));
-  if (!opened) throw new SpaceError('NOT_FOUND', 'No such file.');
-  const { file, object } = opened;
-  const headers: Record<string, string> = {
-    'Content-Type': file.contentType,
-    'Content-Length': String(object.size),
-    ETag: object.httpEtag,
-    'Access-Control-Allow-Origin': '*',
-    'X-Content-Type-Options': 'nosniff',
-    'Content-Security-Policy': RAW_CSP,
-  };
-  if (!isInertType(file.contentType)) headers['Content-Disposition'] = contentDisposition('attachment', file.path);
-  return c.body(object.body, 200, headers);
+  return rawFileResponse(c, row, pathIn(c, /^\/s\/[^/]+\/raw\//), { cors: true });
 });
 
 spacesApi.get('/s/:token/download.zip', async (c) => {
   const row = await shared(c, c.req.param('token'));
-  const name = row.title.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'space';
-  return c.body(await spacesService(c.env).zip(row), 200, {
-    'Content-Type': 'application/zip',
-    'Content-Disposition': contentDisposition('attachment', `${name}.zip`),
-    'Access-Control-Allow-Origin': '*',
-  });
+  return zipResponse(c, row, { cors: true });
 });
 
 /**

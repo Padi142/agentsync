@@ -3,13 +3,14 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { SPACE_LIMITS, SPACE_PUBLIC_ROUTES, SPACE_WRITER_ROUTES, parseShareUrl, type CreatedSpace } from '@agentsync/contract';
+import { SPACE_LIMITS, SPACE_OWNER_ROUTES, SPACE_PUBLIC_ROUTES, SPACE_WRITER_ROUTES, parseShareUrl, type CreatedSpace } from '@agentsync/contract';
 import type { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api';
 import { hashSecret } from '../src/db/machines';
 import { deleteSpaceRow, getSpaceByWriteToken } from '../src/db/spaces';
 import type { Env } from '../src/env';
+import { spacesRoute } from '../src/spaces/routing';
 import { spacesService } from '../src/spaces/service';
 import { createTestEnv, fakeSpaceHub, fakeWorkOSDevice, origin, resetDb, rpcClient } from './helpers';
 
@@ -571,5 +572,114 @@ describe('failures part way through', () => {
     await browser().spaces.update({ spaceId: space.id, expires: 'never' });
     const renamed = await spacesService(env).update(stale, { title: 'Renamed' });
     expect(renamed).toMatchObject({ title: 'Renamed', expiresAt: null });
+  });
+});
+
+describe('owner raw and zip routes', () => {
+  const ownerCookie = (who: Who = 'alice') => ({ Cookie: `wos-session=${identities[who].id}` });
+
+  it('routes /api/owner/spaces/* to the API', () => {
+    expect(spacesRoute('/api/owner/spaces/s1/raw/index.html', 'text/html')).toBe('api');
+    expect(spacesRoute('/api/owner/spaces/s1/download.zip', 'text/html')).toBe('api');
+  });
+
+  it('lets the signed-in owner read raw files and ZIP for active, private, and expired Spaces with hardened headers', async () => {
+    const { space, writeToken, machineToken } = await createSpace('alice', 'Quarterly Report');
+    expect((await put(space.id, 'index.html', writeToken, '<h1>Secret</h1>')).status).toBe(200);
+    expect((await put(space.id, 'notes/readme.txt', writeToken, 'hello')).status).toBe(200);
+
+    for (const state of ['active', 'private', 'expired'] as const) {
+      if (state === 'private') await browser('alice').spaces.update({ spaceId: space.id, private: true });
+      if (state === 'expired') {
+        await browser('alice').spaces.update({ spaceId: space.id, private: false });
+        await setExpiresAt(space.id, Date.now() - DAY_MS);
+      }
+      const html = await call('GET', SPACE_OWNER_ROUTES.raw(space.id, 'index.html'), { headers: ownerCookie('alice') });
+      expect([state, html.status]).toEqual([state, 200]);
+      expect(await html.text()).toBe('<h1>Secret</h1>');
+      expect(html.headers.get('Content-Security-Policy')).toBe("sandbox; default-src 'none'");
+      expect(html.headers.get('X-Content-Type-Options')).toBe('nosniff');
+      expect(html.headers.get('Content-Disposition')).toContain('attachment');
+      expect(html.headers.get('Cache-Control')).toBe('private, no-store');
+      expect(html.headers.get('Access-Control-Allow-Origin')).toBeNull();
+
+      const txt = await call('GET', SPACE_OWNER_ROUTES.raw(space.id, 'notes/readme.txt'), { headers: ownerCookie('alice') });
+      expect(txt.status).toBe(200);
+      expect(await txt.text()).toBe('hello');
+      expect(txt.headers.get('Content-Disposition')).toBeNull();
+
+      const zip = await call('GET', SPACE_OWNER_ROUTES.zip(space.id), { headers: ownerCookie('alice') });
+      expect([state, zip.status]).toEqual([state, 200]);
+      expect(zip.headers.get('Content-Type')).toBe('application/zip');
+      expect(zip.headers.get('Access-Control-Allow-Origin')).toBeNull();
+      expect((await zip.arrayBuffer()).byteLength).toBeGreaterThan(0);
+    }
+
+    // Another user gets 404; unauthenticated, Machine token, and Write Token all get 401 (even alongside cookies).
+    expect((await call('GET', SPACE_OWNER_ROUTES.raw(space.id, 'index.html'), { headers: ownerCookie('bob') })).status).toBe(404);
+    expect((await call('GET', SPACE_OWNER_ROUTES.zip(space.id), { headers: ownerCookie('bob') })).status).toBe(404);
+    expect((await call('GET', SPACE_OWNER_ROUTES.raw(space.id, 'index.html'))).status).toBe(401);
+    expect((await call('GET', SPACE_OWNER_ROUTES.raw(space.id, 'index.html'), { token: machineToken })).status).toBe(401);
+    expect((await call('GET', SPACE_OWNER_ROUTES.raw(space.id, 'index.html'), { token: writeToken })).status).toBe(401);
+    expect((await call('GET', SPACE_OWNER_ROUTES.raw(space.id, 'index.html'), { token: machineToken, headers: ownerCookie('alice') })).status).toBe(401);
+  });
+});
+
+describe('file count limit and path-prefix collisions', () => {
+  it('enforces SPACE_LIMITS.maxFiles on new paths while allowing overwrites at the limit', async () => {
+    const { space, writeToken } = await createSpace();
+    const now = Date.now();
+    const sha = '0'.repeat(64);
+    // Seed maxFiles rows in one SQL statement so the test runs in milliseconds.
+    await env.DB.prepare(
+      `WITH RECURSIVE seq(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM seq WHERE n + 1 < ?2)
+       INSERT INTO space_file (space_id, path, size, content_type, sha256, r2_key, updated_at)
+       SELECT ?1, 'f-' || n || '.txt', 0, 'text/plain; charset=utf-8', ?3, ?1 || '/seed-' || n, ?4 FROM seq`,
+    ).bind(space.id, SPACE_LIMITS.maxFiles, sha, now).run();
+
+    const over = await put(space.id, 'one-too-many.txt', writeToken, 'nope');
+    expect(over.status).toBe(413);
+    expect(await errorCode(over)).toBe('SPACE_FULL');
+    expect(await objectKeys(`${space.id}/`)).toEqual([]);
+
+    // Replacing an existing file at maxFiles still succeeds.
+    const replace = await put(space.id, 'f-0.txt', writeToken, 'updated');
+    expect(replace.status).toBe(200);
+    expect(await objectKeys(`${space.id}/`)).toHaveLength(1);
+  });
+
+  it('rejects ancestor/descendant path collisions without LIKE wildcard false positives and leaves no orphan blobs', async () => {
+    const { space, writeToken } = await createSpace();
+    expect((await put(space.id, 'a', writeToken, 'file')).status).toBe(200);
+
+    // Ancestor conflict: a already exists as a file, so a/b and a/b/c must fail.
+    for (const blocked of ['a/b', 'a/b/c']) {
+      const res = await put(space.id, blocked, writeToken, 'nested');
+      expect([blocked, res.status]).toEqual([blocked, 422]);
+      expect(await errorCode(res)).toBe('INVALID_PATH');
+    }
+
+    // Sibling names that share a string prefix (not a directory boundary) must succeed.
+    expect((await put(space.id, 'ab/c', writeToken, 'ok')).status).toBe(200);
+    expect((await put(space.id, 'a_b', writeToken, 'ok')).status).toBe(200);
+
+    // Descendant conflict: ab/c exists, so ab must fail.
+    const descendant = await put(space.id, 'ab', writeToken, 'file');
+    expect(descendant.status).toBe(422);
+    expect(await errorCode(descendant)).toBe('INVALID_PATH');
+
+    // Wildcard characters % and _ must be treated literally.
+    expect((await put(space.id, 'a%', writeToken, 'pct')).status).toBe(200);
+    expect((await put(space.id, 'a_x', writeToken, 'under')).status).toBe(200);
+    const pctChild = await put(space.id, 'a%/child', writeToken, 'bad');
+    expect(pctChild.status).toBe(422);
+    expect(await errorCode(pctChild)).toBe('INVALID_PATH');
+
+    // After deleting `a`, `a/b` can be created.
+    expect((await call('DELETE', SPACE_WRITER_ROUTES.file(space.id, 'a'), { token: writeToken })).status).toBe(204);
+    expect((await put(space.id, 'a/b', writeToken, 'now ok')).status).toBe(200);
+
+    // Exactly the 5 live files should exist in R2 (no leaked orphans from rejected uploads).
+    expect(await objectKeys(`${space.id}/`)).toHaveLength(5);
   });
 });

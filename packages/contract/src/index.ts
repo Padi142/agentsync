@@ -388,6 +388,8 @@ export const SPACE_LIMITS = {
   fileBytes: 25 * 1024 * 1024,
   spaceBytes: 100 * 1024 * 1024,
   userBytes: 500 * 1024 * 1024,
+  /** Maximum files in one Space (keeps R2 deletion to one page and stays below ZIP's 65,535 limit). */
+  maxFiles: 500,
   /** Days a new Space's Share Link works for, unless `expires` says otherwise. */
   defaultDays: 7,
   /** Days an expired Space stays in its private grace period before it is purged. */
@@ -575,6 +577,16 @@ export const SPACE_PUBLIC_ROUTES = {
   raw: (shareToken: string, path: string) => `/s/${shareToken}/raw/${path.split('/').map(encodeURIComponent).join('/')}`,
   zip: (shareToken: string) => `/s/${shareToken}/download.zip`,
   ws: (shareToken: string) => `/s/${shareToken}/ws`,
+} as const;
+
+/**
+ * Session-authenticated owner routes for reading files of any owned Space (active, private or expired).
+ * They read only the browser session cookie, never a Machine token or Write Token.
+ */
+export const SPACE_OWNER_ROUTES = {
+  raw: (spaceId: string, path: string) =>
+    `/api/owner/spaces/${encodeURIComponent(spaceId)}/raw/${path.split('/').map(encodeURIComponent).join('/')}`,
+  zip: (spaceId: string) => `/api/owner/spaces/${encodeURIComponent(spaceId)}/download.zip`,
 } as const;
 
 /** A Share Link token: 32 base64url characters. */

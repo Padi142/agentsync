@@ -1,14 +1,21 @@
+// @vitest-environment jsdom
+import { SPACE_OWNER_ROUTES, type SpaceDetail } from '@agentsync/contract';
+import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { update, rotateLink } = vi.hoisted(() => ({ update: vi.fn(), rotateLink: vi.fn() }));
 vi.mock('../src/rpc', () => ({ rpc: { spaces: { update, rotateLink, delete: vi.fn() } } }));
 
 const { extendExpiry, runSpaceAction, spaceActions } = await import('../src/components/spaces/actions');
+const { SpaceFilesSection } = await import('../src/routes/_app/spaces.$spaceId');
 
 const DAY = 24 * 60 * 60 * 1000;
 const now = new Date('2026-11-21T12:00:00Z');
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
 
 describe('extendExpiry', () => {
   it('adds 7 days to what is left, rounding the remainder up to whole days', () => {
@@ -53,4 +60,47 @@ it('revives an expired Space at its link by setting an expiry, and turns the lin
     { spaceId: 's1', private: false },
   ]);
   expect(rotateLink).toHaveBeenCalledWith({ spaceId: 's1' });
+});
+
+describe('SpaceFilesSection', () => {
+  const token = 'a'.repeat(32);
+  const makeSpace = (status: SpaceDetail['status'], empty = false): Pick<SpaceDetail, 'id' | 'status' | 'shareUrl' | 'fileCount' | 'totalBytes' | 'files'> => ({
+    id: 'space-1',
+    status,
+    shareUrl: `https://agentsync.test/s/${token}`,
+    fileCount: empty ? 0 : 1,
+    totalBytes: empty ? 0 : 42,
+    files: empty ? [] : [{
+      path: 'reports/summary.html',
+      size: 42,
+      contentType: 'text/html; charset=utf-8',
+      sha256: '0'.repeat(64),
+      updatedAt: now,
+    }],
+  });
+
+  it('links to the public viewer when active and still offers owner downloads', () => {
+    const { getByRole, getByTitle } = render(<SpaceFilesSection space={makeSpace('active')} removing={null} onRemove={vi.fn()} />);
+    expect(getByTitle('Open in the viewer').getAttribute('href')).toBe(`https://agentsync.test/s/${token}?file=reports%2Fsummary.html`);
+    expect(getByRole('link', { name: 'Download reports/summary.html' }).getAttribute('href'))
+      .toBe(SPACE_OWNER_ROUTES.raw('space-1', 'reports/summary.html'));
+    expect(getByRole('link', { name: 'Download ZIP' }).getAttribute('href')).toBe(SPACE_OWNER_ROUTES.zip('space-1'));
+  });
+
+  it('links private and expired Space files and ZIP through the owner routes', () => {
+    for (const status of ['private', 'expired'] as const) {
+      cleanup();
+      const { getByRole, getByTitle } = render(<SpaceFilesSection space={makeSpace(status)} removing={null} onRemove={vi.fn()} />);
+      expect(getByTitle('Open file').getAttribute('href')).toBe(SPACE_OWNER_ROUTES.raw('space-1', 'reports/summary.html'));
+      expect(getByRole('link', { name: 'Download reports/summary.html' }).getAttribute('href'))
+        .toBe(SPACE_OWNER_ROUTES.raw('space-1', 'reports/summary.html'));
+      expect(getByRole('link', { name: 'Download ZIP' }).getAttribute('href')).toBe(SPACE_OWNER_ROUTES.zip('space-1'));
+    }
+  });
+
+  it('omits Download ZIP when the Space has no files', () => {
+    const { queryByRole, getByText } = render(<SpaceFilesSection space={makeSpace('private', true)} removing={null} onRemove={vi.fn()} />);
+    expect(queryByRole('link', { name: 'Download ZIP' })).toBeNull();
+    expect(getByText('No files yet.')).toBeTruthy();
+  });
 });

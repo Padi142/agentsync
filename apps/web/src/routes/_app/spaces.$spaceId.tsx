@@ -1,4 +1,4 @@
-import { parseShareUrl, type SpaceFile } from '@agentsync/contract';
+import { parseShareUrl, SPACE_OWNER_ROUTES, type SpaceDetail, type SpaceFile } from '@agentsync/contract';
 import { safe } from '@orpc/client';
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { useState } from 'react';
@@ -16,6 +16,64 @@ export const Route = createFileRoute('/_app/spaces/$spaceId')({
   loader: ({ params: { spaceId } }) => rpc.spaces.get({ spaceId }),
   component: SpacePage,
 });
+
+/**
+ * The owner's file list for a Space in any status (active, private or expired). Active Spaces open
+ * in the viewer; private and expired Spaces open through the session-authenticated owner raw route,
+ * and every Space offers per-file and ZIP downloads.
+ */
+export function SpaceFilesSection({ space, removing, onRemove }: {
+  space: Pick<SpaceDetail, 'id' | 'status' | 'shareUrl' | 'fileCount' | 'totalBytes' | 'files'>;
+  removing: string | null;
+  onRemove: (file: SpaceFile) => void;
+}) {
+  const link = space.status === 'active' ? parseShareUrl(space.shareUrl) : null;
+  return (
+    <section className="section">
+      <div className="section-head sp-files-head">
+        <div>
+          <h2>Files</h2>
+          <p>{space.fileCount === 1 ? '1 file' : `${space.fileCount} files`} · {formatBytes(space.totalBytes)}</p>
+        </div>
+        {space.files.length ? (
+          <a className="button secondary small" href={SPACE_OWNER_ROUTES.zip(space.id)} download>
+            <SpaceIcon name="download" />Download ZIP
+          </a>
+        ) : null}
+      </div>
+      {space.files.length ? (
+        <ul className="sp-files" aria-label="Files">
+          {space.files.map((file) => {
+            const ownerRaw = SPACE_OWNER_ROUTES.raw(space.id, file.path);
+            const openHref = link ? viewerUrl(link.origin, link.shareToken, file.path) : ownerRaw;
+            const fileName = file.path.slice(file.path.lastIndexOf('/') + 1);
+            return (
+              <li key={file.path}>
+                <a className="sp-file-path" href={openHref} target="_blank" rel="noreferrer"
+                  title={link ? 'Open in the viewer' : 'Open file'}><code>{file.path}</code></a>
+                <span className="sp-file-meta">
+                  <span>{formatBytes(file.size)}</span>
+                  <span className="sp-file-type">{file.contentType}</span>
+                  <Ago date={file.updatedAt} />
+                </span>
+                <span className="sp-file-actions">
+                  <a className="icon-button" href={ownerRaw} download={fileName}
+                    aria-label={`Download ${file.path}`} title="Download file">
+                    <SpaceIcon name="download" />
+                  </a>
+                  <button type="button" className="icon-button" aria-label={`Delete ${file.path}`} title="Delete file"
+                    disabled={removing !== null} onClick={() => onRemove(file)}>
+                    <SpaceIcon name="trash" />
+                  </button>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : <p className="muted">No files yet.</p>}
+    </section>
+  );
+}
 
 function SpacePage() {
   const space = Route.useLoaderData();
@@ -52,33 +110,7 @@ function SpacePage() {
       </div>
 
       <div className="machine-layout">
-        <section className="section">
-          <div className="section-head">
-            <h2>Files</h2>
-            <p>{space.fileCount === 1 ? '1 file' : `${space.fileCount} files`} · {formatBytes(space.totalBytes)}</p>
-          </div>
-          {space.files.length ? (
-            <ul className="sp-files" aria-label="Files">
-              {space.files.map((file) => (
-                <li key={file.path}>
-                  {link ? (
-                    <a className="sp-file-path" href={viewerUrl(link.origin, link.shareToken, file.path)}
-                      target="_blank" rel="noreferrer" title="Open in the viewer"><code>{file.path}</code></a>
-                  ) : <code className="sp-file-path">{file.path}</code>}
-                  <span className="sp-file-meta">
-                    <span>{formatBytes(file.size)}</span>
-                    <span className="sp-file-type">{file.contentType}</span>
-                    <Ago date={file.updatedAt} />
-                  </span>
-                  <button type="button" className="icon-button" aria-label={`Delete ${file.path}`} title="Delete file"
-                    disabled={removing !== null} onClick={() => removeFile(file)}>
-                    <SpaceIcon name="trash" />
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : <p className="muted">No files yet.</p>}
-        </section>
+        <SpaceFilesSection space={space} removing={removing} onRemove={removeFile} />
 
         <aside className="aside">
           <section>

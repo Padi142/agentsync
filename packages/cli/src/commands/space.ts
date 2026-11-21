@@ -360,14 +360,15 @@ async function pull(ctx: Context, flags: SpaceFlags): Promise<Outcome> {
     // Check every path before writing any.
     for (const file of space.files) localPath(root, file.path);
     const before = new Set(known);
+    // Prune removed files (and their empty folders) first so a file replacing a removed folder won't hit EISDIR.
+    if (prune) {
+      const now = new Set(space.files.map((file) => file.path));
+      for (const path of before) if (!now.has(path)) await remove(path);
+    }
     const fresh = await inPool(space.files, fetchFile);
     for (const [index, file] of space.files.entries()) {
       if (fresh[index]) ctx.detail(`Downloaded ${file.path}`);
       else if (!prune) unchanged.push(file.path);
-    }
-    if (prune) {
-      const now = new Set(space.files.map((file) => file.path));
-      for (const path of before) if (!now.has(path)) await remove(path);
     }
     return { space, fresh: fresh.filter(Boolean).length };
   };

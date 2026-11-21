@@ -40,7 +40,7 @@ Works with any Share Link, without an account or a registered Machine.
 
 ## Limits and lifecycle
 
-- 25 MB per file, 100 MB per Space, 500 MB per account.
+- 25 MB per file, 100 MB and 500 files per Space, 500 MB per account.
 - A Share Link works 7 days by default; `--expires <n>d` sets up to 365 days, `never` makes it permanent.
 - Once it expires, the link stops working and writes fail with `SPACE_EXPIRED`. Only the owner can revive it, signed in at `<server>/spaces`, which brings back the same link. 30 days after expiring, the Space is deleted.
 - In `/spaces` the owner can also extend, make a Space permanent, mark it private (link off, Write Token still works, never deleted automatically), rotate its link, and delete it or single files.

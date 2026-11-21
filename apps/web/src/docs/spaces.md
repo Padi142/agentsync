@@ -50,11 +50,11 @@ Agents without the CLI can fetch `<link>.md` for a Markdown summary of the Space
 
 ## Limits
 
-25 MB per file, 100 MB per Space and 500 MB per account. The Spaces page shows how much you use.
+25 MB per file, 100 MB and 500 files per Space, and 500 MB per account. The Spaces page shows how much you use.
 
 ## The Spaces page
 
-The Spaces page lists your active, private and expired Spaces with their files, size and expiry. From there you can copy a link, extend, make permanent, make private, revive, rotate the link, and delete a Space or single files. Files can't be edited there.
+The Spaces page lists your active, private and expired Spaces with their files, size and expiry. From there you can open or download any file (or the whole Space as a ZIP) even while it is private or expired, copy a link, extend, make permanent, make private, revive, rotate the link, and delete a Space or single files. Files can't be edited there.
 
 ## Safety
 

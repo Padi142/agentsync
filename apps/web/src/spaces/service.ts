@@ -5,8 +5,8 @@ import {
 } from '@agentsync/contract';
 import { getAppOrigin } from '../auth';
 import {
-  countSpaceFiles, createSpace, deleteSpaceFile, deleteSpaceRow, getSpaceFile, getUserSpace, listSpaceFiles, listUserSpaces,
-  newShareToken, purgeCutoff, putSpaceFile, spacesToPurge, updateSpaceRow, userUsedBytes,
+  countSpaceFiles, createSpace, deleteSpaceFile, deleteSpaceRow, findSpacePathConflict, getSpaceFile, getUserSpace,
+  listSpaceFiles, listUserSpaces, newShareToken, purgeCutoff, putSpaceFile, spacesToPurge, updateSpaceRow, userUsedBytes,
   type SpaceFileRow, type SpaceRow,
 } from '../db/spaces';
 import type { Env } from '../env';
@@ -189,7 +189,18 @@ export function spacesService(env: Env) {
       path: string,
       upload: { body: ReadableStream<Uint8Array> | null; contentType: string | null; contentLength: number | null; sha256: string | null },
     ): Promise<SpaceFile> {
-      const [existing, used] = await Promise.all([getSpaceFile(env, row.id, path), userUsedBytes(env, row.userId)]);
+      const [existing, used, fileCount, conflictPath] = await Promise.all([
+        getSpaceFile(env, row.id, path),
+        userUsedBytes(env, row.userId),
+        countSpaceFiles(env, row.id),
+        findSpacePathConflict(env, row.id, path),
+      ]);
+      if (conflictPath) {
+        throw new SpaceError('INVALID_PATH', `Path "${path}" conflicts with existing file "${conflictPath}" in this Space.`);
+      }
+      if (!existing && fileCount >= SPACE_LIMITS.maxFiles) {
+        throw new SpaceError('SPACE_FULL', `A Space may hold at most ${SPACE_LIMITS.maxFiles} files.`);
+      }
       const oldSize = existing?.size ?? 0;
       const room = {
         file: SPACE_LIMITS.fileBytes,
@@ -228,11 +239,17 @@ export function spacesService(env: Env) {
       }
       if (!stored.ok) {
         await discard(r2Key);
+        if (stored.reason === 'path_conflict') {
+          throw new SpaceError('INVALID_PATH', `Path "${path}" conflicts with existing file "${stored.conflictPath}" in this Space.`);
+        }
         // Another upload took the room meanwhile, or the Space is gone: say which limit it hits now.
-        const [fresh, freshFile, nowUsed] = await Promise.all([
-          getUserSpace(env, row.userId, row.id), getSpaceFile(env, row.id, path), userUsedBytes(env, row.userId),
+        const [fresh, freshFile, nowUsed, nowFiles] = await Promise.all([
+          getUserSpace(env, row.userId, row.id), getSpaceFile(env, row.id, path), userUsedBytes(env, row.userId), countSpaceFiles(env, row.id),
         ]);
         if (!fresh) throw new SpaceError('NOT_FOUND', 'No such Space.');
+        if (!freshFile && nowFiles >= SPACE_LIMITS.maxFiles) {
+          throw new SpaceError('SPACE_FULL', `A Space may hold at most ${SPACE_LIMITS.maxFiles} files.`);
+        }
         room.space = SPACE_LIMITS.spaceBytes - (fresh.totalBytes - (freshFile?.size ?? 0));
         room.user = SPACE_LIMITS.userBytes - (nowUsed - (freshFile?.size ?? 0));
         throw limitError(bytes.byteLength) ?? new SpaceError('QUOTA_EXCEEDED', 'A storage limit was reached.');

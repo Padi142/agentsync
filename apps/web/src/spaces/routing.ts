@@ -12,14 +12,17 @@ export function acceptQuality(accept: string, types: string[]) {
 }
 
 /**
- * Whether the Worker answers a request under `/s/*` or `/api/spaces/*` itself (`api`) or leaves it to
- * TanStack (`app`), or it isn't a Spaces path at all (`null`). Only a browser opening a Share Link
- * (`/s/<token>`, with or without a trailing `/`, no suffix) that asks for `text/html` more than for
- * Markdown or JSON gets the web viewer, the SPA route `/s/$shareToken`; agents asking the same URL for
- * Markdown or JSON, and every suffix and subpath, get the API.
+ * Whether the Worker answers a request under `/s/*`, `/api/spaces/*` or `/api/owner/spaces/*` itself
+ * (`api`) or leaves it to TanStack (`app`), or it isn't a Spaces path at all (`null`). Only a browser
+ * opening a Share Link (`/s/<token>`, with or without a trailing `/`, no suffix) that asks for
+ * `text/html` more than for Markdown or JSON gets the web viewer, the SPA route `/s/$shareToken`;
+ * agents asking the same URL for Markdown or JSON, and every suffix and subpath, get the API.
  */
 export function spacesRoute(pathname: string, accept: string | null): 'api' | 'app' | null {
-  if (pathname === '/api/spaces' || pathname.startsWith('/api/spaces/')) return 'api';
+  if (pathname === '/api/spaces' || pathname.startsWith('/api/spaces/') ||
+      pathname === '/api/owner/spaces' || pathname.startsWith('/api/owner/spaces/')) {
+    return 'api';
+  }
   if (!pathname.startsWith('/s/')) return null;
   if (!/^\/s\/[^/.]+\/?$/.test(pathname)) return 'api';
   const html = acceptQuality(accept ?? '', ['text/html']);
