@@ -7,11 +7,12 @@ The web app uses TanStack Start, WorkOS AuthKit, Cloudflare Workers + D1,
 Drizzle, and a typed oRPC API that implements `@agentsync/contract`: the
 Template, Machines and their Variables (with revision history), Conflicts, and
 Machine registration through the WorkOS device flow, and Skills (agent skills from public GitHub
-repositories, pinned to a commit; see `docs/adr/0002-…`). The `agentsync` CLI
+repositories, pinned to a commit; see `docs/adr/0002-…`), and Spaces (live-updating files shared
+through a Share Link; see [Spaces](#spaces)). The `agentsync` CLI
 (`packages/cli`) Renders the Template into each agent's Global Instructions and keeps
 them current from Claude Code and Codex `SessionStart` hooks, a pi extension and an OpenCode plugin.
 
-The web UI has four sections. **Template** edits the Template (live syntax
+The web UI has five sections. **Template** edits the Template (live syntax
 errors, Cmd/Ctrl+S) beside a per-Machine, per-agent preview that renders the
 Markdown and underlines text that came from a Variable, with History (rollback) and
 Conflicts (`/conflicts`) as views of it. **Machines** manages each Machine's nickname,
@@ -20,6 +21,8 @@ gives the install command and agent setup prompt (from `packages/cli/setup-promp
 **Skills** (`/skills`) adds skills from skills.sh, pins them, assigns them to Machines, and
 shows updates with their audits and changed files, each Machine's state, and skills found on
 Machines.
+**Spaces** (`/spaces`) lists the account's Spaces and manages their lifecycle; the public viewer is
+`/s/<share-token>`.
 **Docs** (`/docs`, public) is written as Markdown in `apps/web/src/docs/`. Pages load
 their data in the browser through the oRPC client (the root route sets
 `ssr: false`); the server renders only the document shell. Device approval
@@ -28,7 +31,7 @@ needs no page here: WorkOS AuthKit hosts the `verification_uri`.
 ## Layout
 
 - `apps/web` — React web UI, Hono API, WorkOS authentication, and D1 schema/migrations.
-- `packages/cli` — the `agentsync` CLI, its hooks and agent skill. See its README.
+- `packages/cli` — the `agentsync` CLI, its hooks and agent skills. See its README.
 - `packages/contract` — the oRPC API contract. See its README for the auth kind of each procedure.
 - `packages/template` — the Template Expression grammar: Render, validate, and inspect Templates.
 
@@ -137,6 +140,57 @@ or create an account through WorkOS. The legacy account/session/verification
 tables are retained for migration safety, but no runtime code reads them.
 Passwords are not imported into WorkOS.
 
+## Spaces
+
+A Space is a set of files an agent shares through an unguessable Share Link, live-updating and
+readable without an account (terms in `GLOSSARY.md`). Blobs live in the R2 bucket `agentsync-spaces`
+under `<spaceId>/<file id>`, metadata in D1 (`space`, `space_file`; migration `0008_spaces.sql`),
+and live updates fan out through one `SpaceHub` Durable Object per Space over hibernating
+WebSockets.
+
+**Trust model** (`docs/adr/0003-…`, `docs/adr/0004-…`):
+
+- A Machine token can only create a Space (`spaces.create`). The answer carries the Space's Write
+  Token (`asw_…`) once; only its SHA-256 is stored, and the CLI never saves it, so write access
+  stays with the creating session. Another session on the same Machine, or anyone with the Share
+  Link, can only read.
+- Every file write takes the Write Token, and nothing else: no Machine token, no cookie.
+- Owner management (list, extend, make permanent, revive, make private, rotate the Share Link,
+  delete a Space or a file) is session-only, in `/spaces`. The browser cannot edit file contents.
+- Untrusted HTML previews render in `<iframe sandbox="allow-scripts">` without
+  `allow-same-origin`, so scripts run in an opaque origin that can't read the session cookie or
+  call `/rpc/*`. Relative assets resolve to the CORS-enabled raw routes through an injected
+  `<base>`. Raw HTML, SVG and anything not obviously inert download as attachments with
+  `Content-Security-Policy: sandbox; default-src 'none'` and `nosniff`.
+- Every path, on upload, raw fetch, ZIP and `pull`, goes through the contract's
+  `normalizeSpacePath`: relative, `/`-separated, no `..`, leading `/` or control characters.
+
+**Routes**:
+
+- `/rpc/spaces.*` — `create` (Machine token), `list`, `get`, `update`, `rotateLink`, `delete`,
+  `deleteFile` (session).
+- `GET|PATCH|DELETE /api/spaces/:id` and `PUT|DELETE /api/spaces/:id/files/<path>` — Write Token
+  as `Authorization: Bearer`. `PUT` takes the raw body with its `Content-Type`, and verifies an
+  optional `X-Content-SHA256`. Writes work while a Space is active or private and fail with
+  `SPACE_EXPIRED` (410) once it expired; `GET` works in any state. A wrong token and an unknown ID
+  answer the same.
+- `/s/<token>` — the viewer for `Accept: text/html`, a Markdown digest for `text/markdown` (or
+  `/s/<token>.md`), JSON for `application/json` (or `/s/<token>.json`). `/s/<token>/raw/<path>`
+  streams a file, `/s/<token>/download.zip` streams a store-mode ZIP, `/s/<token>/ws` upgrades to
+  the Space's `SpaceHub`. They serve active Spaces only: unknown or private is 404, expired 410.
+
+Errors on the HTTP routes are `{ error: { code, message } }` (`spaceErrorSchema`).
+
+**Limits**: 25 MB per file, 100 MB per Space, 500 MB per user (`SPACE_LIMITS`).
+
+**Lifecycle**: a Share Link works 7 days by default, up to 365 days, or forever. Status is derived
+from `isPrivate` and `expiresAt`, never stored: `active`, `expired` (owner-only for a 30-day grace
+period; reviving it keeps the same Share Link) or `private` (link off, never purged automatically).
+The 10-minute cron also purges Spaces 30 days past expiry, and their R2 prefix.
+
+Locally, `pnpm dev` and the tests simulate R2 and the Durable Object; there is nothing to set up.
+Deploying needs a one-time setup; see [Deployment](#deployment).
+
 ## Verification
 
 ```sh
@@ -170,8 +224,18 @@ account (`pnpm --filter @agentsync/web exec wrangler login`, or set
 pnpm run deploy
 ```
 
+Spaces need a one-time setup on the Cloudflare account before the first deploy that includes them.
+Enable R2 on the account (Cloudflare dashboard → R2), then create the bucket:
+
+```sh
+pnpm --filter @agentsync/web exec wrangler r2 bucket create agentsync-spaces
+```
+
+The `SpaceHub` Durable Object needs nothing by hand: its migration (`v1` in `wrangler.jsonc`) ships
+with `pnpm run deploy`.
+
 A cron trigger runs the Skills update check every 10 minutes (`triggers` in `wrangler.jsonc`;
-each run checks the few Skills not checked for a day). Under `pnpm dev`, run it with
+each run checks the few Skills not checked for a day) and purges Spaces past their grace period. Under `pnpm dev`, run it with
 `curl "http://<host>:<port>/cdn-cgi/handler/scheduled?cron=*/10+*+*+*+*"`.
 
 Remote migrations target the deployed database; local development continues to

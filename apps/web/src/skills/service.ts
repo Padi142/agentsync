@@ -1,5 +1,5 @@
 import {
-  RESERVED_SKILL_NAME, repoNameSchema, skillNameSchema,
+  RESERVED_SKILL_NAMES, repoNameSchema, skillNameSchema,
   type Audits, type FoundSkill, type MachineSkillState, type Pin, type PinMove, type Skill, type SkillCandidate,
   type SkillDiff, type SkillsOverview, type DesiredSkill, type ScannedSkill, type SkillSyncResult, type SkillAssignment,
 } from '@agentsync/contract';
@@ -283,7 +283,7 @@ export function skillsService(worker: Env) {
    * has (a Found Skill), so nothing is reinstalled: only a version from the default branch's own history counts.
    */
   async function addAt(userId: string, at: RepoHead, input: { repo: string; name: string; machineId?: string | undefined }, audits: Audits | null): Promise<SkillRow> {
-    if (input.name === RESERVED_SKILL_NAME) throw new NameTakenError(`"${RESERVED_SKILL_NAME}" is the CLI's own skill.`);
+    if (RESERVED_SKILL_NAMES.includes(input.name)) throw new NameTakenError(`"${input.name}" is one of the CLI's own skills.`);
     const { repo, path, version: latest, history } = await resolveLatest(at, input.name);
     let pin = latest;
     if (input.machineId !== undefined) {
@@ -397,7 +397,7 @@ export function skillsService(worker: Env) {
       const local = new Map<string, Extract<FoundSkill, { kind: 'local' }>>();
       for (const machine of machines) {
         for (const item of reports.get(machine.id)?.scan ?? []) {
-          if (item.managed || names.has(item.name) || item.name === RESERVED_SKILL_NAME) continue;
+          if (item.managed || names.has(item.name) || RESERVED_SKILL_NAMES.includes(item.name)) continue;
           const name = skillNameSchema.safeParse(item.name);
           const source = repoNameSchema.safeParse(item.source);
           if (name.success && source.success) {
@@ -434,7 +434,7 @@ export function skillsService(worker: Env) {
       const names = page.flatMap((folder) => {
         const { skillName, installedHash } = at.named.get(folder)!;
         const name = skillNameSchema.safeParse(skillName);
-        return installedHash && name.success && name.data !== RESERVED_SKILL_NAME ? [name.data] : [];
+        return installedHash && name.success && !RESERVED_SKILL_NAMES.includes(name.data) ? [name.data] : [];
       });
       const next = input.offset + page.length;
       return { repo: repo.fullName, commit: at.commit, names: [...new Set(names)], next: next < at.folders.length ? next : null };

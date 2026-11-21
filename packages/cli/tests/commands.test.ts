@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
@@ -57,11 +58,17 @@ describe('status', () => {
 });
 
 describe('logout', () => {
-  it('revokes the Machine and removes its token, hooks and skill, leaving other hooks', async () => {
+  it('revokes the Machine and removes its token, hooks and skills, leaving other hooks', async () => {
     const t = setup();
     t.write('.claude/settings.json', JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'bell' }] }] } }));
     await t.cli('init', '--yes', '--server', t.server.url);
     expect(t.server.state.machines.size).toBe(1);
+    // A legacy `agentsync` skill AgentSync wrote goes too.
+    const configFile = t.path('.config/agentsync/config.json');
+    const config = JSON.parse(readFileSync(configFile, 'utf8'));
+    t.write('.claude/skills/agentsync/SKILL.md', 'old skill\n');
+    config.skills[t.path('.claude/skills/agentsync/SKILL.md')] = createHash('sha256').update('old skill\n').digest('hex');
+    writeFileSync(configFile, JSON.stringify(config));
 
     const result = await t.cli('logout');
 
@@ -71,7 +78,7 @@ describe('logout', () => {
     expect(JSON.parse(readFileSync(t.path('.claude/settings.json'), 'utf8'))).toEqual({
       hooks: { Stop: [{ hooks: [{ type: 'command', command: 'bell' }] }] },
     });
-    expect(existsSync(t.path('.claude/skills/agentsync'))).toBe(false);
+    expect(readdirSync(t.path('.claude/skills'))).toEqual([]);
   });
 
   it('removes the pi extension, unless the person changed it', async () => {
@@ -109,28 +116,28 @@ describe('logout', () => {
     const t = setup();
     mkdirSync(t.path('.claude'));
     await t.cli('init', '--yes', '--server', t.server.url);
-    const skill = t.path('.claude/skills/agentsync/SKILL.md');
+    const skill = t.path('.claude/skills/agentsync-spaces/SKILL.md');
     writeFileSync(skill, `${readFileSync(skill, 'utf8')}\nMy addition.\n`);
 
     const result = await t.cli('logout');
 
     expect(result.code).toBe(0);
     expect(readFileSync(skill, 'utf8')).toContain('My addition.');
-    expect(result.stderr).toContain('~/.claude/skills/agentsync/SKILL.md');
+    expect(result.stderr).toContain('~/.claude/skills/agentsync-spaces/SKILL.md');
   });
 
   it('keeps a symlinked skill directory (e.g. from dotfiles) and finishes the cleanup', async () => {
     const t = setup();
     mkdirSync(t.path('dotfiles/agentsync-skill'), { recursive: true });
     mkdirSync(t.path('.claude/skills'), { recursive: true });
-    symlinkSync(t.path('dotfiles/agentsync-skill'), t.path('.claude/skills/agentsync'));
+    symlinkSync(t.path('dotfiles/agentsync-skill'), t.path('.claude/skills/agentsync-instructions'));
     await t.cli('init', '--yes', '--server', t.server.url);
     expect(existsSync(t.path('dotfiles/agentsync-skill/SKILL.md'))).toBe(true);
 
     const result = await t.cli('logout');
 
     expect(result.code).toBe(0);
-    expect(lstatSync(t.path('.claude/skills/agentsync')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(t.path('.claude/skills/agentsync-instructions')).isSymbolicLink()).toBe(true);
     expect(existsSync(t.path('dotfiles/agentsync-skill/SKILL.md'))).toBe(false);
     expect(existsSync(t.path('.config/agentsync/config.json'))).toBe(false);
     expect(JSON.parse(readFileSync(t.path('.claude/settings.json'), 'utf8'))).toEqual({});

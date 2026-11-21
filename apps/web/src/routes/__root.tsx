@@ -31,7 +31,9 @@ export const Route = createRootRouteWithContext<RouterContext>()({
   // Every route loads in the browser, where same-origin RPC calls carry the session cookie.
   ssr: false,
   // Runs on every navigation, which keeps the open Conflicts count current.
-  beforeLoad: async () => {
+  beforeLoad: async ({ location }) => {
+    // A Share Link needs no account, so its viewer never waits on (or fails with) the session.
+    if (location.pathname.startsWith('/s/')) return { user: null, openConflicts: 0 };
     const user = await (session ??= rpc.session().catch((error: unknown) => {
       session = undefined; // Ask again next time.
       throw error;
@@ -99,6 +101,8 @@ function Layout() {
   const path = useRouterState({ select: (state) => state.location.pathname });
   // The landing page's `returnTo` (set when a signed-out visit was sent there) applies here too.
   const returnTo = useRouterState({ select: (state) => state.location.search.returnTo });
+  // A Share Link's viewer is public and fills the window, without the app's chrome.
+  if (path.startsWith('/s/')) return <main><Outlet /></main>;
   return (
     <>
       {loading ? <div className="loading-bar" aria-hidden="true" /> : null}
@@ -111,6 +115,7 @@ function Layout() {
                 className={isTemplatePath(path) ? 'active' : undefined}>Template</Link>
               <Link to="/machines">Machines</Link>
               <Link to="/skills">Skills</Link>
+              <Link to="/spaces">Spaces</Link>
             </>
           ) : null}
           <Link to="/docs">Docs</Link>

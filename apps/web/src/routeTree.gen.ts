@@ -18,10 +18,13 @@ import { Route as AppSetupRouteImport } from './routes/_app/setup'
 import { Route as AppSkillsRouteImport } from './routes/_app/skills'
 import { Route as DocsIndexRouteImport } from './routes/docs.index'
 import { Route as DocsPageRouteImport } from './routes/docs.$page'
+import { Route as SShareTokenRouteImport } from './routes/s.$shareToken'
 import { Route as AppConflictsIndexRouteImport } from './routes/_app/conflicts.index'
 import { Route as AppConflictsConflictIdRouteImport } from './routes/_app/conflicts.$conflictId'
 import { Route as AppMachinesIndexRouteImport } from './routes/_app/machines.index'
 import { Route as AppMachinesMachineIdRouteImport } from './routes/_app/machines.$machineId'
+import { Route as AppSpacesIndexRouteImport } from './routes/_app/spaces.index'
+import { Route as AppSpacesSpaceIdRouteImport } from './routes/_app/spaces.$spaceId'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -67,6 +70,11 @@ const DocsPageRoute = DocsPageRouteImport.update({
   path: '/$page',
   getParentRoute: () => DocsRoute,
 } as any)
+const SShareTokenRoute = SShareTokenRouteImport.update({
+  id: '/s/$shareToken',
+  path: '/s/$shareToken',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppConflictsIndexRoute = AppConflictsIndexRouteImport.update({
   id: '/conflicts/',
   path: '/conflicts/',
@@ -87,6 +95,16 @@ const AppMachinesMachineIdRoute = AppMachinesMachineIdRouteImport.update({
   path: '/machines/$machineId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSpacesIndexRoute = AppSpacesIndexRouteImport.update({
+  id: '/spaces/',
+  path: '/spaces/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSpacesSpaceIdRoute = AppSpacesSpaceIdRouteImport.update({
+  id: '/spaces/$spaceId',
+  path: '/spaces/$spaceId',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -96,11 +114,14 @@ export interface FileRoutesByFullPath {
   '/setup': typeof AppSetupRoute
   '/skills': typeof AppSkillsRoute
   '/docs/$page': typeof DocsPageRoute
+  '/s/$shareToken': typeof SShareTokenRoute
   '/docs/': typeof DocsIndexRoute
   '/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
   '/machines/$machineId': typeof AppMachinesMachineIdRoute
+  '/spaces/$spaceId': typeof AppSpacesSpaceIdRoute
   '/conflicts/': typeof AppConflictsIndexRoute
   '/machines/': typeof AppMachinesIndexRoute
+  '/spaces/': typeof AppSpacesIndexRoute
 }
 export interface FileRoutesByTo {
   '/signin': typeof SigninRoute
@@ -108,12 +129,15 @@ export interface FileRoutesByTo {
   '/setup': typeof AppSetupRoute
   '/skills': typeof AppSkillsRoute
   '/docs/$page': typeof DocsPageRoute
+  '/s/$shareToken': typeof SShareTokenRoute
   '/': typeof AppIndexRoute
   '/docs': typeof DocsIndexRoute
   '/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
   '/machines/$machineId': typeof AppMachinesMachineIdRoute
+  '/spaces/$spaceId': typeof AppSpacesSpaceIdRoute
   '/conflicts': typeof AppConflictsIndexRoute
   '/machines': typeof AppMachinesIndexRoute
+  '/spaces': typeof AppSpacesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -124,12 +148,15 @@ export interface FileRoutesById {
   '/_app/setup': typeof AppSetupRoute
   '/_app/skills': typeof AppSkillsRoute
   '/docs/$page': typeof DocsPageRoute
+  '/s/$shareToken': typeof SShareTokenRoute
   '/_app/': typeof AppIndexRoute
   '/docs/': typeof DocsIndexRoute
   '/_app/conflicts/$conflictId': typeof AppConflictsConflictIdRoute
   '/_app/machines/$machineId': typeof AppMachinesMachineIdRoute
+  '/_app/spaces/$spaceId': typeof AppSpacesSpaceIdRoute
   '/_app/conflicts/': typeof AppConflictsIndexRoute
   '/_app/machines/': typeof AppMachinesIndexRoute
+  '/_app/spaces/': typeof AppSpacesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -141,11 +168,14 @@ export interface FileRouteTypes {
     | '/setup'
     | '/skills'
     | '/docs/$page'
+    | '/s/$shareToken'
     | '/docs/'
     | '/conflicts/$conflictId'
     | '/machines/$machineId'
+    | '/spaces/$spaceId'
     | '/conflicts/'
     | '/machines/'
+    | '/spaces/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/signin'
@@ -153,12 +183,15 @@ export interface FileRouteTypes {
     | '/setup'
     | '/skills'
     | '/docs/$page'
+    | '/s/$shareToken'
     | '/'
     | '/docs'
     | '/conflicts/$conflictId'
     | '/machines/$machineId'
+    | '/spaces/$spaceId'
     | '/conflicts'
     | '/machines'
+    | '/spaces'
   id:
     | '__root__'
     | '/_app'
@@ -168,18 +201,22 @@ export interface FileRouteTypes {
     | '/_app/setup'
     | '/_app/skills'
     | '/docs/$page'
+    | '/s/$shareToken'
     | '/_app/'
     | '/docs/'
     | '/_app/conflicts/$conflictId'
     | '/_app/machines/$machineId'
+    | '/_app/spaces/$spaceId'
     | '/_app/conflicts/'
     | '/_app/machines/'
+    | '/_app/spaces/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   DocsRoute: typeof DocsRouteWithChildren
   SigninRoute: typeof SigninRoute
+  SShareTokenRoute: typeof SShareTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -247,6 +284,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsPageRouteImport
       parentRoute: typeof DocsRoute
     }
+    '/s/$shareToken': {
+      id: '/s/$shareToken'
+      path: '/s/$shareToken'
+      fullPath: '/s/$shareToken'
+      preLoaderRoute: typeof SShareTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/conflicts/': {
       id: '/_app/conflicts/'
       path: '/conflicts'
@@ -275,6 +319,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMachinesMachineIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/spaces/': {
+      id: '/_app/spaces/'
+      path: '/spaces'
+      fullPath: '/spaces/'
+      preLoaderRoute: typeof AppSpacesIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/spaces/$spaceId': {
+      id: '/_app/spaces/$spaceId'
+      path: '/spaces/$spaceId'
+      fullPath: '/spaces/$spaceId'
+      preLoaderRoute: typeof AppSpacesSpaceIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -285,8 +343,10 @@ interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
   AppConflictsConflictIdRoute: typeof AppConflictsConflictIdRoute
   AppMachinesMachineIdRoute: typeof AppMachinesMachineIdRoute
+  AppSpacesSpaceIdRoute: typeof AppSpacesSpaceIdRoute
   AppConflictsIndexRoute: typeof AppConflictsIndexRoute
   AppMachinesIndexRoute: typeof AppMachinesIndexRoute
+  AppSpacesIndexRoute: typeof AppSpacesIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -296,8 +356,10 @@ const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
   AppConflictsConflictIdRoute: AppConflictsConflictIdRoute,
   AppMachinesMachineIdRoute: AppMachinesMachineIdRoute,
+  AppSpacesSpaceIdRoute: AppSpacesSpaceIdRoute,
   AppConflictsIndexRoute: AppConflictsIndexRoute,
   AppMachinesIndexRoute: AppMachinesIndexRoute,
+  AppSpacesIndexRoute: AppSpacesIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
@@ -318,6 +380,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   DocsRoute: DocsRouteWithChildren,
   SigninRoute: SigninRoute,
+  SShareTokenRoute: SShareTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

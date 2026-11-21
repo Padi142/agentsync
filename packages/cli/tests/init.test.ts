@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { setup } from './harness.js';
 
+const SKILLS = ['agentsync-instructions', 'agentsync-skills', 'agentsync-spaces'];
+const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
+
 describe('init', () => {
   it('registers the Machine with the device flow and keeps its token private', async () => {
     const t = setup();
@@ -169,7 +172,7 @@ describe('init', () => {
     expect(variables?.variables).toEqual({ editor: 'vim' });
   });
 
-  it('installs the SessionStart hooks and the agent skill for each agent', async () => {
+  it('installs the SessionStart hooks and the agentsync skills for each agent', async () => {
     const t = setup();
     mkdirSync(t.path('.claude'));
     mkdirSync(t.path('.codex'));
@@ -183,8 +186,10 @@ describe('init', () => {
     const codex = JSON.parse(readFileSync(t.path('.codex/hooks.json'), 'utf8'));
     expect(codex).toMatchObject({ hooks: { SessionStart: [{ hooks: [{ command: 'agentsync sync --hook codex' }] }] } });
     expect(result.stderr).toContain('/hooks');
-    expect(readFileSync(t.path('.claude/skills/agentsync/SKILL.md'), 'utf8')).toContain('name: agentsync');
-    expect(existsSync(t.path('.agents/skills/agentsync/SKILL.md'))).toBe(true);
+    for (const name of SKILLS) {
+      expect(readFileSync(t.path(`.claude/skills/${name}/SKILL.md`), 'utf8')).toContain(`name: ${name}\n`);
+      expect(readFileSync(t.path(`.agents/skills/${name}/SKILL.md`), 'utf8')).toContain(`name: ${name}\n`);
+    }
   });
 
   it('sets up pi with an extension as its hook, sharing the skill with Codex', async () => {
@@ -201,7 +206,7 @@ describe('init', () => {
     expect(extension).toContain('const COMMAND = "agentsync sync --hook pi";');
     expect(result.json()).toMatchObject({
       hooks: ['~/.codex/hooks.json', '~/.pi/agent/extensions/agentsync.ts'],
-      skills: ['~/.agents/skills/agentsync/SKILL.md'],
+      skills: SKILLS.map((name) => `~/.agents/skills/${name}/SKILL.md`),
     });
   });
 
@@ -231,7 +236,7 @@ describe('init', () => {
     expect(plugin).toContain('const COMMAND = "agentsync sync --hook opencode";');
     expect(result.json()).toMatchObject({
       hooks: ['~/.codex/hooks.json', '~/.config/opencode/plugins/agentsync.ts'],
-      skills: ['~/.agents/skills/agentsync/SKILL.md'],
+      skills: SKILLS.map((name) => `~/.agents/skills/${name}/SKILL.md`),
     });
   });
 
@@ -308,34 +313,73 @@ describe('init', () => {
     expect(mode('.config/agentsync/config.json')).toBe(0o600);
   });
 
-  describe('the agent skill', () => {
+  describe('the agentsync skills', () => {
+    const configFile = (t: ReturnType<typeof setup>) => t.path('.config/agentsync/config.json');
+    /** Register with Claude Code, then put `text` where the legacy `agentsync` skill lives, recorded as if AgentSync wrote `recorded`. */
+    async function withLegacySkill(text: string, recorded = text) {
+      const t = setup();
+      mkdirSync(t.path('.claude'));
+      await t.cli('init', '--yes', '--server', t.server.url);
+      const file = t.path('.claude/skills/agentsync/SKILL.md');
+      t.write('.claude/skills/agentsync/SKILL.md', text);
+      const config = JSON.parse(readFileSync(configFile(t), 'utf8'));
+      config.skills[file] = sha256(recorded);
+      t.write('.config/agentsync/config.json', JSON.stringify(config));
+      return { t, file };
+    }
+
     it('leaves a skill file AgentSync did not write alone, and says so', async () => {
       const t = setup();
-      t.write('.claude/skills/agentsync/SKILL.md', '---\nname: agentsync\n---\nmy own notes\n');
+      t.write('.claude/skills/agentsync-spaces/SKILL.md', '---\nname: agentsync-spaces\n---\nmy own notes\n');
 
       const result = await t.cli('init', '--yes', '--json', '--server', t.server.url);
 
       expect(result.code).toBe(0);
-      expect(readFileSync(t.path('.claude/skills/agentsync/SKILL.md'), 'utf8')).toContain('my own notes');
-      expect(result.json()).toMatchObject({ skills: [], skillsLeftAlone: ['~/.claude/skills/agentsync/SKILL.md'] });
-      expect(result.stderr).toContain('~/.claude/skills/agentsync/SKILL.md');
+      expect(readFileSync(t.path('.claude/skills/agentsync-spaces/SKILL.md'), 'utf8')).toContain('my own notes');
+      expect(result.json()).toMatchObject({
+        skills: ['~/.claude/skills/agentsync-instructions/SKILL.md', '~/.claude/skills/agentsync-skills/SKILL.md'],
+        skillsLeftAlone: ['~/.claude/skills/agentsync-spaces/SKILL.md'],
+      });
+      expect(result.stderr).toContain('~/.claude/skills/agentsync-spaces/SKILL.md');
     });
 
     it('updates a skill file that is unchanged since AgentSync wrote it', async () => {
       const t = setup();
       mkdirSync(t.path('.claude'));
       await t.cli('init', '--yes', '--server', t.server.url);
-      const config = JSON.parse(readFileSync(t.path('.config/agentsync/config.json'), 'utf8'));
-      const file = t.path('.claude/skills/agentsync/SKILL.md');
+      const config = JSON.parse(readFileSync(configFile(t), 'utf8'));
+      const file = t.path('.claude/skills/agentsync-skills/SKILL.md');
       // As if an older AgentSync had written an older skill.
-      t.write('.claude/skills/agentsync/SKILL.md', 'old skill\n');
-      config.skills[file] = createHash('sha256').update('old skill\n').digest('hex');
+      t.write('.claude/skills/agentsync-skills/SKILL.md', 'old skill\n');
+      config.skills[file] = sha256('old skill\n');
       t.write('.config/agentsync/config.json', JSON.stringify(config));
 
       const result = await t.cli('init', '--yes');
 
       expect(result.code).toBe(0);
-      expect(readFileSync(file, 'utf8')).toContain('name: agentsync');
+      expect(readFileSync(file, 'utf8')).toContain('name: agentsync-skills\n');
+    });
+
+    it('removes the legacy agentsync skill while it is still what AgentSync wrote', async () => {
+      const { t, file } = await withLegacySkill('---\nname: agentsync\n---\nold skill\n');
+
+      const result = await t.cli('init', '--yes', '--json');
+
+      expect(result.code).toBe(0);
+      expect(existsSync(t.path('.claude/skills/agentsync'))).toBe(false);
+      expect(result.json()).toMatchObject({ legacySkill: { removed: ['~/.claude/skills/agentsync/SKILL.md'], kept: [] } });
+      expect(JSON.parse(readFileSync(configFile(t), 'utf8')).skills[file]).toBeUndefined();
+    });
+
+    it('keeps a legacy agentsync skill the person changed, with a warning', async () => {
+      const { t, file } = await withLegacySkill('old skill\nMy addition.\n', 'old skill\n');
+
+      const result = await t.cli('init', '--yes', '--json');
+
+      expect(result.code).toBe(0);
+      expect(readFileSync(file, 'utf8')).toContain('My addition.');
+      expect(result.json()).toMatchObject({ legacySkill: { removed: [], kept: ['~/.claude/skills/agentsync/SKILL.md'] } });
+      expect(result.stderr).toContain('Kept the old agentsync skill at ~/.claude/skills/agentsync/SKILL.md');
     });
   });
 });

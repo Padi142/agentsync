@@ -11,7 +11,8 @@ export interface Agent {
   /** The agent's own config directory. It existing is how we detect the agent. */
   home(io: Io): string;
   instructions(io: Io): string;
-  skillFile(io: Io): string;
+  /** The directory the agent reads user skills from: each skill is `<dir>/<name>/SKILL.md`. */
+  skillsDir(io: Io): string;
   hooksFile(io: Io): string;
   /**
    * How the hook is installed: `json` adds a SessionStart handler to the JSON hook config in
@@ -39,8 +40,8 @@ export const AGENTS: readonly Agent[] = [
     instructions(io) {
       return join(this.home(io), 'CLAUDE.md');
     },
-    skillFile(io) {
-      return join(this.home(io), 'skills', 'agentsync', 'SKILL.md');
+    skillsDir(io) {
+      return join(this.home(io), 'skills');
     },
     hooksFile(io) {
       return join(this.home(io), 'settings.json');
@@ -59,7 +60,7 @@ export const AGENTS: readonly Agent[] = [
       return join(this.home(io), 'AGENTS.md');
     },
     // Codex reads user skills from ~/.agents/skills, not from its own home.
-    skillFile: (io) => join(io.home, '.agents', 'skills', 'agentsync', 'SKILL.md'),
+    skillsDir: (io) => join(io.home, '.agents', 'skills'),
     hooksFile(io) {
       return join(this.home(io), 'hooks.json');
     },
@@ -78,7 +79,7 @@ export const AGENTS: readonly Agent[] = [
       return join(this.home(io), 'AGENTS.md');
     },
     // pi reads user skills from ~/.agents/skills too, so it shares Codex's copy.
-    skillFile: (io) => join(io.home, '.agents', 'skills', 'agentsync', 'SKILL.md'),
+    skillsDir: (io) => join(io.home, '.agents', 'skills'),
     // pi has no hook config. An extension runs the hook, and pi awaits it before reading AGENTS.md.
     hooksFile(io) {
       return join(this.home(io), 'extensions', 'agentsync.ts');
@@ -99,7 +100,7 @@ export const AGENTS: readonly Agent[] = [
       return join(this.home(io), 'AGENTS.md');
     },
     // OpenCode reads user skills from ~/.agents/skills too, so it shares Codex's copy.
-    skillFile: (io) => join(io.home, '.agents', 'skills', 'agentsync', 'SKILL.md'),
+    skillsDir: (io) => join(io.home, '.agents', 'skills'),
     // OpenCode has no hook config. A plugin runs the hook, and OpenCode awaits it before the first request.
     hooksFile(io) {
       return join(this.home(io), 'plugins', 'agentsync.ts');

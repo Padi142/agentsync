@@ -145,8 +145,12 @@ export const devicePollResultSchema = z.discriminatedUnion('status', [
  * never starts with `-`, so it can't be read as a flag either.
  */
 export const skillNameSchema = z.string().max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
-/** The CLI's own skill: no Skill may take its name. */
+/** The CLI's own skill before it was split in three. A Machine may still have it until `agentsync init` removes it. */
 export const RESERVED_SKILL_NAME = 'agentsync';
+/** The skills the CLI installs itself, plus the legacy one: no Skill may take these names. */
+export const RESERVED_SKILL_NAMES: readonly string[] = [
+  RESERVED_SKILL_NAME, 'agentsync-instructions', 'agentsync-skills', 'agentsync-spaces',
+];
 /** A public GitHub repository as `owner/repo`. Neither part may start with `-` or be `.`/`..`. */
 export const repoNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.\.?$)[A-Za-z0-9._][A-Za-z0-9._-]{0,99}$/);
 /** A full git object ID: a commit, or a tree hash. */
@@ -376,6 +380,224 @@ export const templateIssueSchema = z.object({
   line: z.number().int().min(1),
   column: z.number().int().min(1),
 });
+
+// Spaces
+
+/** Storage limits, enforced by the server on every upload. */
+export const SPACE_LIMITS = {
+  fileBytes: 25 * 1024 * 1024,
+  spaceBytes: 100 * 1024 * 1024,
+  userBytes: 500 * 1024 * 1024,
+  /** Maximum files in one Space (keeps R2 deletion to one page and stays below ZIP's 65,535 limit). */
+  maxFiles: 500,
+  /** Days a new Space's Share Link works for, unless `expires` says otherwise. */
+  defaultDays: 7,
+  /** Days an expired Space stays in its private grace period before it is purged. */
+  graceDays: 30,
+  /** The longest `expires` duration, in days. Use `never` for longer. */
+  maxDays: 365,
+} as const;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A date that also parses from an ISO string: Space schemas are read from plain JSON too
+ * (`/s/<token>.json`, `/api/spaces/*`, WebSocket events), where dates arrive as strings.
+ */
+const wireDate = z.union([z.date(), z.iso.datetime({ offset: true }).transform((s) => new Date(s))]);
+
+/**
+ * A file's path inside a Space: relative, `/`-separated, with no empty, `.` or `..` segments,
+ * no leading `/`, no backslashes or control characters (null bytes included), at most 500 characters.
+ * Use `normalizeSpacePath` to turn user input into one.
+ */
+export const spacePathSchema = z.string().min(1).max(500).refine((path) => normalizeSpacePath(path) === path, {
+  message: 'Invalid Space path.',
+});
+
+/**
+ * The canonical form of a Space path, or `null` if it can't be one. Turns `\` into `/`, drops
+ * a leading `./` and repeated or trailing `/`. Rejects `..`, absolute paths and control characters.
+ * The server, the web viewer and the CLI (on upload, raw fetch, zip and `pull`) all call it.
+ */
+export function normalizeSpacePath(input: string): string | null {
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(input)) return null;
+  const unified = input.replace(/\\/g, '/');
+  if (unified.startsWith('/') || /^[A-Za-z]:/.test(unified)) return null;
+  const segments = unified.split('/').filter((s) => s !== '' && s !== '.');
+  if (segments.length === 0 || segments.some((s) => s === '..')) return null;
+  const path = segments.join('/');
+  return path.length <= 500 ? path : null;
+}
+
+/**
+ * How long a Share Link works: `<n>d` (1–365 days from now) or `never` (permanent).
+ * Setting it on an expired Space revives it at the same Share Link.
+ */
+export const spaceExpirySchema = z.union([
+  z.literal('never'),
+  z.string().regex(/^[1-9]\d{0,2}d$/).refine((v) => Number.parseInt(v, 10) <= SPACE_LIMITS.maxDays, {
+    message: `At most ${SPACE_LIMITS.maxDays} days; use "never" for longer.`,
+  }),
+]);
+
+/** When a Space set to `expiry` at `now` expires; `null` is permanent. */
+export function spaceExpiresAt(expiry: SpaceExpiry, now: Date = new Date()): Date | null {
+  return expiry === 'never' ? null : new Date(now.getTime() + Number.parseInt(expiry, 10) * DAY_MS);
+}
+
+/**
+ * - `active`: the Share Link works until `expiresAt` (`null`: permanent).
+ * - `expired`: `expiresAt` passed. Only the owner sees it, in the dashboard, until `deleteAt`;
+ *   Write Token mutations fail with `SPACE_EXPIRED` until it is revived.
+ * - `private`: the owner turned the Share Link off. It never expires or deletes by itself;
+ *   the Write Token still works.
+ */
+export const spaceStatusSchema = z.enum(['active', 'expired', 'private']);
+
+/** What a Space's status is at `now`. The server stores only `isPrivate` and `expiresAt`. */
+export function spaceStatus(space: { isPrivate: boolean; expiresAt: Date | null }, now: Date = new Date()): SpaceStatus {
+  if (space.isPrivate) return 'private';
+  return space.expiresAt && space.expiresAt.getTime() <= now.getTime() ? 'expired' : 'active';
+}
+
+/** When an expired Space is purged: `graceDays` after it expired. `null` unless it can expire. */
+export function spaceDeleteAt(space: { isPrivate: boolean; expiresAt: Date | null }): Date | null {
+  if (space.isPrivate || !space.expiresAt) return null;
+  return new Date(space.expiresAt.getTime() + SPACE_LIMITS.graceDays * DAY_MS);
+}
+
+export const spaceTitleSchema = z.string().trim().min(1).max(200);
+export const spaceSummarySchema = z.string().trim().max(2000);
+
+/** One file in a Space. Only its latest version is kept. */
+export const spaceFileSchema = z.object({
+  path: spacePathSchema,
+  size: z.number().int().min(0),
+  contentType: z.string().min(1).max(255),
+  /** Hex SHA-256 of the content: `space push` compares it to skip unchanged files. */
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  updatedAt: wireDate,
+});
+
+/** What anyone with the Share Link sees (`GET /s/<token>.json`), and what a Write Token reads (`GET /api/spaces/<id>`). */
+export const publicSpaceSchema = z.object({
+  id,
+  title: spaceTitleSchema,
+  summary: spaceSummarySchema.nullable(),
+  status: spaceStatusSchema,
+  expiresAt: wireDate.nullable(),
+  /** `https://<origin>/s/<share-token>`. */
+  shareUrl: z.url(),
+  totalBytes: z.number().int().min(0),
+  files: z.array(spaceFileSchema),
+  createdAt: wireDate,
+  updatedAt: wireDate,
+});
+
+/** A Space in the owner's dashboard. */
+export const spaceSchema = publicSpaceSchema.omit({ files: true }).extend({
+  /** When an expired Space is purged; `null` for active-permanent or private Spaces. */
+  deleteAt: wireDate.nullable(),
+  fileCount: z.number().int().min(0),
+});
+
+export const spaceDetailSchema = spaceSchema.extend({ files: z.array(spaceFileSchema) });
+
+/** `spaces.create` answers with the Write Token once; the server keeps only its hash. */
+export const createdSpaceSchema = z.object({
+  space: publicSpaceSchema,
+  writeToken: z.string().min(1),
+});
+
+/**
+ * Messages a Space's WebSocket (`GET /s/<token>/ws`) sends, as JSON text frames:
+ * - `file`: a file was added or replaced.
+ * - `fileDeleted`: a file was removed.
+ * - `space`: title, summary, expiry or status changed.
+ * - `closed`: the Share Link stopped working (Space deleted, made private, expired, or its link rotated).
+ *   The server closes the socket right after.
+ */
+export const spaceEventSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('file'), file: spaceFileSchema }),
+  z.object({ type: z.literal('fileDeleted'), path: spacePathSchema }),
+  z.object({ type: z.literal('space'), space: publicSpaceSchema.omit({ files: true }) }),
+  z.object({ type: z.literal('closed'), reason: z.enum(['deleted', 'private', 'expired', 'rotated']) }),
+]);
+
+/**
+ * Error codes of the Spaces HTTP routes (`/s/*` and `/api/spaces/*`). They answer
+ * `{ error: { code, message } }` with the status in `SPACE_ERROR_STATUS`.
+ */
+export const spaceErrorCodeSchema = z.enum([
+  'NOT_FOUND', 'UNAUTHORIZED', 'INVALID_PATH', 'INVALID_REQUEST',
+  'SPACE_EXPIRED', 'FILE_TOO_LARGE', 'SPACE_FULL', 'QUOTA_EXCEEDED',
+]);
+export const SPACE_ERROR_STATUS = {
+  NOT_FOUND: 404,
+  UNAUTHORIZED: 401,
+  INVALID_PATH: 422,
+  INVALID_REQUEST: 400,
+  SPACE_EXPIRED: 410,
+  FILE_TOO_LARGE: 413,
+  SPACE_FULL: 413,
+  QUOTA_EXCEEDED: 413,
+} as const satisfies Record<SpaceErrorCode, number>;
+export const spaceErrorSchema = z.object({ error: z.object({ code: spaceErrorCodeSchema, message: z.string() }) });
+
+/** The body of `PATCH /api/spaces/<id>`. Every field is optional. `summary: null` clears it. */
+export const spaceWriterUpdateSchema = z.object({
+  title: spaceTitleSchema.optional(),
+  summary: spaceSummarySchema.nullable().optional(),
+  expires: spaceExpirySchema.optional(),
+});
+
+/**
+ * The Write Token routes. Each takes `Authorization: Bearer <write-token>`, never a Machine token or cookie.
+ * Binary uploads go here rather than through oRPC so they stream as raw bodies.
+ */
+export const SPACE_WRITER_ROUTES = {
+  /** `GET` → `publicSpaceSchema` (works while expired, so a writer can see why it fails). `PATCH` with `spaceWriterUpdateSchema` → `publicSpaceSchema`. `DELETE` → 204. */
+  space: (spaceId: string) => `/api/spaces/${encodeURIComponent(spaceId)}`,
+  /**
+   * `PUT` raw bytes with `Content-Type` (and optionally `X-Content-SHA256`, verified) → `spaceFileSchema`.
+   * `DELETE` → 204. `path` must already be normalized; each segment is URI-encoded.
+   */
+  file: (spaceId: string, path: string) =>
+    `/api/spaces/${encodeURIComponent(spaceId)}/files/${path.split('/').map(encodeURIComponent).join('/')}`,
+} as const;
+
+/** The public routes of a Share Link, relative to the app origin. Anyone with the link may call them. */
+export const SPACE_PUBLIC_ROUTES = {
+  /** `Accept: text/html` → the web viewer; `text/markdown` → digest; `application/json` → `publicSpaceSchema`. */
+  space: (shareToken: string) => `/s/${shareToken}`,
+  markdown: (shareToken: string) => `/s/${shareToken}.md`,
+  json: (shareToken: string) => `/s/${shareToken}.json`,
+  raw: (shareToken: string, path: string) => `/s/${shareToken}/raw/${path.split('/').map(encodeURIComponent).join('/')}`,
+  zip: (shareToken: string) => `/s/${shareToken}/download.zip`,
+  ws: (shareToken: string) => `/s/${shareToken}/ws`,
+} as const;
+
+/**
+ * Session-authenticated owner routes for reading files of any owned Space (active, private or expired).
+ * They read only the browser session cookie, never a Machine token or Write Token.
+ */
+export const SPACE_OWNER_ROUTES = {
+  raw: (spaceId: string, path: string) =>
+    `/api/owner/spaces/${encodeURIComponent(spaceId)}/raw/${path.split('/').map(encodeURIComponent).join('/')}`,
+  zip: (spaceId: string) => `/api/owner/spaces/${encodeURIComponent(spaceId)}/download.zip`,
+} as const;
+
+/** A Share Link token: 32 base64url characters. */
+export const shareTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{32}$/);
+
+/** The Share Link token in a Share Link URL (`https://<host>/s/<token>`, with or without a suffix), or `null`. */
+export function parseShareUrl(url: string): { origin: string; shareToken: string } | null {
+  // The contract has no DOM or Node types, so no `URL` here.
+  const match = url.trim().match(/^(https?:\/\/[^/?#\s]+)\/s\/([A-Za-z0-9_-]{32})(?:\.md|\.json)?(?:[/?#].*)?$/i);
+  return match?.[1] && match[2] ? { origin: match[1].toLowerCase(), shareToken: match[2] } : null;
+}
 
 // Errors
 
@@ -625,6 +847,53 @@ const skills = {
     .output(z.void()),
 };
 
+const spaceIdInput = z.object({ spaceId: id });
+
+/**
+ * A Machine creates a Space; everything else a signed-in browser does from `/spaces`. Writing files
+ * needs the Write Token on `SPACE_WRITER_ROUTES`, so a Machine token can't list or touch existing Spaces.
+ */
+const spaces = {
+  /** Create an empty Space owned by the Machine's user. Returns the Write Token once. */
+  create: machineProcedure
+    .input(z.object({
+      title: spaceTitleSchema,
+      summary: spaceSummarySchema.optional(),
+      /** Default: `7d`. */
+      expires: spaceExpirySchema.optional(),
+    }))
+    .output(createdSpaceSchema)
+    .errors({ QUOTA_EXCEEDED: { status: 413 } }),
+  /** Every Space of the user, active, private and expired, newest first, with the account's storage use. */
+  list: sessionProcedure.output(z.object({
+    spaces: z.array(spaceSchema),
+    usedBytes: z.number().int().min(0),
+    limitBytes: z.number().int().positive(),
+  })),
+  get: sessionProcedure.input(spaceIdInput).output(spaceDetailSchema).errors(notFoundError),
+  /**
+   * Rename, extend, make permanent (`expires: 'never'`), revive an expired Space (any `expires`; same Share Link),
+   * or turn the Share Link off (`private: true`). Turning it back on gives an expired Space a fresh default expiry.
+   */
+  update: sessionProcedure
+    .input(spaceIdInput.extend({
+      title: spaceTitleSchema.optional(),
+      summary: spaceSummarySchema.nullable().optional(),
+      expires: spaceExpirySchema.optional(),
+      private: z.boolean().optional(),
+    }))
+    .output(spaceSchema)
+    .errors(notFoundError),
+  /** Replace the Share Link with a new one. The old link stops working at once; the Write Token is unchanged. */
+  rotateLink: sessionProcedure.input(spaceIdInput).output(spaceSchema).errors(notFoundError),
+  /** Delete the Space and all its files now. */
+  delete: sessionProcedure.input(spaceIdInput).output(z.void()).errors(notFoundError),
+  deleteFile: sessionProcedure
+    .input(spaceIdInput.extend({ path: spacePathSchema }))
+    .output(spaceDetailSchema)
+    .errors(notFoundError),
+};
+
 export const contract = {
   health: publicProcedure.output(z.object({ ok: z.literal(true) })),
   /** The signed-in browser user, or `null`. */
@@ -634,6 +903,7 @@ export const contract = {
   variables,
   conflicts,
   skills,
+  spaces,
 };
 
 export type Contract = typeof contract;
@@ -679,3 +949,13 @@ export type SkillDiff = z.infer<typeof skillDiffSchema>;
 export type DesiredSkill = z.infer<typeof desiredSkillSchema>;
 export type ScannedSkill = z.infer<typeof scannedSkillSchema>;
 export type SkillSyncResult = z.infer<typeof skillSyncResultSchema>;
+export type SpaceExpiry = z.infer<typeof spaceExpirySchema>;
+export type SpaceStatus = z.infer<typeof spaceStatusSchema>;
+export type SpaceFile = z.infer<typeof spaceFileSchema>;
+export type PublicSpace = z.infer<typeof publicSpaceSchema>;
+export type Space = z.infer<typeof spaceSchema>;
+export type SpaceDetail = z.infer<typeof spaceDetailSchema>;
+export type CreatedSpace = z.infer<typeof createdSpaceSchema>;
+export type SpaceEvent = z.infer<typeof spaceEventSchema>;
+export type SpaceErrorCode = z.infer<typeof spaceErrorCodeSchema>;
+export type SpaceWriterUpdate = z.infer<typeof spaceWriterUpdateSchema>;

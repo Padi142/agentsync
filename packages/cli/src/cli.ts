@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { ORPCError } from '@orpc/client';
 import { Context, type Flags, type Outcome } from './context.js';
 import { CliError, describeError, EXIT, exitCodeFor, usage } from './exit.js';
 import type { Io } from './io.js';
@@ -11,6 +12,7 @@ import { hookOutput, sync } from './commands/sync.js';
 import { logout } from './commands/logout.js';
 import { rename } from './commands/rename.js';
 import { skills } from './commands/skills.js';
+import { space, USAGE as SPACE_USAGE, type SpaceFlags } from './commands/space.js';
 import { status } from './commands/status.js';
 import { template } from './commands/template.js';
 import { vars } from './commands/vars.js';
@@ -31,6 +33,7 @@ Commands:
   vars        Show or change this Machine's Variables
   conflict    List, get, or resolve open Conflicts
   skills      Install this Machine's Skills (skills sync), or show them (skills status)
+  space       Share files as a live Space, or read one from its Share Link
   rename      Change this Machine's nickname
   logout      Revoke this Machine and remove its hooks
 
@@ -51,7 +54,7 @@ const COMMAND_HELP: Record<string, string> = {
                       [--var KEY=VALUE]... [--import <path>] [--no-hooks] [--no-skill] [--skills | --no-skills]
                       [--no-wait]
 
-Register this Machine with the browser, then set up its Targets, Variables, hooks and skill,
+Register this Machine with the browser, then set up its Targets, Variables, hooks and skills,
 and sync. Safe to run again. Alias: login.
 
   --server <url>             The AgentSync server
@@ -61,7 +64,7 @@ and sync. Safe to run again. Alias: login.
   --target <agent>=<path>    Sync another agent's file, e.g. gemini=~/.gemini/GEMINI.md
   --var KEY=VALUE            Set a Variable on this Machine
   --import <path>            On the account's first Machine, start the Template from this file
-  --no-hooks, --no-skill     Do not install the SessionStart hooks or the agentsync skill
+  --no-hooks, --no-skill     Do not install the SessionStart hooks or the agentsync skills
   --skills, --no-skills      Install the account's Skills for this Machine now, or don't
                              (default: asked; skipped without a terminal)
   --no-wait                  Print the approval link and exit; run init again once approved
@@ -158,6 +161,65 @@ Exit 3 if a Skill is blocked by your own folder or was edited by hand, 1 if an i
   'skills status': `Usage: agentsync skills status
 
 Show each of this Machine's Skills against its Pin, without changing anything.`,
+  space: `Usage: ${SPACE_USAGE.create}
+       ${SPACE_USAGE.put}
+       ${SPACE_USAGE.push}
+       ${SPACE_USAGE.rm}
+       ${SPACE_USAGE.update}
+       ${SPACE_USAGE.delete}
+       ${SPACE_USAGE.inspect}
+       ${SPACE_USAGE.get}
+       ${SPACE_USAGE.pull}
+
+A Space is a live collection of files on the AgentSync server, shared with a Share Link that
+anyone can open without an account. create needs this Machine registered; it prints the Space's
+Write Token once, which put, push, rm, update and delete need: pass it with --token or set
+AGENTSYNC_SPACE_TOKEN. It is never saved. inspect, get and pull need only the Share Link.
+Run agentsync help space <action> for one action.
+
+Examples:
+  agentsync space create ./report --summary "Benchmark results"
+  AGENTSYNC_SPACE_TOKEN=asw_… agentsync space push <id> ./report
+  agentsync space pull https://agentsync.example.com/s/<token> ./report --watch`,
+  'space create': `Usage: ${SPACE_USAGE.create}
+
+Create a Space and upload a file or a whole directory into it. Prints the Share Link, the Space id,
+and the Write Token, which is shown only this once and never saved.
+
+  --title <title>       Default: the file or directory name
+  --summary <text>      A line for readers and agents about what the Space holds
+  --expires <n>d|never  How long the Share Link works (default 7d, at most 365d)
+
+Symlinks, .git, node_modules and .DS_Store are skipped. A file can be at most 25 MB, a Space 100 MB and 500 files.`,
+  'space put': `Usage: ${SPACE_USAGE.put}
+
+Upload one file, replacing any file at remote-path (default: the file's name).`,
+  'space push': `Usage: ${SPACE_USAGE.push}
+
+Make the Space hold exactly local-dir: upload new and changed files (by SHA-256) and delete remote
+files that aren't there. Deletions are listed and confirmed first; --yes or --json skips that.`,
+  'space rm': `Usage: ${SPACE_USAGE.rm}
+
+Delete one file from the Space.`,
+  'space update': `Usage: ${SPACE_USAGE.update}
+
+Change the title, the summary (--summary "" clears it) or how long the Share Link works.`,
+  'space delete': `Usage: ${SPACE_USAGE.delete}
+
+Delete the Space, its files and its Share Link. Asks first; --yes skips that (and is required without a terminal).`,
+  'space inspect': `Usage: ${SPACE_USAGE.inspect}
+
+Show a Space's title, summary, expiry and files. Needs no account. --json gives the Space in "space".`,
+  'space get': `Usage: ${SPACE_USAGE.get}
+
+Download one file. Without --out a text file is printed to stdout (in "text" with --json); a binary
+file needs --out. --out may be a directory.`,
+  'space pull': `Usage: ${SPACE_USAGE.pull}
+
+Download every file into local-dir, skipping those already the same. Local files the Space doesn't
+have are left alone.
+
+  --watch   Keep local-dir in step as the Space changes, until Ctrl+C or the Share Link stops working`,
   rename: `Usage: agentsync rename <nickname>
 
 Change this Machine's nickname: 1 to 100 characters; quote one with spaces. It keeps its
@@ -183,7 +245,8 @@ function helpFor(words: string[]): string {
   return COMMAND_HELP[`${command} ${action}`] ?? COMMAND_HELP[command ?? ''] ?? HELP;
 }
 
-type Command = (ctx: Context) => Promise<Outcome>;
+/** A command. Most take only `ctx`; `space` also reads its own flags. */
+type Command = (ctx: Context, flags: SpaceFlags) => Promise<Outcome>;
 
 const COMMANDS: Record<string, Command> = {
   init,
@@ -197,10 +260,11 @@ const COMMANDS: Record<string, Command> = {
   history,
   rename,
   skills,
+  space,
   logout,
 };
 
-function parse(argv: string[]): { flags: Flags; positionals: string[]; help: boolean; version: boolean } {
+function parse(argv: string[]): { flags: Flags & SpaceFlags; positionals: string[]; help: boolean; version: boolean } {
   const { values, positionals } = parseArgs({
     args: argv,
     allowPositionals: true,
@@ -230,6 +294,11 @@ function parse(argv: string[]): { flags: Flags; positionals: string[]; help: boo
       base: { type: 'string' },
       out: { type: 'string' },
       limit: { type: 'string' },
+      title: { type: 'string' },
+      summary: { type: 'string' },
+      expires: { type: 'string' },
+      token: { type: 'string' },
+      watch: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -263,7 +332,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
     if (!command) throw usage(`Unknown command "${name}". Run agentsync --help for usage.`);
     if (flags.overwrite && flags.keep) throw usage('Pass either --overwrite or --keep, not both.');
     const ctx = new Context(io, flags, args);
-    const { code = EXIT.ok, data = {} } = await command(ctx);
+    const { code = EXIT.ok, data = {} } = await command(ctx, flags);
     // A hook prints its own output, which must be all of stdout.
     if (flags.json && flags.hook === undefined) io.out(JSON.stringify({ ok: code === EXIT.ok, ...data }, null, 2));
     return code;
@@ -276,7 +345,7 @@ export async function run(argv: string[], io: Io): Promise<number> {
       return EXIT.ok;
     }
     if (flags.json) {
-      const details = error instanceof CliError ? error.details : {};
+      const details = error instanceof CliError ? error.details : error instanceof ORPCError ? { code: error.code } : {};
       io.out(JSON.stringify({ ok: false, error: { message, exitCode: code, ...details } }, null, 2));
     } else {
       const color = flags.color && !flags.plain && !io.env.NO_COLOR && io.tty.stderr && io.env.TERM !== 'dumb';

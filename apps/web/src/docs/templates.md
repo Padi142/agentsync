@@ -45,7 +45,7 @@ Show text only on some Machines, or only to some agents:
 {{if agent == "codex"}}
 Run the tests before you say you're done.
 {{else}}
-Use the agentsync skill when you change these instructions.
+Use the agentsync-instructions skill when you change these instructions.
 {{end}}
 ```
 

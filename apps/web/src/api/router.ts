@@ -13,6 +13,8 @@ import { getTemplate, putTemplate, templateHistory, templateRevisionText } from 
 import { getVariables, putVariables, variablesHistory } from '../db/variables';
 import { pollDeviceFlow, startDeviceFlow } from '../device';
 import type { Env } from '../env';
+import { getUserSpace } from '../db/spaces';
+import { SpaceError, spacesService } from '../spaces/service';
 import { skillFailure, skillsService } from '../skills/service';
 
 export interface RPCContext {
@@ -92,6 +94,23 @@ async function skillCall<T>(errors: SkillErrors, work: () => Promise<T>): Promis
     if (!failure) throw error;
     console.warn(`Skills call failed: ${failure.code}: ${(error as Error).message}`);
     throw failure.code === 'UNSUPPORTED_SKILL' ? errors.UNSUPPORTED_SKILL({ data: { reason: failure.reason } }) : errors[failure.code]();
+  }
+}
+
+/** The session user's Space `spaceId`; another user's Space looks like it does not exist. */
+async function ownSpace(context: Caller & { env: Env }, spaceId: string, errors: { NOT_FOUND: () => Error }) {
+  const row = await getUserSpace(context.env, context.userId, spaceId);
+  if (!row) throw errors.NOT_FOUND();
+  return row;
+}
+
+/** Run a Spaces service call, turning its `NOT_FOUND` into the contract's error. */
+async function spaceCall<T>(errors: { NOT_FOUND: () => Error }, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof SpaceError && error.code === 'NOT_FOUND') throw errors.NOT_FOUND();
+    throw error;
   }
 }
 
@@ -243,6 +262,39 @@ export const router = os.router({
     report: os.skills.report.use(auth).handler(async ({ context, input }) => {
       const machine = context.machine!; // `report` accepts only Machine tokens.
       await skillsService(context.env).report(machine.id, input.scan, input.results);
+    }),
+  },
+  spaces: {
+    create: os.spaces.create.use(auth).handler(async ({ context, input, errors }) => {
+      try {
+        return await spacesService(context.env).create(context.userId, input);
+      } catch (error) {
+        if (error instanceof SpaceError && error.code === 'QUOTA_EXCEEDED') throw errors.QUOTA_EXCEEDED({ message: error.message });
+        throw error;
+      }
+    }),
+    list: os.spaces.list.use(auth).handler(({ context }) => spacesService(context.env).list(context.userId)),
+    get: os.spaces.get.use(auth).handler(async ({ context, input, errors }) =>
+      spacesService(context.env).detail(await ownSpace(context, input.spaceId, errors))),
+    update: os.spaces.update.use(auth).handler(async ({ context, input, errors }) => {
+      const service = spacesService(context.env);
+      const row = await ownSpace(context, input.spaceId, errors);
+      return service.dashboard(await spaceCall(errors, () => service.update(row, input)));
+    }),
+    rotateLink: os.spaces.rotateLink.use(auth).handler(async ({ context, input, errors }) => {
+      const service = spacesService(context.env);
+      const row = await ownSpace(context, input.spaceId, errors);
+      return service.dashboard(await spaceCall(errors, () => service.rotateLink(row)));
+    }),
+    delete: os.spaces.delete.use(auth).handler(async ({ context, input, errors }) => {
+      const row = await ownSpace(context, input.spaceId, errors);
+      await spaceCall(errors, () => spacesService(context.env).remove(row));
+    }),
+    deleteFile: os.spaces.deleteFile.use(auth).handler(async ({ context, input, errors }) => {
+      const service = spacesService(context.env);
+      const row = await ownSpace(context, input.spaceId, errors);
+      await spaceCall(errors, () => service.deleteFile(row, input.path));
+      return service.detail((await getUserSpace(context.env, context.userId, row.id)) ?? row);
     }),
   },
 });

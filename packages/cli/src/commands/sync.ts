@@ -27,7 +27,7 @@ export type TargetResult = {
 function driftPrompt(path: string, diff: string): string {
   return `AgentSync found Drift in ${path}: it was edited by hand since AgentSync last wrote it.
 Targets are Rendered output, so this change belongs in the Template (shared by every Machine)
-or in this Machine's Variables. Use the agentsync skill.
+or in this Machine's Variables. Use the agentsync-instructions skill.
 
 The hand edit:
 
