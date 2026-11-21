@@ -299,9 +299,56 @@ export const skillFolderVersion = sqliteTable(
   (table) => [primaryKey({ columns: [table.repoId, table.commit, table.path] }), index('skill_folder_version_hash_idx').on(table.repoId, table.path, table.installedHash)],
 );
 
+/**
+ * A Space: a live collection of files shared by its Share Link. Status is derived (`spaceStatus` in the
+ * contract) from `is_private` and `expires_at`; the cron purges Spaces `SPACE_LIMITS.graceDays` after they expire.
+ */
+export const space = sqliteTable(
+  'space',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    summary: text('summary'),
+    /** The secret in the Share Link URL. Rotating it replaces it. */
+    shareToken: text('share_token').notNull().unique(),
+    /** SHA-256 of the Write Token, which is returned once by `spaces.create`. */
+    writeTokenHash: text('write_token_hash').notNull().unique(),
+    isPrivate: integer('is_private', { mode: 'boolean' }).notNull(),
+    /** `null`: permanent. */
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }),
+    /** The sum of `space_file.size`, kept in step with every write for quota checks. */
+    totalBytes: integer('total_bytes').notNull(),
+    createdAt: timestamp('created_at'),
+    updatedAt: timestamp('updated_at'),
+  },
+  (table) => [index('space_user_idx').on(table.userId, table.createdAt), index('space_expires_idx').on(table.expiresAt)],
+);
+
+/** The latest version of one file in a Space. Its bytes are the R2 object `r2_key`, under the `<space id>/` prefix. */
+export const spaceFile = sqliteTable(
+  'space_file',
+  {
+    spaceId: text('space_id')
+      .notNull()
+      .references(() => space.id, { onDelete: 'cascade' }),
+    /** Normalized (`normalizeSpacePath`). */
+    path: text('path').notNull(),
+    size: integer('size').notNull(),
+    contentType: text('content_type').notNull(),
+    sha256: text('sha256').notNull(),
+    r2Key: text('r2_key').notNull(),
+    updatedAt: timestamp('updated_at'),
+  },
+  (table) => [primaryKey({ columns: [table.spaceId, table.path] })],
+);
+
 export const schema = {
   user, session, account, verification,
   template, templateRevision, machine, machineCredential,
   machineVariables, machineVariablesRevision, conflict, deviceAuthorization,
   skill, skillMachine, skillPinMove, skillSettings, skillExclusion, machineSkillReport, skillFolderVersion,
+  space, spaceFile,
 };

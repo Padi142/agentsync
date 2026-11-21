@@ -25,9 +25,15 @@ Claude Code and Codex read their instructions before a `SessionStart` hook can c
 
 pi waits for the extension before it reads its instructions, so a pi session gets the new Template as it starts. OpenCode waits for the plugin too, and reads its instructions again before each request, so it also picks up a file another agent's hook updated while it was open.
 
-## The agent skill
+## The agent skills
 
-`init` also installs an `agentsync` skill, so your agents know how to work with AgentSync: the commands, the exit codes, the Template syntax, how to fold Drift into the Template, and how to resolve Conflicts. It goes in `~/.claude/skills/agentsync/` for Claude Code and `~/.agents/skills/agentsync/` for Codex, pi and OpenCode.
+`init` also installs three skills, so your agents know how to work with AgentSync:
+
+- `agentsync-instructions`: the commands, exit codes and Template syntax, how to fold Drift into the Template, and how to resolve Conflicts.
+- `agentsync-skills`: installing the Skills you picked with `agentsync skills sync`.
+- `agentsync-spaces`: sharing files through [Spaces](/docs/spaces).
+
+They go in `~/.claude/skills/<name>/` for Claude Code and `~/.agents/skills/<name>/` for Codex, pi and OpenCode. `init` removes the older single `agentsync` skill if nobody changed it.
 
 ## Removing AgentSync
 

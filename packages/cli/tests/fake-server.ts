@@ -1,9 +1,41 @@
-import { contract, type Conflict, type DesiredSkill, type Machine, type ScannedSkill, type SkillSyncResult, type Target } from '@agentsync/contract';
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  contract, normalizeSpacePath, SPACE_ERROR_STATUS, SPACE_LIMITS, spaceExpiresAt, spaceStatus, spaceWriterUpdateSchema,
+  type Conflict, type DesiredSkill, type Machine, type PublicSpace, type ScannedSkill, type SkillSyncResult, type SpaceErrorCode,
+  type SpaceEvent, type SpaceFile, type Target,
+} from '@agentsync/contract';
 import { hasConflictMarkers, validate } from '@agentsync/template';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 
 const SERVER = 'http://agentsync.test';
+
+/** A Space as the fake server keeps it. Tests may reach in, e.g. to expire one or plant a bad path. */
+export interface FakeSpace {
+  id: string;
+  title: string;
+  summary: string | null;
+  shareToken: string;
+  writeToken: string;
+  isPrivate: boolean;
+  expiresAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  files: Map<string, Omit<SpaceFile, 'path'> & { bytes: Uint8Array<ArrayBuffer> }>;
+}
+
+const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+/**
+ * The fake end of a Space's WebSocket (`/s/<token>/ws`), standing in for Node's global `WebSocket`
+ * (tests `vi.stubGlobal` it). It opens on the next tick, or closes without opening when the link
+ * doesn't work or the server is offline.
+ */
+export interface FakeSocket extends EventTarget {
+  readonly shareToken: string;
+  open: boolean;
+  close(): void;
+}
 const os = implement(contract).$context<{ token: string | undefined }>();
 
 /**
@@ -29,6 +61,11 @@ export function fakeServer() {
     skills: [] as DesiredSkill[],
     /** Each `skills.report`, in order. */
     reports: [] as { machineId: string; scan: ScannedSkill[]; results?: SkillSyncResult[] }[],
+    spaces: new Map<string, FakeSpace>(),
+    /** Each Spaces HTTP request (`PUT /api/spaces/…`, `GET /s/…`), so tests can see what was uploaded or skipped. */
+    spaceRequests: [] as string[],
+    /** The Space WebSockets ever opened, open or closed. */
+    sockets: [] as FakeSocket[],
   };
   let nextId = 1;
 
@@ -196,6 +233,32 @@ export function fakeServer() {
       }),
       discard: os.conflicts.discard.handler(sessionOnly),
     },
+    spaces: {
+      create: os.spaces.create.handler(({ context, input }) => {
+        machineOf(context.token);
+        const now = new Date();
+        const space: FakeSpace = {
+          id: `space-${nextId++}`,
+          title: input.title,
+          summary: input.summary || null,
+          shareToken: randomBytes(24).toString('base64url'),
+          writeToken: `asw_${randomBytes(32).toString('base64url')}`,
+          isPrivate: false,
+          expiresAt: spaceExpiresAt(input.expires ?? `${SPACE_LIMITS.defaultDays}d`, now),
+          createdAt: now,
+          updatedAt: now,
+          files: new Map(),
+        };
+        state.spaces.set(space.id, space);
+        return { space: publicSpace(space), writeToken: space.writeToken };
+      }),
+      list: os.spaces.list.handler(sessionOnly),
+      get: os.spaces.get.handler(sessionOnly),
+      update: os.spaces.update.handler(sessionOnly),
+      rotateLink: os.spaces.rotateLink.handler(sessionOnly),
+      delete: os.spaces.delete.handler(sessionOnly),
+      deleteFile: os.spaces.deleteFile.handler(sessionOnly),
+    },
     skills: {
       overview: os.skills.overview.handler(sessionOnly),
       search: os.skills.search.handler(sessionOnly),
@@ -220,11 +283,134 @@ export function fakeServer() {
     },
   });
 
+  function publicSpace(space: FakeSpace): PublicSpace {
+    const files = [...space.files].map(([path, { bytes: _, ...file }]) => ({ path, ...file }));
+    return {
+      id: space.id,
+      title: space.title,
+      summary: space.summary,
+      status: spaceStatus(space),
+      expiresAt: space.expiresAt,
+      shareUrl: `${SERVER}/s/${space.shareToken}`,
+      totalBytes: files.reduce((sum, file) => sum + file.size, 0),
+      files,
+      createdAt: space.createdAt,
+      updatedAt: space.updatedAt,
+    };
+  }
+
+  const fail = (code: SpaceErrorCode, message: string = code) =>
+    Response.json({ error: { code, message } }, { status: SPACE_ERROR_STATUS[code] });
+
+  /** Send `event` to every open socket of `space`, closing them after a `closed`. */
+  function broadcast(space: FakeSpace, event: SpaceEvent | Record<string, unknown>) {
+    for (const socket of state.sockets) {
+      if (!socket.open || socket.shareToken !== space.shareToken) continue;
+      socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(event) }));
+      if (event.type === 'closed') socket.close();
+    }
+  }
+
+  /** The Write Token routes, as `SPACE_WRITER_ROUTES` describes them. */
+  async function writerRoute(request: Request, segments: string[]): Promise<Response> {
+    const [id, files, ...rest] = segments;
+    const space = id ? state.spaces.get(id) : undefined;
+    if (!space || request.headers.get('Authorization') !== `Bearer ${space.writeToken}`) return fail('UNAUTHORIZED');
+    if (request.method === 'GET' && !files) return Response.json(publicSpace(space));
+    if (spaceStatus(space) === 'expired') return fail('SPACE_EXPIRED', 'This Space has expired.');
+    space.updatedAt = new Date();
+    if (!files) {
+      if (request.method === 'DELETE') {
+        broadcast(space, { type: 'closed', reason: 'deleted' });
+        state.spaces.delete(space.id);
+        return new Response(null, { status: 204 });
+      }
+      const update = spaceWriterUpdateSchema.parse(await request.json());
+      if (update.title !== undefined) space.title = update.title;
+      if (update.summary !== undefined) space.summary = update.summary;
+      if (update.expires !== undefined) space.expiresAt = spaceExpiresAt(update.expires);
+      const { files: _, ...metadata } = publicSpace(space);
+      broadcast(space, { type: 'space', space: metadata });
+      return Response.json(publicSpace(space));
+    }
+    const path = rest.map(decodeURIComponent).join('/');
+    if (normalizeSpacePath(path) !== path) return fail('INVALID_PATH');
+    if (request.method === 'DELETE') {
+      if (!space.files.delete(path)) return fail('NOT_FOUND');
+      broadcast(space, { type: 'fileDeleted', path });
+      return new Response(null, { status: 204 });
+    }
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.length > SPACE_LIMITS.fileBytes) return fail('FILE_TOO_LARGE');
+    const hash = sha256(bytes);
+    const claimed = request.headers.get('X-Content-SHA256');
+    if (claimed && claimed !== hash) return fail('INVALID_REQUEST', 'X-Content-SHA256 does not match the body.');
+    const others = [...space.files].filter(([other]) => other !== path).reduce((sum, [, file]) => sum + file.size, 0);
+    if (others + bytes.length > SPACE_LIMITS.spaceBytes) return fail('SPACE_FULL');
+    const file = { size: bytes.length, contentType: request.headers.get('Content-Type') ?? 'application/octet-stream', sha256: hash, updatedAt: new Date() };
+    space.files.set(path, { ...file, bytes });
+    broadcast(space, { type: 'file', file: { path, ...file } });
+    return Response.json({ path, ...file });
+  }
+
+  /** The Share Link routes the CLI reads: `.json` and `/raw/<path>`. */
+  function publicRoute(request: Request, segments: string[]): Response {
+    const [first = '', kind, ...rest] = segments;
+    const shareToken = first.replace(/\.(json|md)$/, '');
+    const space = [...state.spaces.values()].find((candidate) => candidate.shareToken === shareToken);
+    if (!space || space.isPrivate) return fail('NOT_FOUND');
+    if (spaceStatus(space) === 'expired') return fail('SPACE_EXPIRED');
+    if (kind === undefined && (first.endsWith('.json') || request.headers.get('Accept')?.includes('application/json'))) {
+      return Response.json(publicSpace(space));
+    }
+    const file = kind === 'raw' ? space.files.get(rest.map(decodeURIComponent).join('/')) : undefined;
+    if (!file) return fail('NOT_FOUND');
+    return new Response(file.bytes, { headers: { 'Content-Type': file.contentType } });
+  }
+
+  /** A `WebSocket` constructor bound to this server. */
+  class WebSocket extends EventTarget implements FakeSocket {
+    readonly shareToken: string;
+    open = false;
+    ended = false;
+    constructor(url: string) {
+      super();
+      this.shareToken = new URL(url).pathname.split('/')[2] ?? '';
+      state.sockets.push(this);
+      setTimeout(() => {
+        if (this.ended) return;
+        const space = [...state.spaces.values()].find((candidate) => candidate.shareToken === this.shareToken);
+        if (state.offline || !space || space.isPrivate || spaceStatus(space) === 'expired') {
+          this.dispatchEvent(new Event('error'));
+          return this.close();
+        }
+        this.open = true;
+        this.dispatchEvent(new Event('open'));
+      });
+    }
+    close() {
+      if (this.ended) return;
+      this.ended = true;
+      this.open = false;
+      setTimeout(() => this.dispatchEvent(new Event('close')));
+    }
+  }
+
   const handler = new RPCHandler(router);
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
     if (state.offline || [...state.down].some((path) => request.url.endsWith(path))) throw new TypeError('fetch failed');
     state.requests.push(request.headers);
+    const { pathname } = new URL(request.url);
+    const [, area, sub, ...segments] = pathname.split('/');
+    if (area === 'api' && sub === 'spaces') {
+      state.spaceRequests.push(`${request.method} ${pathname}`);
+      return writerRoute(request, segments);
+    }
+    if (area === 's' && sub) {
+      state.spaceRequests.push(`${request.method} ${pathname}`);
+      return publicRoute(request, [sub, ...segments]);
+    }
     const token = request.headers.get('Authorization')?.replace(/^Bearer /, '');
     const { matched, response } = await handler.handle(request, { prefix: '/rpc', context: { token } });
     return matched ? response : new Response('Not found', { status: 404 });
@@ -239,5 +425,10 @@ export function fakeServer() {
     return { machine, token };
   };
 
-  return { url: SERVER, state, fetch, register, putTemplate };
+  /** Drop every open Space socket, as a lost connection would (no `closed` event). */
+  const dropSockets = () => {
+    for (const socket of state.sockets) socket.close();
+  };
+
+  return { url: SERVER, state, fetch, register, putTemplate, WebSocket, broadcast, dropSockets };
 }

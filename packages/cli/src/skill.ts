@@ -1,26 +1,35 @@
 import { lstatSync, readFileSync, rmdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { Agent } from './agents.js';
 import type { Context } from './context.js';
 import { removeOwned, writeOwned } from './owned.js';
 
-/** The agent skill shipped in this package, at `skill/SKILL.md`. */
-const skillText = () => readFileSync(new URL('../skill/SKILL.md', import.meta.url), 'utf8');
+/** The agent skills shipped in this package, each at `skills/<name>/SKILL.md`, in the order `init` lists them. */
+export const BUNDLED_SKILLS = ['agentsync-instructions', 'agentsync-skills', 'agentsync-spaces'] as const;
+
+/** The single skill AgentSync installed before `BUNDLED_SKILLS` replaced it. */
+const LEGACY_SKILL = 'agentsync';
+
+const bundledText = (name: (typeof BUNDLED_SKILLS)[number]) =>
+  readFileSync(new URL(`../skills/${name}/SKILL.md`, import.meta.url), 'utf8');
 
 /**
- * Install the skill for `agent`, or update it. A file is only replaced while it is still
+ * Install every bundled skill for `agent`, or update it. A file is only replaced while it is still
  * exactly what AgentSync wrote (by the hash in the config); a file someone wrote or changed is
- * left alone. Returns whether the skill was written.
+ * left alone. Returns each skill file and whether it was written.
  */
-export function installSkill(ctx: Context, agent: Agent): { file: string; written: boolean } {
-  const file = agent.skillFile(ctx.io);
-  const written = writeOwned((ctx.config.skills ??= {}), file, skillText());
-  if (written) ctx.save();
-  return { file, written };
+export function installSkills(ctx: Context, agent: Agent): { file: string; written: boolean }[] {
+  const record = (ctx.config.skills ??= {});
+  const results = BUNDLED_SKILLS.map((name) => {
+    const file = join(agent.skillsDir(ctx.io), name, 'SKILL.md');
+    return { file, written: writeOwned(record, file, bundledText(name)) };
+  });
+  if (results.some((result) => result.written)) ctx.save();
+  return results;
 }
 
 /**
- * Remove the skill's own directory (`skills/agentsync/`) once it is empty. A symlink there
+ * Remove a skill's own directory (`skills/<name>/`) once it is empty. A symlink there
  * (e.g. to a dotfiles directory) belongs to the person, so it stays.
  */
 function removeEmptyDir(dir: string): void {
@@ -33,9 +42,25 @@ function removeEmptyDir(dir: string): void {
   }
 }
 
-/** Remove the skill files AgentSync wrote that nobody changed since. */
+/** Remove the skill files AgentSync wrote that nobody changed since, the legacy `agentsync` skill included. */
 export function uninstallSkills(ctx: Context): { removed: string[]; kept: string[] } {
   const result = removeOwned(ctx.config.skills ?? {});
   for (const file of result.removed) removeEmptyDir(dirname(file));
+  return result;
+}
+
+/**
+ * Remove the legacy `agentsync` skill wherever AgentSync wrote it, if nobody changed it since (by
+ * the hash in the config). A changed one is `kept`, and stays in the config so `logout` still
+ * knows it; a folder AgentSync never wrote isn't in the config, so it is never touched.
+ */
+export function removeLegacySkills(ctx: Context): { removed: string[]; kept: string[] } {
+  const record = ctx.config.skills ?? {};
+  const legacy = Object.fromEntries(Object.entries(record).filter(([file]) => basename(dirname(file)) === LEGACY_SKILL));
+  const result = removeOwned(legacy);
+  const forgotten = Object.keys(legacy).filter((file) => !result.kept.includes(file));
+  for (const file of forgotten) delete record[file];
+  for (const file of result.removed) removeEmptyDir(dirname(file));
+  if (forgotten.length) ctx.save();
   return result;
 }

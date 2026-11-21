@@ -75,3 +75,17 @@ _Avoid_: Unmanaged skill, local skill, orphan
 **Skill Drift**:
 A managed Skill's folder on a Machine that no longer matches its Pin. If it matches a newer commit of the same repository, the dashboard offers that commit as the new Pin; otherwise it is a hand edit, and `skills sync` replaces it only with `--overwrite`.
 _Avoid_: Outdated skill, modified skill
+
+### Spaces
+
+**Space**:
+A live-updating collection of files hosted on the AgentSync server, created by an agent or user and shared via a Share Link. Each file keeps only its latest version.
+_Avoid_: File storage, bucket, drop, share
+
+**Share Link**:
+An unguessable read-only URL that grants anyone access to a Space without an AgentSync account. Expires after seven days by default (moving the Space to a thirty-day private grace period before deletion) unless extended or made permanent.
+_Avoid_: Public URL, access link, view link
+
+**Write Token**:
+The one-time secret returned when a Space is created, required to upload, edit, or remove its files. Stored only as a hash on the server and never saved in global CLI config, so write access stays scoped to the creating session.
+_Avoid_: Edit key, space key, upload token

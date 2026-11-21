@@ -44,6 +44,9 @@ Each procedure lists the auth kinds it accepts in its meta
 | `skills.assign`, `skills.update`, `skills.remove`, `skills.setAutoUpdate`, `skills.history`, `skills.diff` | ✓ | | `NOT_FOUND`, `UPSTREAM_UNAVAILABLE` |
 | `skills.updateAll`, `skills.settings` | ✓ | | |
 | `skills.report` | | own | |
+| `spaces.create` | | ✓ | `QUOTA_EXCEEDED` |
+| `spaces.list` | ✓ | | |
+| `spaces.get`, `spaces.update`, `spaces.rotateLink`, `spaces.delete`, `spaces.deleteFile` | ✓ | | `NOT_FOUND` |
 
 Every procedure that needs auth can also fail with `UNAUTHORIZED`.
 
@@ -86,5 +89,11 @@ procedures check that a Machine token's Machine matches `machineId`.
 - Each desired Skill carries `sources`: the repository's canonical name and the
   old names GitHub redirects to it. A Machine adopts an existing copy only if
   its lock names one of them.
+- A Machine can create a Space but never list or touch an existing one: `spaces.create`
+  returns the Space's Write Token once, and writing its files goes through plain HTTP
+  routes outside oRPC (`SPACE_WRITER_ROUTES`), authenticated by `Authorization: Bearer <Write Token>`
+  only, never a Machine token or cookie. They stream raw bodies, answer
+  `spaceErrorSchema` on failure, and share their schemas with the public Share Link
+  routes (`SPACE_PUBLIC_ROUTES`). Every Space path goes through `normalizeSpacePath`.
 - Variable names and Template syntax are checked by the server with
   `@agentsync/template`. This package does not depend on the grammar.

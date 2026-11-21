@@ -17,7 +17,7 @@ Keep the clone: the hooks run the CLI from it. To update, run `git pull && pnpm 
 
 | Command | What it does |
 | --- | --- |
-| `agentsync init` | Registers this computer, installs the hooks and the agent skill, then syncs. Safe to run again. |
+| `agentsync init` | Registers this computer, installs the hooks and the agent skills, then syncs. Safe to run again. |
 | `agentsync sync` | Writes the Template into each Target now. |
 | `agentsync status` | Shows each Target's state and open Conflicts, without writing anything. |
 | `agentsync history` | Shows each time AgentSync changed a Target on this Machine: when, what ran it (an agent's session start or a command), and which Template revision it brought. `--verbose` adds the diffs. |
@@ -29,8 +29,19 @@ Keep the clone: the hooks run the CLI from it. To update, run `git pull && pnpm 
 | `agentsync conflict resolve <id> <file>` | Saves a merged file as the next Template revision. |
 | `agentsync skills sync` | Installs, updates and removes this Machine's [Skills](/docs/skills). `--overwrite` replaces ones edited by hand. |
 | `agentsync skills status` | Shows where each Skill stands on this Machine, without changing anything. |
+| `agentsync space create [path]` | Creates a [Space](/docs/spaces), uploading a file or folder, and prints its Share Link and Write Token. `--title`, `--summary`, `--expires 7d\|never`. |
+| `agentsync space put <id> <file> [remote-path]` | Adds or replaces one file in a Space. |
+| `agentsync space push <id> <dir>` | Mirrors a folder into a Space: uploads new and changed files, removes the ones gone locally. |
+| `agentsync space rm <id> <remote-path>` | Removes one file from a Space. |
+| `agentsync space update <id>` | Changes a Space's `--title`, `--summary` or `--expires`. |
+| `agentsync space delete <id>` | Deletes a Space and its link. |
+| `agentsync space inspect <url>` | Shows a Space's title, status, expiry and files. |
+| `agentsync space get <url> <remote-path>` | Downloads one file from a Space. `--out <path>` says where. |
+| `agentsync space pull <url> <dir>` | Downloads every file of a Space. `--watch` keeps the folder updated live. |
 | `agentsync rename <nickname>` | Renames this Machine. |
-| `agentsync logout` | Deletes this Machine and removes the hooks and skill AgentSync installed. Targets and installed Skills stay. |
+| `agentsync logout` | Deletes this Machine and removes the hooks and agent skills AgentSync installed. Targets and installed Skills stay. |
+
+`space put`, `push`, `rm`, `update` and `delete` need the Space's Write Token, passed with `--token` or `AGENTSYNC_SPACE_TOKEN`. `space inspect`, `get` and `pull` take any Share Link and work without an account.
 
 ## Flags for every command
 
@@ -62,4 +73,4 @@ Scripts and agents can branch on these:
 
 ## Where things live
 
-The Machine token and settings are in `~/.config/agentsync/config.json` (or `$XDG_CONFIG_HOME/agentsync`, or `$AGENTSYNC_CONFIG_DIR`), readable only by you. Next to it, `history.jsonl` records every change AgentSync made to a Target on this Machine, with its diff; `agentsync history` reads it.
+The Machine token and settings are in `~/.config/agentsync/config.json` (or `$XDG_CONFIG_HOME/agentsync`, or `$AGENTSYNC_CONFIG_DIR`), readable only by you. A Space's Write Token is never saved there or anywhere else. Next to it, `history.jsonl` records every change AgentSync made to a Target on this Machine, with its diff; `agentsync history` reads it.

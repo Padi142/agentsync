@@ -4,7 +4,7 @@ The AgentSync CLI. It Renders your one Template (stored on the AgentSync server)
 this Machine's Variables into every Target, such as `~/.claude/CLAUDE.md`,
 `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md` and `~/.config/opencode/AGENTS.md`, and keeps
 them current from a hook that runs when each agent's session starts. It also installs the Skills you pick on the dashboard
-with `agentsync skills sync`.
+with `agentsync skills sync`, and shares files through live Spaces with `agentsync space`.
 See `GLOSSARY.md` at the repo root for the terms.
 
 It isn't published to npm yet (and the `agentsync` name there belongs to an unrelated
@@ -26,7 +26,7 @@ Run `agentsync --help` for the commands, and `agentsync help <command>` for one 
 
 | Command | What it does |
 |---|---|
-| `init` (alias `login`) | Registers the Machine with the WorkOS device flow, asks for a Machine nickname (hostname prefilled; `--nickname` skips it), detects agents, saves Variables (`--var`), imports an existing file on the account's first Machine, installs hooks and the skill, then syncs. Then it adopts the account's Skills that are already installed and offers to install the rest (`--skills` installs, `--no-skills` skips; without a terminal it skips and prints the command). Safe to run again. |
+| `init` (alias `login`) | Registers the Machine with the WorkOS device flow, asks for a Machine nickname (hostname prefilled; `--nickname` skips it), detects agents, saves Variables (`--var`), imports an existing file on the account's first Machine, installs hooks and the agent skills, then syncs. Then it adopts the account's Skills that are already installed and offers to install the rest (`--skills` installs, `--no-skills` skips; without a terminal it skips and prints the command). Safe to run again. |
 | `sync` | Renders the Template into each Target. Drift stops it with exit 3, unless `--overwrite` (keeps `<target>.agentsync-backup`) or `--keep` is passed, or you choose at the prompt. |
 | `edit` | Opens the Template in `$EDITOR` and saves it. `--file <path> --base <revision>` does the same without an editor. When the Template changed meanwhile, the edit is kept as a Conflict (exit 4). |
 | `template` | Prints the Template, or writes it with `--out`. |
@@ -35,8 +35,10 @@ Run `agentsync --help` for the commands, and `agentsync help <command>` for one 
 | `status` | Shows each Target's state and open Conflicts, without writing. |
 | `history` | Shows each change AgentSync made to this Machine's Targets: when, what ran it, which revision, and (`--verbose`) the diff. Local only. |
 | `skills sync \| status` | `sync` installs, updates and removes this Machine's Skills to match their Pins: the only command that does. A Skill blocked by a folder AgentSync didn't install is left alone (exit 3); one edited by hand too, until `--overwrite` replaces it (or removes it, if the Machine shouldn't have it). `status` shows each Skill's state without changing anything. `agentsync sync` also says what `skills sync` would do. |
+| `space create \| put \| push \| rm \| update \| delete` | Writes a Space (see [Spaces](#spaces)). `create [path] [--title] [--summary] [--expires 7d\|never]` uses the Machine token and prints the Share Link and the one-time Write Token; the rest take `<id>` and the Write Token (`--token` or `AGENTSYNC_SPACE_TOKEN`). `put <id> <file> [remote-path]`, `push <id> <dir>` (mirror: uploads new and changed files, removes remote ones gone locally), `rm <id> <remote-path>`, `update <id> [--title] [--summary] [--expires]`, `delete <id>`. |
+| `space inspect \| get \| pull` | Reads any Share Link, without an account: `inspect <url>`, `get <url> <remote-path> [--out <path>]`, `pull <url> <dir> [--watch]` (`--watch` follows the Space's WebSocket and keeps `<dir>` updated). |
 | `rename <nickname>` | Changes the Machine's nickname (also `init --nickname` on a registered Machine). Writes no Target; name-dependent Template output changes on the next `sync`. |
-| `logout` | Revokes the Machine and removes its token, plus the hooks and skill files AgentSync installed that nobody changed. Targets and installed Skills stay; AgentSync just stops managing them. |
+| `logout` | Revokes the Machine and removes its token, plus the hooks and agent skill files AgentSync installed that nobody changed. Targets and installed Skills stay; AgentSync just stops managing them. |
 
 A Machine deleted on the web stops syncing at once: ordinary commands exit 5 and hooks keep the existing files. The web cannot remove local config, hooks or files, so run `agentsync logout` and then `agentsync init` on it to register it again (it gets a new ID).
 
@@ -145,7 +147,7 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
 - **Reporting.** `skills sync` and `init` send a scan and their results to the server; `agentsync
   sync` and the hook only say what `skills sync` would do. The scan
   lists every skill folder with a `SKILL.md` in `~/.agents/skills` and Claude Code's `skills/`
-  (not the `agentsync` skill): name, the lock's GitHub source and ref, and the folder hash for
+  (not the CLI's own skills, `RESERVED_SKILL_NAMES`): name, the lock's GitHub source and ref, and the folder hash for
   ones from the lock. A hand-written folder is sent by name only. File contents are never sent.
 
 ## Hooks
@@ -171,7 +173,7 @@ absolute Node and script path (`npx`'s temporary directory does not count). The 
 records the exact handler it installed. Re-running `init` replaces that handler, and
 `logout` removes it, only while it is unchanged. Any other handler, even one that mentions
 `agentsync`, is left alone. The pi extension and the OpenCode plugin are whole files, so they
-are tracked like the skill: by a SHA-256 of what AgentSync wrote. A file that differs is left alone with a warning.
+are tracked like the agent skills: by a SHA-256 of what AgentSync wrote. A file that differs is left alone with a warning.
 
 Hook mode fails open. It never prompts, waits at most 2 seconds for the server, keeps the
 existing files when it cannot reach the server, always exits 0, and prints at most one
@@ -207,7 +209,7 @@ can reach them, so a Template change the hook writes takes effect from the next 
   rollout file records the old `AGENTS.md` text, even though the hook had already run.
 
 To soften the lag, the hook's line names the updated Target and tells the agent to read
-it when the current instructions matter. The skill says the same.
+it when the current instructions matter. The `agentsync-instructions` skill says the same.
 
 - **pi.** pi awaits an extension's factory before it reads `AGENTS.md` (in
   `DefaultResourceLoader.reload()`, `loadExtensions` runs before `loadProjectContextFiles`),
@@ -227,15 +229,30 @@ it when the current instructions matter. The skill says the same.
   request's system prompt held the new file and ended with the `AgentSync:` line, and a command
   that hung past the deadline was killed while OpenCode went on with the existing file.
 
-## Agent skill
+## Spaces
 
-`init` installs `skill/SKILL.md` as the `agentsync` skill: `~/.claude/skills/agentsync/`
-for Claude Code and `~/.agents/skills/agentsync/` for Codex, pi and OpenCode, which all read it there. The config keeps a SHA-256 of
-each skill file it writes. `init` updates, and `logout` removes, only a file that still
-matches it. A skill file AgentSync did not write, or that was changed since, is left alone
-with a warning. A symlinked `skills/agentsync/` directory stays: `logout` removes only the
-file inside it. It covers the commands, exit
-codes, Template syntax, folding Drift into the Template, and resolving Conflicts.
+A Space is a set of files shared through a Share Link (see `GLOSSARY.md`, `docs/adr/0003-…` and
+`docs/adr/0004-…`). `space create` is the only `space` command that uses the Machine token. It
+returns the Space's Write Token once, and every write after it sends that token instead
+(`Authorization: Bearer asw_…` on the contract's `SPACE_WRITER_ROUTES`). The CLI never writes it
+to the config or any other file, so write access stays with the session that holds it; the reader
+commands need no config at all. Every path goes through the contract's `normalizeSpacePath`,
+on upload and when `get` or `pull` writes a file locally.
+
+## Agent skills
+
+`init` installs three skills from `skills/`: `agentsync-instructions` (the Template and its syntax,
+Drift, Conflicts, history and the `AgentSync:` hook lines), `agentsync-skills` (`skills sync` and
+`status`) and `agentsync-spaces` (creating, writing and reading Spaces). Each goes to
+`~/.claude/skills/<name>/` for Claude Code and `~/.agents/skills/<name>/` for Codex, pi and
+OpenCode, which all read it there. The config keeps a SHA-256 of each skill file it writes.
+`init` updates, and `logout` removes, only a file that still matches it. A skill file AgentSync
+did not write, or that was changed since, is left alone with a warning. A symlinked
+`skills/<name>/` directory stays: `logout` removes only the file inside it.
+
+Older versions installed one `agentsync` skill. `init` removes it while it still matches the hash
+it recorded, and keeps one that was changed since, with a warning (`logout` removes it under the
+same rule). An `agentsync` folder AgentSync never recorded is left alone.
 
 ## Development
 

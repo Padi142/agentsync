@@ -2,22 +2,29 @@ import { readFile } from 'node:fs/promises';
 import { Miniflare } from 'miniflare';
 import { createORPCClient } from '@orpc/client';
 import { RPCLink } from '@orpc/client/fetch';
-import type { ContractClient } from '@agentsync/contract';
+import type { ContractClient, SpaceEvent } from '@agentsync/contract';
 import { vi } from 'vitest';
 import { api } from '../src/api';
 import type { Env } from '../src/env';
+import {
+  HUB_EXPIRES_AT_HEADER, HUB_SHARE_TOKEN_HEADER, HUB_STALE_TOKEN_STATUS, type HubCloseReason,
+} from '../src/spaces/hub-protocol';
 
 export const origin = 'http://app.test';
 
-/** A Miniflare D1 database with every migration applied, plus WorkOS fixture settings. */
+/** A Miniflare D1 database with every migration applied and an R2 bucket for Spaces, plus WorkOS fixture settings. */
 export async function createTestEnv() {
+  const hub = fakeSpaceHub();
   const mf = new Miniflare({
     modules: true,
     script: 'export default { fetch() { return new Response("ok") } }',
     d1Databases: ['DB'],
+    r2Buckets: ['SPACES_BUCKET'],
   });
   const env: Env = {
     DB: (await mf.getD1Database('DB')) as unknown as D1Database,
+    SPACES_BUCKET: (await mf.getR2Bucket('SPACES_BUCKET')) as unknown as R2Bucket,
+    SPACE_HUB: hub.namespace,
     WORKOS_API_KEY: 'sk_test_fixture',
     WORKOS_CLIENT_ID: 'client_fixture',
     WORKOS_COOKIE_PASSWORD: 'test-only-cookie-password-at-least-32-characters',
@@ -30,13 +37,13 @@ export async function createTestEnv() {
     await env.DB.batch(sql.split('--> statement-breakpoint')
       .map((s) => s.trim()).filter(Boolean).map((s) => env.DB.prepare(s)));
   }
-  return { mf, env };
+  return { mf, env, hub };
 }
 
 /** Delete every row, children first. */
 export async function resetDb(env: Env) {
   for (const table of [
-    'skill_folder_version', 'skill_exclusion', 'skill_settings', 'machine_skill_report', 'skill_pin_move', 'skill_machine', 'skill',
+    'space_file', 'space', 'skill_folder_version', 'skill_exclusion', 'skill_settings', 'machine_skill_report', 'skill_pin_move', 'skill_machine', 'skill',
     'device_authorization', 'conflict', 'machine_variables_revision', 'machine_variables',
     'machine_credential', 'machine', 'template_revision', 'template', 'user',
   ]) {
@@ -127,4 +134,63 @@ export function fakeWorkOSDevice() {
     },
     restore() { spy.mockRestore(); },
   };
+}
+
+/**
+ * A fake `SPACE_HUB` namespace: records the events the Worker sends each Space's `SpaceHub`
+ * (`close` and `rotate` are recorded as the `closed` event they send) and the upgrades it accepts.
+ * Like the real hub, it remembers each Space's Share Link token and refuses upgrades for another
+ * with `HUB_STALE_TOKEN_STATUS`. `beforeUpgrade` runs before each upgrade is answered, to stage races.
+ * Set `failing` to make every call throw, like a Durable Object outage.
+ */
+export function fakeSpaceHub() {
+  const fake = {
+    events: [] as { spaceId: string; event: SpaceEvent }[],
+    upgrades: [] as { spaceId: string; token: string | null; expiresAt: string | null }[],
+    tokens: new Map<string, string>(),
+    failing: false,
+    beforeUpgrade: undefined as (() => Promise<void>) | undefined,
+    namespace: undefined as unknown as Env['SPACE_HUB'],
+    /** The events sent to one Space, in order. */
+    eventsOf: (spaceId: string) => fake.events.filter((e) => e.spaceId === spaceId).map((e) => e.event),
+    reset() {
+      fake.events.length = 0;
+      fake.upgrades.length = 0;
+      fake.tokens.clear();
+      fake.failing = false;
+      fake.beforeUpgrade = undefined;
+    },
+  };
+  const stub = (spaceId: string) => {
+    const call = async <T>(work: () => T | Promise<T>) => {
+      if (fake.failing) throw new Error('SpaceHub is down');
+      return work();
+    };
+    const closed = (reason: HubCloseReason) => fake.events.push({ spaceId, event: { type: 'closed', reason } });
+    return {
+      broadcast: (event: SpaceEvent) => call(() => { fake.events.push({ spaceId, event }); }),
+      close: (reason: HubCloseReason) => call(() => {
+        closed(reason);
+        if (reason === 'deleted') fake.tokens.delete(spaceId);
+      }),
+      rotate: (token: string) => call(() => {
+        fake.tokens.set(spaceId, token);
+        closed('rotated');
+      }),
+      fetch: (request: Request) => call(async () => {
+        await fake.beforeUpgrade?.();
+        const token = request.headers.get(HUB_SHARE_TOKEN_HEADER);
+        const current = fake.tokens.get(spaceId);
+        if (current && current !== token) return new Response('stale', { status: HUB_STALE_TOKEN_STATUS });
+        if (token) fake.tokens.set(spaceId, token);
+        fake.upgrades.push({ spaceId, token, expiresAt: request.headers.get(HUB_EXPIRES_AT_HEADER) });
+        return new Response('upgraded by the fake SpaceHub');
+      }),
+    };
+  };
+  fake.namespace = {
+    idFromName: (name: string) => ({ name, toString: () => name }),
+    get: (id: { name: string }) => stub(id.name),
+  } as unknown as Env['SPACE_HUB'];
+  return fake;
 }

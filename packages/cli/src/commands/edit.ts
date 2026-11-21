@@ -12,7 +12,7 @@ import { parseRevision, resolutionProblem, resolveConflict } from './conflict.js
 
 function conflictPrompt(conflict: Conflict): string {
   return `AgentSync could not save a Template edit: the Template changed since the edit began, so the
-edit was kept as Conflict ${conflict.id}. Use the agentsync skill to resolve it.
+edit was kept as Conflict ${conflict.id}. Use the agentsync-instructions skill to resolve it.
 
 1. Run \`agentsync conflict get ${conflict.id} --out <file>\`. It is the Template with git-style
    <<<<<<< ======= >>>>>>> markers around the lines both edits changed.

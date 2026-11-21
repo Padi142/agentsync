@@ -99,6 +99,8 @@ function Layout() {
   const path = useRouterState({ select: (state) => state.location.pathname });
   // The landing page's `returnTo` (set when a signed-out visit was sent there) applies here too.
   const returnTo = useRouterState({ select: (state) => state.location.search.returnTo });
+  // A Share Link's viewer is public and fills the window, without the app's chrome.
+  if (path.startsWith('/s/')) return <main><Outlet /></main>;
   return (
     <>
       {loading ? <div className="loading-bar" aria-hidden="true" /> : null}
@@ -111,6 +113,7 @@ function Layout() {
                 className={isTemplatePath(path) ? 'active' : undefined}>Template</Link>
               <Link to="/machines">Machines</Link>
               <Link to="/skills">Skills</Link>
+              <Link to="/spaces">Spaces</Link>
             </>
           ) : null}
           <Link to="/docs">Docs</Link>

@@ -11,7 +11,7 @@ import { readText } from '../files.js';
 import { installHook } from '../hooks.js';
 import { expandHome, tildify } from '../paths.js';
 import { machineClient } from '../session.js';
-import { installSkill } from '../skill.js';
+import { installSkills, removeLegacySkills } from '../skill.js';
 import { checkedNickname, nicknameCheck } from '../nickname.js';
 import { changeVariables, parseAssignments } from '../variables.js';
 import { initSkills } from './skills.js';
@@ -208,8 +208,8 @@ async function askForVariables(ctx: Context, client: ContractClient, machineId: 
 }
 
 /**
- * Register this Machine (if needed), then set up its Variables, Template, hooks and skill, sync, and
- * offer to install the account's Skills.
+ * Register this Machine (if needed), then set up its Variables, Template, hooks and agentsync skills
+ * (replacing the legacy `agentsync` skill), sync, and offer to install the account's Skills.
  */
 export async function init(ctx: Context): Promise<Outcome> {
   const server = chooseServer(ctx);
@@ -262,13 +262,17 @@ export async function init(ctx: Context): Promise<Outcome> {
       }
     }
     if (ctx.flags.skill) {
-      const { file, written } = installSkill(ctx, agent);
-      const list = written ? skills : skillsLeftAlone;
-      if (!list.includes(tildify(file, ctx.io))) list.push(tildify(file, ctx.io));
+      for (const { file, written } of installSkills(ctx, agent)) {
+        const list = written ? skills : skillsLeftAlone;
+        if (!list.includes(tildify(file, ctx.io))) list.push(tildify(file, ctx.io));
+      }
     }
   }
-  if (skills.length) ctx.detail(`Installed the agentsync skill in ${skills.join(', ')}.`);
-  const installed = [hooks.length && 'hooks', skills.length && 'the agentsync skill'].filter(Boolean).join(' and ');
+  const legacy = ctx.flags.skill ? removeLegacySkills(ctx) : { removed: [], kept: [] };
+  const legacySkill = { removed: legacy.removed.map((file) => tildify(file, ctx.io)), kept: legacy.kept.map((file) => tildify(file, ctx.io)) };
+  if (skills.length) ctx.detail(`Installed the agentsync skills in ${skills.join(', ')}.`);
+  for (const file of legacySkill.removed) ctx.detail(`Removed the old agentsync skill from ${file}; the new skills replace it.`);
+  const installed = [hooks.length && 'hooks', skills.length && 'the agentsync skills'].filter(Boolean).join(' and ');
   if (installed) ctx.success(`Installed ${installed} for ${agents.map((agent) => agent.name).join(', ')}`);
   if (hooks.length && agents.some((agent) => agent.id === 'codex')) {
     ctx.warn('Codex: open Codex, run /hooks and trust the new hook. It runs only once you do.');
@@ -277,7 +281,10 @@ export async function init(ctx: Context): Promise<Outcome> {
     ctx.warn(`Left ${file} alone: AgentSync did not write it, or it was changed since. Remove it to get the AgentSync hook.`);
   }
   for (const file of skillsLeftAlone) {
-    ctx.warn(`Left ${file} alone: AgentSync did not write it, or it was changed since. Remove it to get the agentsync skill.`);
+    ctx.warn(`Left ${file} alone: AgentSync did not write it, or it was changed since. Remove it to get AgentSync's version.`);
+  }
+  for (const file of legacySkill.kept) {
+    ctx.warn(`Kept the old agentsync skill at ${file}: it was changed since AgentSync installed it. The new agentsync-* skills replace it, so remove it once you have kept what you need.`);
   }
 
   const payload = await client.machines.sync();
@@ -287,6 +294,6 @@ export async function init(ctx: Context): Promise<Outcome> {
   const failed = accountSkills.results.some((result) => result.status === 'failed');
   return {
     code: code !== undefined && code !== EXIT.ok ? code : failed ? EXIT.error : EXIT.ok,
-    data: { machineId, nickname: machine.nickname, hostname: machine.hostname, imported, hooks, hooksLeftAlone, skills, skillsLeftAlone, accountSkills, ...data },
+    data: { machineId, nickname: machine.nickname, hostname: machine.hostname, imported, hooks, hooksLeftAlone, skills, skillsLeftAlone, legacySkill, accountSkills, ...data },
   };
 }

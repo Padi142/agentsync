@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import type { Element, ElementContent, Root, RootContent, Text } from 'hast';
 import type { ReactNode } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import ReactMarkdown, { type Components, type UrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { fillInstallDir, useInstallDir } from '../commands';
 import type { MarkedRange } from '../preview';
@@ -128,18 +128,20 @@ const docsComponents: Components = {
 /**
  * GitHub-flavored Markdown as React elements. Raw HTML in the source is shown as text, never
  * run. `ranges` marks text that came from Variables (see `renderMarked`). `docs` turns on what
- * docs pages need (see `docsComponents`).
+ * docs pages need (see `docsComponents`). `urlTransform` rewrites link and image URLs, e.g. a Space
+ * file's relative ones; it should start from react-markdown's `defaultUrlTransform`, which drops unsafe ones.
  */
-export function Markdown({ children, ranges = [], docs = false, className = 'prose' }: {
+export function Markdown({ children, ranges = [], docs = false, className = 'prose', urlTransform }: {
   children: string;
   ranges?: MarkedRange[];
   docs?: boolean;
   className?: string;
+  urlTransform?: UrlTransform;
 }) {
   return (
     <div className={className}>
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkHtmlAsText]} rehypePlugins={[[rehypeMarks, ranges]]}
-        components={docs ? docsComponents : components}>
+        components={docs ? docsComponents : components} urlTransform={urlTransform}>
         {children}
       </ReactMarkdown>
     </div>

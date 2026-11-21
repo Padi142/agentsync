@@ -3,6 +3,7 @@ import { RPCHandler } from '@orpc/server/fetch';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { router, createRPCContext } from './router';
+import { spacesApi } from './spaces';
 import {
   getAppOrigin, handleLogin, handleCallback, handleLogout, handleEmailStart, handleEmailVerify, getSession,
   type AuthSession,
@@ -19,11 +20,15 @@ api.use('*', async (c, next) => {
   c.header('Cache-Control', 'private, no-store');
   c.header('Referrer-Policy', 'no-referrer');
   // Browsers send Origin on every POST. A request with neither Origin nor cookies (the CLI)
-  // carries no ambient credentials, so it cannot be a cross-site forgery.
+  // carries no ambient credentials, so it cannot be a cross-site forgery. The Space Write Token
+  // routes ignore cookies anyway; a browser's cookies there mean it isn't the CLI, so they're refused too.
   const origin = c.req.header('Origin');
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method) &&
-      (origin ? origin !== getAppOrigin(c.env) : c.req.header('Cookie') !== undefined)) {
+  const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method);
+  if (unsafe && (origin ? origin !== getAppOrigin(c.env) : c.req.header('Cookie') !== undefined)) {
     return c.json({ error: 'Invalid request origin.' }, 403);
+  }
+  if (unsafe && c.req.path.startsWith('/api/spaces/') && c.req.header('Cookie') !== undefined) {
+    return c.json({ error: { code: 'UNAUTHORIZED', message: 'Use a Write Token, not cookies.' } }, 401);
   }
   await next();
 });
@@ -52,4 +57,5 @@ api.use('/rpc/*', async (c, next) => {
   if (matched) return c.newResponse(response.body, response);
   await next();
 });
+api.route('/', spacesApi);
 api.all('*', (c) => c.notFound());

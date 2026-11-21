@@ -9,7 +9,7 @@
   },
   "files": [
     "dist",
-    "skill",
+    "skills",
     "setup-prompt.md"
   ],
   "engines": {

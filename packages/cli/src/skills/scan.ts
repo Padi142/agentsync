@@ -1,6 +1,6 @@
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { RESERVED_SKILL_NAME, type ScannedSkill } from '@agentsync/contract';
+import { RESERVED_SKILL_NAMES, type ScannedSkill } from '@agentsync/contract';
 import type { Io } from '../io.js';
 import { writeJson } from '../files.js';
 import { folderHash, HashTimeout } from './hash.js';
@@ -84,8 +84,8 @@ const MAX_REPORTED = 1000;
  * Scan this Machine's skills in-process: read the `skills` lock, list both skills directories and hash
  * the folders that came from the lock or that AgentSync manages. `names` are looked at even if absent
  * (the Skills this Machine should have); with `only`, nothing else is. A folder without a SKILL.md is
- * not reported (Claude Code keeps its own `synced/` there), and neither is the CLI's own `agentsync`
- * skill. Past `deadline` it throws (`HashTimeout`).
+ * not reported (Claude Code keeps its own `synced/` there), and neither are the CLI's own
+ * `agentsync*` skills. Past `deadline` it throws (`HashTimeout`).
  */
 export async function scanSkills(
   io: Io,
@@ -96,7 +96,7 @@ export async function scanSkills(
   const lock = await readLock(io);
   const listed = only ? [] : [...(await Promise.all(PLACES.map((place) => listing(skillDir(io, place))))).flat(), ...Object.keys(managed)];
   const all = new Set([...listed, ...names]);
-  all.delete(RESERVED_SKILL_NAME);
+  for (const name of RESERVED_SKILL_NAMES) all.delete(name);
   const folders = new Map<string, Folder>();
   const items: ScannedSkill[] = [];
   for (const name of [...all].sort()) {

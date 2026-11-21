@@ -22,7 +22,7 @@ I'm on {{machine.os}}, and my editor is {{editor}}.
 {{if agent == "codex"}}
 Run the tests before you say you're done.
 {{else}}
-Use the agentsync skill to change these notes.
+Use the agentsync-instructions skill to change these notes.
 {{end}}`;
 
 const MACHINES = [

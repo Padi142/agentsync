@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  desiredSkillSchema, gitShaSchema, RESERVED_SKILL_NAME, skillNameSchema, type ContractClient, type DesiredSkill, type SkillSyncResult, type SyncPayload,
+  desiredSkillSchema, gitShaSchema, RESERVED_SKILL_NAMES, skillNameSchema, type ContractClient, type DesiredSkill, type SkillSyncResult, type SyncPayload,
 } from '@agentsync/contract';
 import { findAgent } from '../agents.js';
 import type { Context, Outcome } from '../context.js';
@@ -53,8 +53,8 @@ function checkedDesired(payload: SyncPayload) {
   /** Names the server lists that can't be acted on: whatever is installed under them stays. */
   const keep = new Set<string>();
   for (const skill of payload.skills) {
-    // The CLI's own skill is never a Skill, whatever the server says.
-    if (skill.name !== RESERVED_SKILL_NAME && desiredSkillSchema.safeParse(skill).success) {
+    // The CLI's own skills are never Skills, whatever the server says.
+    if (!RESERVED_SKILL_NAMES.includes(skill.name) && desiredSkillSchema.safeParse(skill).success) {
       valid.push(skill);
       continue;
     }
