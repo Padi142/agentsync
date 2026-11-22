@@ -64,6 +64,13 @@
       "when": 1795370838487,
       "tag": "0009_skill_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1795372278275,
+      "tag": "0010_skill_request_decision",
+      "breakpoints": true
     }
   ]
 }

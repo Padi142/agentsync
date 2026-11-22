@@ -309,7 +309,8 @@ export interface StoredProposal {
 /**
  * A Machine's Skill Request: Skills of one repository, pinned and audited by the server, waiting for a
  * signed-in browser. `resolving` while the server still pins some (a large repository takes several
- * calls); it counts as open. Open requests past `expires_at` are expired, whatever their status says.
+ * calls); it counts as open, but only until `expires_at`, a few minutes after its last progress, so an
+ * interrupted one frees its place. Open requests past `expires_at` are expired, whatever their status says.
  */
 export const skillRequest = sqliteTable(
   'skill_request',
@@ -338,6 +339,8 @@ export const skillRequest = sqliteTable(
     createdAt: timestamp('created_at'),
     expiresAt: timestamp('expires_at'),
     decidedAt: integer('decided_at', { mode: 'timestamp_ms' }),
+    /** A random id the approval that closed the request writes, so the rest of its batch knows it won. */
+    decisionId: text('decision_id'),
   },
   (table) => [index('skill_request_user_idx').on(table.userId, table.status), index('skill_request_machine_idx').on(table.machineId, table.source)],
 );

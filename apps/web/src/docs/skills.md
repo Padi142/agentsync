@@ -30,7 +30,7 @@ agentsync skills add t3dotgg/tstack
 
 Name skills after the repository to ask for just those; otherwise it asks for every skill there, up to 20. AgentSync pins and audits them right away, and the command prints a link to the request. It shows which Machine asked, each skill's commit and audits, and which Machines the Skills go to (all of them, unless you choose). Skills rated High or Critical, or not audited, start unticked. Approve adds exactly the versions shown, even if the repository changed since.
 
-The command waits up to 10 minutes, then installs on its Machine the Skills you approved, and nothing else. If you don't decide in time it exits 6; running it again picks up the same request. A request expires after 24 hours, and an account can have 5 waiting at once. If the Machine already has a hand-installed skill of the same name, the command warns you, and the new Skill stays blocked there until you move that folder.
+The command waits up to 10 minutes, then installs on its Machine the Skills you approved, and nothing else. If you don't decide in time it exits 6; running it again picks up the same request, or installs what you approved meanwhile. A request expires after 24 hours, and an account can have 5 waiting at once. If the Machine already has a hand-installed skill of the same name, the command warns you, and the new Skill stays blocked there until you move that folder.
 
 ## Installing
 

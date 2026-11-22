@@ -395,21 +395,24 @@ async function skillsAdd(ctx: Context, args: string[]): Promise<Outcome> {
   const proposed = request.skills.map((skill) => skill.name);
   const shown = { id: request.id, url: request.url, repo: request.repo.fullName, skills: proposed, resumed };
 
-  ctx.say(`${resumed ? 'Still waiting for approval of' : 'Asked to add'} ${plural(proposed.length, 'skill')} from ${request.repo.fullName}: ${proposed.join(', ')}.\n\nApprove: ${request.url}\n`);
-  const blocked = await inTheWay(ctx, request).catch(() => []);
-  if (blocked.length) {
-    ctx.warn(`${blocked.join(', ')} ${blocked.length === 1 ? 'is' : 'are'} already on this Machine, installed outside AgentSync. If approved, ${blocked.length === 1 ? 'it stays' : 'they stay'} blocked here until you move or rename ${blocked.length === 1 ? 'that folder' : 'those folders'}.`);
-  }
-  const waiting = (): Outcome => {
-    ctx.say('Run the same command again to keep waiting.');
-    return { code: EXIT.pending, data: { status: 'pending', request: shown } };
-  };
-  if (!ctx.flags.wait) return waiting();
-
-  const decided = await ctx.during('Waiting for approval in the browser…', () => waitForDecision(ctx, client, request.id));
+  // The server hands back the same ask approved since the last run (`--no-wait`, or a wait that ran out): just install it.
+  let decided: SkillRequest | null = request.status === 'open' ? null : request;
   if (!decided) {
-    ctx.warn('Not approved yet.');
-    return waiting();
+    ctx.say(`${resumed ? 'Still waiting for approval of' : 'Asked to add'} ${plural(proposed.length, 'skill')} from ${request.repo.fullName}: ${proposed.join(', ')}.\n\nApprove: ${request.url}\n`);
+    const blocked = await inTheWay(ctx, request).catch(() => []);
+    if (blocked.length) {
+      ctx.warn(`${blocked.join(', ')} ${blocked.length === 1 ? 'is' : 'are'} already on this Machine, installed outside AgentSync. If approved, ${blocked.length === 1 ? 'it stays' : 'they stay'} blocked here until you move or rename ${blocked.length === 1 ? 'that folder' : 'those folders'}.`);
+    }
+    const waiting = (): Outcome => {
+      ctx.say('Run the same command again to keep waiting.');
+      return { code: EXIT.pending, data: { status: 'pending', request: shown } };
+    };
+    if (!ctx.flags.wait) return waiting();
+    decided = await ctx.during('Waiting for approval in the browser…', () => waitForDecision(ctx, client, request.id));
+    if (!decided) {
+      ctx.warn('Not approved yet.');
+      return waiting();
+    }
   }
   if (decided.status === 'rejected') throw new CliError('The Skill Request was rejected.', EXIT.error, { status: 'rejected', request: shown });
   if (decided.status === 'expired') throw new CliError('The Skill Request expired. Run the command again to ask again.', EXIT.error, { status: 'expired', request: shown });

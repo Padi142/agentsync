@@ -300,7 +300,9 @@ export function fakeServer() {
         if (unknown.length) throw errors.UNKNOWN_SKILLS({ data: { unknown, available: offered.map((skill) => skill.name) } });
         const skills = input.names ? offered.filter((skill) => input.names!.includes(skill.name)) : offered;
         const open = [...state.skillRequests.values()].filter((request) => request.status === 'open');
-        const same = open.find((request) => request.machine.id === machine.id && request.repo.fullName === input.repo);
+        // Like the server, the same ask resumes an open request, or hands back one approved since.
+        const same = [...state.skillRequests.values()].reverse().find((request) =>
+          (request.status === 'open' || request.status === 'approved') && request.machine.id === machine.id && request.repo.fullName === input.repo);
         if (same) return { status: 'ready' as const, request: same, resumed: true };
         if (open.length >= 5) throw errors.REQUEST_LIMIT();
         const id = `req-${nextId++}`;

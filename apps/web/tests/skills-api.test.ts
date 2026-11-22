@@ -1,6 +1,7 @@
 import type { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/env';
+import { approveRequestRow, getRequestRow, insertRequest } from '../src/db/skill-requests';
 import { skillsService } from '../src/skills/service';
 import { fakeGitHub, skillMd } from './fake-github';
 import { createTestEnv, fakeWorkOSDevice, resetDb, rpcClient } from './helpers';
@@ -610,6 +611,9 @@ describe('Skill collections', () => {
 });
 
 describe('Skill Requests', () => {
+  const userOf = async (machineId: string) =>
+    (await env.DB.prepare('SELECT user_id FROM machine WHERE id = ?').bind(machineId).first<{ user_id: string }>())!.user_id;
+
   /** Three skills, one audited Safe, one High, one never audited. */
   function requestRepo() {
     const first = gh.repo('team/kit', {
@@ -726,4 +730,63 @@ describe('Skill Requests', () => {
       .approveRequest({ requestId: made.request.id, names, assignment: { to: 'chosen', machineIds: [machine.id] } }));
     expect(approved.added).toEqual(names);
   }, 30_000);
+
+  it('leaves out a skill whose folder path is too long, and the Skills page survives a request it can’t show', async () => {
+    const deep = `${'a'.repeat(200)}/${'b'.repeat(200)}/${'c'.repeat(200)}`;
+    // No container folder, so `skills` looks five levels deep.
+    gh.repo('team/deep', { [`${deep}/SKILL.md`]: skillMd('deep'), 'more/ok/SKILL.md': skillMd('ok') });
+    const { client } = await registerMachine();
+    await expect(client.skills.request({ repo: 'team/deep', names: ['deep'] })).rejects.toMatchObject({ code: 'UNSUPPORTED_SKILL' });
+    const made = await client.skills.request({ repo: 'team/deep' });
+    if (made.status !== 'ready') throw new Error(made.status);
+    expect(made.request.skills.map((skill) => skill.name)).toEqual(['ok']);
+
+    await env.DB.prepare('UPDATE skill_request SET skills = ? WHERE id = ?')
+      .bind(JSON.stringify([{ name: 'ok', path: deep, pin: made.request.skills[0]!.pin }]), made.request.id).run();
+    expect((await browser().skills.overview()).requests).toEqual([]);
+  });
+
+  it('lets only one of two approvals at the same moment add anything', async () => {
+    requestRepo();
+    const { machine, client } = await registerMachine();
+    const made = await client.skills.request({ repo: 'team/kit' });
+    if (made.status !== 'ready') throw new Error(made.status);
+    const { request } = (await getRequestRow(env, await userOf(machine.id), made.request.id))!;
+    const approve = (name: string) => {
+      const proposal = request.skills.find((item) => item.name === name)!;
+      return approveRequestRow(env, request, [{ name, path: proposal.path, pin: proposal.pin!, audits: request.audits![name]! }], { to: 'all' }, new Date(1_000_000));
+    };
+    // Expiry is checked against `now`, so this moment must still be inside the request's life.
+    await env.DB.prepare('UPDATE skill_request SET expires_at = ? WHERE id = ?').bind(Date.now() + 60_000, request.id).run();
+    const results = await Promise.all([approve('safe'), approve('fresh')]);
+    expect(results.filter((result) => result !== null)).toHaveLength(1);
+    const winner = results.find((result) => result !== null)!;
+    expect((await browser().skills.overview()).skills.map((skill) => skill.name)).toEqual(winner);
+  });
+
+  it('makes one request of two identical ones asked at once', async () => {
+    requestRepo();
+    const { client } = await registerMachine();
+    // The call that loses the race may answer `reading` while the other one pins; asking again resumes it.
+    await Promise.all([client.skills.request({ repo: 'team/kit' }), client.skills.request({ repo: 'team/kit' })]);
+    expect(await client.skills.request({ repo: 'team/kit' })).toMatchObject({ status: 'ready', resumed: true });
+    expect((await env.DB.prepare('SELECT count(*) AS n FROM skill_request').first<{ n: number }>())!.n).toBe(1);
+  });
+
+  it('frees the place of a request whose reading stalled, while one still being read keeps it', async () => {
+    const { machine, client } = await registerMachine();
+    const userId = await userOf(machine.id);
+    const stalled = (source: string, at: Date) => insertRequest(env, {
+      userId, machineId: machine.id, repo: { id: 1, fullName: source }, source, commit: 'a'.repeat(40), names: null,
+      skills: [{ name: 'x', path: '', pin: null }],
+    }, null, at);
+    for (let index = 0; index < 4; index++) expect(await stalled(`team/stalled-${index}`, new Date(Date.now() - 11 * 60 * 1000))).not.toBeNull();
+    expect(await stalled('team/reading', new Date())).not.toBeNull();
+    for (let index = 0; index < 4; index++) {
+      gh.repo(`team/kit-${index}`, { 'SKILL.md': skillMd(`kit-${index}`) });
+      expect(await client.skills.request({ repo: `team/kit-${index}` })).toMatchObject({ status: 'ready' });
+    }
+    requestRepo();
+    await expect(client.skills.request({ repo: 'team/kit' })).rejects.toMatchObject({ code: 'REQUEST_LIMIT' });
+  });
 });

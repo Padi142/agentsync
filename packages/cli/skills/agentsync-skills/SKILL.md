@@ -32,7 +32,7 @@ agentsync skills add <owner/repo | https://github.com/owner/repo> [names…] --j
 Without names it asks for every skill in the repository (at most 20); with names, only those. It doesn't add anything itself: it prints a link (`request.url`) where the user approves the request in the browser, choosing which skills to add and their Machines. Show the user that link. The command waits up to 10 minutes, then installs on this Machine only what was approved and reports it in `skills`, like `skills sync`. `--no-wait` returns at once; `--no-sync` skips the install.
 
 - **0**: approved; `added` names the Skills added and `skills` what was installed here.
-- **6**: not approved yet (`status: "pending"`). Running the same command again resumes the same request rather than making a new one, so ask the user to approve it, then run it again. A request expires after 24 hours.
+- **6**: not approved yet (`status: "pending"`). Running the same command again resumes the same request rather than making a new one, and if the user approved it meanwhile, installs what was approved without waiting. So ask the user to approve it, then run it again. A request expires after 24 hours.
 - **2**: the repository has no skill of a name given; `error.available` lists the ones it has.
 - **1**: the user rejected it (`rejected` in the message), the request expired, GitHub couldn't be read, or 5 requests are already waiting for the user.
 - **3**: approved, but a skill folder of that name that AgentSync didn't install blocks it here, as above. The command warns about this when it asks.

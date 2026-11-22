@@ -1,5 +1,5 @@
 import {
-  RESERVED_SKILL_NAMES, SKILL_REQUEST_LIMITS, repoNameSchema, skillNameSchema,
+  RESERVED_SKILL_NAMES, SKILL_REQUEST_LIMITS, repoNameSchema, skillNameSchema, skillRequestSchema,
   type Audits, type FoundSkill, type Machine, type SkillRequest, type MachineSkillState, type Pin, type PinMove, type Skill, type SkillCandidate,
   type SkillDiff, type SkillsOverview, type DesiredSkill, type ScannedSkill, type SkillSyncResult, type SkillAssignment,
 } from '@agentsync/contract';
@@ -11,7 +11,7 @@ import {
 } from '../db/skills';
 import { listMachines } from '../db/machines';
 import {
-  approveRequestRow, getRequestRow, insertRequest, openRequestFor, openRequestRows, rejectRequestRow, saveResolution, type SkillRequestRow,
+  approveRequestRow, approvedRequestFor, getRequestRow, insertRequest, openRequestFor, openRequestRows, rejectRequestRow, saveResolution, type SkillRequestRow,
 } from '../db/skill-requests';
 import type { FolderVersion, StoredProposal } from '../db/schema';
 import { getAppOrigin } from '../auth';
@@ -38,6 +38,9 @@ export class RequestLimitError extends Error {}
 /** The search for a skill's folder or version used up this request's budget. What it read is saved, so asking again gets further. */
 class StillReadingError extends UnsupportedSkillFolder {}
 const STILL_READING = 'AgentSync hasn’t finished reading this repository. Try again.';
+/** The longest folder path a Skill (or a Skill Request's proposal) may have, as the contract allows. */
+const MAX_FOLDER_PATH = 500;
+const PATH_TOO_LONG = 'The skill’s folder path is too long.';
 
 /** The contract's name for a failed Skills call, or `null` if it's a bug rather than an expected failure. */
 export function skillFailure(error: unknown) {
@@ -222,7 +225,7 @@ export function skillsService(worker: Env) {
     const { repo, head, tree } = at;
     const path = await findFolder(at, name);
     if (path === null) throw new NotFoundError(`${repo.fullName} has no skill named ${name}.`);
-    if (path.length > 500) throw new UnsupportedSkillFolder('The skill’s folder path is too long.');
+    if (path.length > MAX_FOLDER_PATH) throw new UnsupportedSkillFolder(PATH_TOO_LONG);
     const history = await gh.folderHistory(repo.fullName, head.sha, path);
     // The folder at HEAD is the folder at its newest change, which is what a Pin names.
     const latest = history[0] ?? head;
@@ -493,7 +496,13 @@ export function skillsService(worker: Env) {
       return {
         settings,
         skills,
-        requests: requests.flatMap(({ request, nickname }) => request.status === 'open' ? [presentRequest(request, nickname, rows)] : []),
+        // A request the contract can't show is left out rather than failing the whole page.
+        requests: requests.flatMap(({ request, nickname }) => {
+          if (request.status !== 'open') return [];
+          const shown = skillRequestSchema.safeParse(presentRequest(request, nickname, rows));
+          if (!shown.success) console.error(`Skill Request ${request.id} doesn’t fit the contract`, shown.error);
+          return shown.success ? [shown.data] : [];
+        }),
         ignored,
         found: [...github.values(), ...local.values()],
         machines: machines.map((machine) => ({
@@ -645,13 +654,19 @@ export function skillsService(worker: Env) {
     async request(userId: string, machine: Machine, input: { repo: string; names?: string[] | undefined }) {
       const source = input.repo.toLowerCase();
       const names = input.names ? [...new Set(input.names)].sort() : null;
+      const ready = async (request: SkillRequestRow, resumed: boolean) =>
+        ({ status: 'ready' as const, request: presentRequest(request, machine.nickname, await listSkillRows(env, userId)), resumed });
       let row = await openRequestFor(env, machine.id, source);
       let replaces: string | null = null;
       if (row && JSON.stringify(row.names) !== JSON.stringify(names)) {
         replaces = row.id;
         row = undefined;
       }
-      const resumed = row?.status === 'open';
+      if (!row) {
+        // The same ask approved since (after `--no-wait`, or a wait that ran out): the Machine installs it now.
+        const approved = await approvedRequestFor(env, machine.id, source, names);
+        if (approved) return ready(approved, true);
+      }
       /** The repository at the request's commit, while some Pins are still to resolve. */
       let snapshot: { repo: Repo; tree: Tree } | null = null;
       if (!row) {
@@ -666,18 +681,30 @@ export function skillsService(worker: Env) {
         }
         const unknown = names?.filter((name) => !offered.has(name)) ?? [];
         if (unknown.length) throw new UnknownSkillsError(unknown, [...offered.keys()].sort());
-        const wanted = names ?? [...offered.keys()].sort();
+        const fits = (name: string) => offered.get(name)!.length <= MAX_FOLDER_PATH;
+        // Asked for everything, a skill whose path is too long is left out; asked for by name, it fails as Add would.
+        const wanted = names ?? [...offered.keys()].filter(fits).sort();
+        if (!wanted.every(fits)) throw new UnsupportedSkillFolder(PATH_TOO_LONG);
         if (!wanted.length) throw new UnsupportedSkillFolder(`${at.repo.fullName} has no skills AgentSync can install.`);
         if (wanted.length > SKILL_REQUEST_LIMITS.skills) {
           throw new UnsupportedSkillFolder(`${at.repo.fullName} has ${wanted.length} skills. Name up to ${SKILL_REQUEST_LIMITS.skills} of them.`);
         }
-        row = await insertRequest(env, {
+        const inserted = await insertRequest(env, {
           userId, machineId: machine.id, repo: { id: at.repo.id, fullName: at.repo.fullName }, source, commit: at.commit, names,
           skills: wanted.map((name) => ({ name, path: offered.get(name)!, pin: null })),
-        }, replaces) ?? undefined;
-        if (!row) throw new RequestLimitError(`The account already has ${SKILL_REQUEST_LIMITS.open} open Skill Requests.`);
-        snapshot = { repo: at.repo, tree: at.tree };
-      } else if (row.status === 'resolving') {
+        }, replaces);
+        if (inserted) {
+          row = inserted;
+          snapshot = { repo: at.repo, tree: at.tree };
+        } else {
+          // A racing call made the request first: hand that one back once it has pinned it.
+          const made = await openRequestFor(env, machine.id, source);
+          if (!made) throw new RequestLimitError(`The account already has ${SKILL_REQUEST_LIMITS.open} open Skill Requests.`);
+          return made.status === 'open' ? ready(made, true) : { status: 'reading' as const };
+        }
+      }
+      const resumed = !snapshot && row.status === 'open';
+      if (!snapshot && row.status === 'resolving') {
         const repo = await publicRepo(row.repoFullName);
         snapshot = { repo, tree: await gh.tree(repo.fullName, row.commit) };
       }
@@ -695,10 +722,12 @@ export function skillsService(worker: Env) {
         const verdicts = await auditsOfSkills(repo.fullName, skills.map((proposal) => proposal.name)).catch(() => null);
         // skills.sh down: every skill reads as not audited, so none starts ticked.
         const audits = Object.fromEntries(skills.map((proposal) => [proposal.name, storedAudits(verdicts?.get(proposal.name) ?? noAudits)]));
-        await saveResolution(env, row.id, skills, audits);
-        row = { ...row, skills, audits, status: 'open' };
+        const opened = await saveResolution(env, row.id, skills, audits);
+        // It stalled too long and lost its place: the next call asks afresh.
+        if (!opened) return { status: 'reading' as const };
+        row = opened;
       }
-      return { status: 'ready' as const, request: presentRequest(row, machine.nickname, await listSkillRows(env, userId)), resumed };
+      return ready(row, resumed);
     },
 
     /** A request: any of the account's for a browser (`machineId` undefined), which also checks if the repository moved; only its own for a Machine. */
