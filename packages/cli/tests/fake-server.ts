@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
   contract, normalizeSpacePath, SPACE_ERROR_STATUS, SPACE_LIMITS, spaceExpiresAt, spaceStatus, spaceWriterUpdateSchema,
-  type Conflict, type DesiredSkill, type Machine, type PublicSpace, type ScannedSkill, type SkillSyncResult, type SpaceErrorCode,
+  type Conflict, type DesiredSkill, type ProposedSkill, type SkillRequest, type Machine, type PublicSpace, type ScannedSkill, type SkillSyncResult, type SpaceErrorCode,
   type SpaceEvent, type SpaceFile, type Target,
 } from '@agentsync/contract';
 import { hasConflictMarkers, validate } from '@agentsync/template';
@@ -59,6 +59,14 @@ export function fakeServer() {
     requests: [] as Headers[],
     /** The Skills every Machine gets from `machines.sync`. */
     skills: [] as DesiredSkill[],
+    /** The skills each repository offers to a Skill Request, by `owner/repo`. */
+    repoSkills: new Map<string, ProposedSkill[]>(),
+    /** Skill Requests by id. Tests decide one by setting `status` and `added`, or with `decideAfter`. */
+    skillRequests: new Map<string, SkillRequest>(),
+    /** Answer `reading` to this many `skills.request` calls first, like a large repository. */
+    readingCalls: 0,
+    /** Decide the request after this many `getRequest` polls. */
+    decideAfter: null as { polls: number; status: 'approved' | 'rejected'; added: string[] } | null,
     /** Each `skills.report`, in order. */
     reports: [] as { machineId: string; scan: ScannedSkill[]; results?: SkillSyncResult[] }[],
     spaces: new Map<string, FakeSpace>(),
@@ -280,6 +288,43 @@ export function fakeServer() {
         const machine = machineOf(context.token);
         state.reports.push({ machineId: machine.id, ...input });
       }),
+      request: os.skills.request.handler(({ context, input, errors }) => {
+        const machine = machineOf(context.token);
+        if (state.readingCalls > 0) {
+          state.readingCalls--;
+          return { status: 'reading' as const };
+        }
+        const offered = state.repoSkills.get(input.repo);
+        if (!offered) throw errors.NOT_FOUND();
+        const unknown = input.names?.filter((name) => !offered.some((skill) => skill.name === name)) ?? [];
+        if (unknown.length) throw errors.UNKNOWN_SKILLS({ data: { unknown, available: offered.map((skill) => skill.name) } });
+        const skills = input.names ? offered.filter((skill) => input.names!.includes(skill.name)) : offered;
+        const open = [...state.skillRequests.values()].filter((request) => request.status === 'open');
+        const same = open.find((request) => request.machine.id === machine.id && request.repo.fullName === input.repo);
+        if (same) return { status: 'ready' as const, request: same, resumed: true };
+        if (open.length >= 5) throw errors.REQUEST_LIMIT();
+        const id = `req-${nextId++}`;
+        const request: SkillRequest = {
+          id, repo: { id: 1, fullName: input.repo }, commit: 'c'.repeat(40), machine: { id: machine.id, nickname: machine.nickname },
+          skills, status: 'open', added: [], moved: null, url: `${SERVER}/skills?request=${id}`,
+          createdAt: new Date(), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        };
+        state.skillRequests.set(id, request);
+        return { status: 'ready' as const, request, resumed: false };
+      }),
+      getRequest: os.skills.getRequest.handler(({ context, input, errors }) => {
+        const machine = machineOf(context.token);
+        const request = state.skillRequests.get(input.requestId);
+        if (!request || request.machine.id !== machine.id) throw errors.NOT_FOUND();
+        if (state.decideAfter && --state.decideAfter.polls <= 0) {
+          request.status = state.decideAfter.status;
+          request.added = state.decideAfter.added;
+          state.decideAfter = null;
+        }
+        return request;
+      }),
+      approveRequest: os.skills.approveRequest.handler(sessionOnly),
+      rejectRequest: os.skills.rejectRequest.handler(sessionOnly),
     },
   });
 

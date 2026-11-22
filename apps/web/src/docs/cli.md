@@ -29,6 +29,7 @@ Keep the clone: the hooks run the CLI from it. To update, run `git pull && pnpm 
 | `agentsync conflict resolve <id> <file>` | Saves a merged file as the next Template revision. |
 | `agentsync skills sync` | Installs, updates and removes this Machine's [Skills](/docs/skills). `--overwrite` replaces ones edited by hand. |
 | `agentsync skills status` | Shows where each Skill stands on this Machine, without changing anything. |
+| `agentsync skills add <owner/repo> [names…]` | Asks to add Skills from a GitHub repository, all of them or the ones named. You approve them in the browser; it waits, then installs them here. `--no-wait` prints the link and exits 6, `--no-sync` skips the install. |
 | `agentsync space create [path]` | Creates a [Space](/docs/spaces), uploading a file or folder, and prints its Share Link and Write Token. `--title`, `--summary`, `--expires 7d\|never`. |
 | `agentsync space put <id> <file> [remote-path]` | Adds or replaces one file in a Space. |
 | `agentsync space push <id> <dir>` | Mirrors a folder into a Space: uploads new and changed files, removes the ones gone locally. |
@@ -69,6 +70,7 @@ Scripts and agents can branch on these:
 | `3` | Drift: a Target was edited by hand. For `skills sync`, a Skill was blocked by your own folder or edited by hand |
 | `4` | Conflict: the Template changed while you edited it |
 | `5` | Not signed in: not registered, deleted, or registration denied or expired |
+| `6` | Waiting: `skills add`'s request isn't approved yet. Run it again to keep waiting |
 | `130` | Cancelled with Ctrl+C |
 
 ## Where things live

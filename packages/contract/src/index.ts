@@ -275,9 +275,48 @@ export const skillSettingsSchema = z.object({
   autoUpdate: z.boolean(),
 });
 
+/** How far a Machine may ask: Skill Requests open at once per account, Skills one may propose, and hours until one expires. */
+export const SKILL_REQUEST_LIMITS = { open: 5, skills: 20, hours: 24 } as const;
+
+/**
+ * One Skill a Skill Request proposes, pinned and audited by the server when the request was made.
+ * `conflict` says why it can't be approved now: `added`, a Skill of this name from the same repository
+ * is already in the account; `taken`, one from another repository has the name.
+ */
+export const proposedSkillSchema = z.object({
+  name: skillNameSchema,
+  path: z.string().max(500),
+  pin: pinSchema,
+  audits: auditsSchema,
+  conflict: z.enum(['added', 'taken']).nullable(),
+});
+
+/**
+ * A Machine's proposal to add Skills from one repository (`agentsync skills add`). Only a signed-in
+ * browser approves it; `added` names the Skills approval added. `moved` is whether the repository has
+ * new commits since, when the browser asked (`null`: not checked).
+ */
+export const skillRequestSchema = z.object({
+  id,
+  repo: skillRepoSchema,
+  /** The default branch's head when the request was made. */
+  commit: gitShaSchema,
+  machine: z.object({ id, nickname: machineNicknameSchema }),
+  skills: z.array(proposedSkillSchema),
+  status: z.enum(['open', 'approved', 'rejected', 'expired']),
+  added: z.array(skillNameSchema),
+  moved: z.boolean().nullable(),
+  /** The dashboard page that opens this request. */
+  url: z.url(),
+  createdAt: z.date(),
+  expiresAt: z.date(),
+});
+
 export const skillsOverviewSchema = z.object({
   settings: skillSettingsSchema,
   skills: z.array(skillSchema),
+  /** Open Skill Requests, oldest first. */
+  requests: z.array(skillRequestSchema),
   found: z.array(foundSkillSchema),
   ignored: z.array(z.object({ repo: repoNameSchema, name: skillNameSchema })),
   /** When each Machine last reported its Skills; `null` if it never has. */
@@ -639,6 +678,14 @@ const skillErrors = {
   UPSTREAM_UNAVAILABLE: { status: 503 },
 };
 
+const skillRequestErrors = {
+  ...skillErrors,
+  /** Some names asked for aren't skills of the repository. `available` is every skill it has. */
+  UNKNOWN_SKILLS: { status: 404, data: z.object({ unknown: z.array(skillNameSchema), available: z.array(skillNameSchema) }) },
+  /** The account already has `SKILL_REQUEST_LIMITS.open` open Skill Requests. */
+  REQUEST_LIMIT: { status: 429 },
+};
+
 // Procedures
 
 const base = oc.$meta<ProcedureMeta>({ auth: [] });
@@ -749,8 +796,12 @@ const conflicts = {
 };
 
 const skillIdInput = z.object({ skillId: id });
+const requestIdInput = z.object({ requestId: id });
 
-/** Skills are changed only from a signed-in browser. A Machine reads its own list (in `machines.sync`) and reports. */
+/**
+ * Skills are changed only from a signed-in browser. A Machine reads its own list (in `machines.sync`),
+ * reports, and may propose Skills as a Skill Request, which only the browser approves.
+ */
 const skills = {
   /** Everything the Skills page shows, in one call. */
   overview: sessionProcedure.output(skillsOverviewSchema),
@@ -837,14 +888,40 @@ const skills = {
     .errors(skillErrors),
   /**
    * A Machine reports the skills on it (`scan`) and, after `agentsync skills sync`, what it did
-   * (`results`). The hook sends a scan only when it changed, and at least daily.
+   * (`results`). The hook sends a scan only when it changed, and at least daily. `partial`: the results
+   * cover only some Skills (`skills add` installing what it just got approved), so they replace only those.
    */
   report: machineProcedure
     .input(z.object({
       scan: z.array(scannedSkillSchema).max(1000),
       results: z.array(skillSyncResultSchema).max(1000).optional(),
+      partial: z.boolean().optional(),
     }))
     .output(z.void()),
+  /**
+   * Propose Skills of a repository for the browser to approve: `names`, or every skill it has. The server
+   * pins and audits them now. An open request from the same Machine for the same repository and names is
+   * resumed instead (`resumed`); one with other names is replaced. `reading` means the repository is too
+   * large to read in one call: call again, and it carries on from what it read.
+   */
+  request: machineProcedure
+    .input(z.object({ repo: repoNameSchema, names: z.array(skillNameSchema).min(1).max(SKILL_REQUEST_LIMITS.skills).optional() }))
+    .output(z.discriminatedUnion('status', [
+      z.object({ status: z.literal('reading') }),
+      z.object({ status: z.literal('ready'), request: skillRequestSchema, resumed: z.boolean() }),
+    ]))
+    .errors(skillRequestErrors),
+  /** A Skill Request: any of the account's for a browser, only its own for a Machine. A browser also learns whether the repository `moved`. */
+  getRequest: anyAuthProcedure.input(requestIdInput).output(skillRequestSchema).errors(notFoundError),
+  /**
+   * Approve an open Skill Request: add the Skills `names`, at exactly the Pins it shows, with this
+   * assignment. A name that is `conflict`ed can't be approved.
+   */
+  approveRequest: sessionProcedure
+    .input(requestIdInput.extend({ names: z.array(skillNameSchema).min(1).max(SKILL_REQUEST_LIMITS.skills), assignment: skillAssignmentSchema }))
+    .output(skillRequestSchema)
+    .errors({ ...notFoundError, SKILL_NAME_TAKEN: skillErrors.SKILL_NAME_TAKEN }),
+  rejectRequest: sessionProcedure.input(requestIdInput).output(skillRequestSchema).errors(notFoundError),
 };
 
 const spaceIdInput = z.object({ spaceId: id });
@@ -941,6 +1018,8 @@ export type Skill = z.infer<typeof skillSchema>;
 export type FoundSkill = z.infer<typeof foundSkillSchema>;
 export type SkillSettings = z.infer<typeof skillSettingsSchema>;
 export type SkillsOverview = z.infer<typeof skillsOverviewSchema>;
+export type ProposedSkill = z.infer<typeof proposedSkillSchema>;
+export type SkillRequest = z.infer<typeof skillRequestSchema>;
 export type PinMove = z.infer<typeof pinMoveSchema>;
 export type SkillSearchResult = z.infer<typeof skillSearchResultSchema>;
 export type SkillCandidate = z.infer<typeof skillCandidateSchema>;

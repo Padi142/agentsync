@@ -15,7 +15,7 @@ import { pollDeviceFlow, startDeviceFlow } from '../device';
 import type { Env } from '../env';
 import { getUserSpace } from '../db/spaces';
 import { SpaceError, spacesService } from '../spaces/service';
-import { skillFailure, skillsService } from '../skills/service';
+import { RequestLimitError, skillFailure, skillsService, UnknownSkillsError } from '../skills/service';
 
 export interface RPCContext {
   env: Env;
@@ -94,6 +94,37 @@ async function skillCall<T>(errors: SkillErrors, work: () => Promise<T>): Promis
     if (!failure) throw error;
     console.warn(`Skills call failed: ${failure.code}: ${(error as Error).message}`);
     throw failure.code === 'UNSUPPORTED_SKILL' ? errors.UNSUPPORTED_SKILL({ data: { reason: failure.reason } }) : errors[failure.code]();
+  }
+}
+
+/** Run a Skill Request call: its own failures first, then the Skills ones. */
+async function requestCall<T>(
+  errors: SkillErrors & {
+    UNKNOWN_SKILLS: (options: { data: { unknown: string[]; available: string[] } }) => Error;
+    REQUEST_LIMIT: (options: { message: string }) => Error;
+  },
+  work: () => Promise<T>,
+): Promise<T> {
+  return skillCall(errors, async () => {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof UnknownSkillsError) throw errors.UNKNOWN_SKILLS({ data: { unknown: error.unknown, available: error.available } });
+      if (error instanceof RequestLimitError) throw errors.REQUEST_LIMIT({ message: error.message });
+      throw error;
+    }
+  });
+}
+
+/** Run a call that fails only with `NOT_FOUND` (or `SKILL_NAME_TAKEN`, where the contract lists it). */
+async function notFoundCall<T>(errors: { NOT_FOUND: () => Error; SKILL_NAME_TAKEN?: () => Error }, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    const failure = skillFailure(error);
+    if (failure?.code === 'NOT_FOUND') throw errors.NOT_FOUND();
+    if (failure?.code === 'SKILL_NAME_TAKEN' && errors.SKILL_NAME_TAKEN) throw errors.SKILL_NAME_TAKEN();
+    throw error;
   }
 }
 
@@ -261,8 +292,17 @@ export const router = os.router({
       skillCall(errors, () => skillsService(context.env).diff(context.userId, input.skillId, input.base, input.head))),
     report: os.skills.report.use(auth).handler(async ({ context, input }) => {
       const machine = context.machine!; // `report` accepts only Machine tokens.
-      await skillsService(context.env).report(machine.id, input.scan, input.results);
+      await skillsService(context.env).report(machine.id, input.scan, input.results, input.partial);
     }),
+    request: os.skills.request.use(auth).handler(({ context, input, errors }) =>
+      // `request` accepts only Machine tokens.
+      requestCall(errors, () => skillsService(context.env).request(context.userId, context.machine!, input))),
+    getRequest: os.skills.getRequest.use(auth).handler(({ context, input, errors }) =>
+      notFoundCall(errors, () => skillsService(context.env).getRequest(context.userId, input.requestId, context.machine?.id))),
+    approveRequest: os.skills.approveRequest.use(auth).handler(({ context, input, errors }) =>
+      notFoundCall(errors, () => skillsService(context.env).approveRequest(context.userId, input.requestId, input.names, input.assignment))),
+    rejectRequest: os.skills.rejectRequest.use(auth).handler(({ context, input, errors }) =>
+      notFoundCall(errors, () => skillsService(context.env).rejectRequest(context.userId, input.requestId))),
   },
   spaces: {
     create: os.spaces.create.use(auth).handler(async ({ context, input, errors }) => {

@@ -1,6 +1,6 @@
 import {
-  RESERVED_SKILL_NAMES, repoNameSchema, skillNameSchema,
-  type Audits, type FoundSkill, type MachineSkillState, type Pin, type PinMove, type Skill, type SkillCandidate,
+  RESERVED_SKILL_NAMES, SKILL_REQUEST_LIMITS, repoNameSchema, skillNameSchema,
+  type Audits, type FoundSkill, type Machine, type SkillRequest, type MachineSkillState, type Pin, type PinMove, type Skill, type SkillCandidate,
   type SkillDiff, type SkillsOverview, type DesiredSkill, type ScannedSkill, type SkillSyncResult, type SkillAssignment,
 } from '@agentsync/contract';
 import { countQueries } from '../db';
@@ -10,7 +10,11 @@ import {
   saveReport, setAssignment, setAutoUpdate, staleSkillRows, touchCheck, listExclusions, setExclusions, type SkillRow,
 } from '../db/skills';
 import { listMachines } from '../db/machines';
-import type { FolderVersion } from '../db/schema';
+import {
+  approveRequestRow, getRequestRow, insertRequest, openRequestFor, openRequestRows, rejectRequestRow, saveResolution, type SkillRequestRow,
+} from '../db/skill-requests';
+import type { FolderVersion, StoredProposal } from '../db/schema';
+import { getAppOrigin } from '../auth';
 import type { Env } from '../env';
 import { isAudited, mayAutoUpdate } from './audits';
 import { frontmatterName, skillFolders } from './discovery';
@@ -23,6 +27,14 @@ import { machineSkillState } from './status';
 export class NameTakenError extends Error {}
 /** A Machine's copy matches no version of the folder on the default branch. */
 export class NoMatchingCommitError extends Error {}
+/** Names a Skill Request asked for that the repository doesn't have. */
+export class UnknownSkillsError extends Error {
+  constructor(readonly unknown: string[], readonly available: string[]) {
+    super(`No skill named ${unknown.join(', ')}.`);
+  }
+}
+/** The account has as many open Skill Requests as it may. */
+export class RequestLimitError extends Error {}
 /** The search for a skill's folder or version used up this request's budget. What it read is saved, so asking again gets further. */
 class StillReadingError extends UnsupportedSkillFolder {}
 const STILL_READING = 'AgentSync hasn’t finished reading this repository. Try again.';
@@ -388,9 +400,75 @@ export function skillsService(worker: Env) {
     return row;
   }
 
+  /**
+   * Every skill a repository offers at a snapshot, by name, with its folder: the first folder `skills`
+   * walks to of each name, if that one can be installed. Reads what it hasn't yet; once out of budget it
+   * throws `StillReadingError`, and what it read is saved for the next call.
+   */
+  async function skillsAt(at: RepoSnapshot): Promise<Map<string, string>> {
+    const unread = () => at.folders.filter((folder) => !at.named.has(folder));
+    while (unread().length) {
+      if (outOfBudget()) throw new StillReadingError(STILL_READING);
+      const [failure] = (await readFolders(at, unread().slice(0, Math.min(READ_BUDGET - gh.usage.requests, READ_AT_ONCE)))).values();
+      if (failure) throw failure;
+    }
+    const first = new Map<string, { folder: string; installable: boolean }>();
+    for (const folder of at.folders) {
+      const { skillName, installedHash } = at.named.get(folder)!;
+      if (!first.has(skillName)) first.set(skillName, { folder, installable: installedHash !== null });
+    }
+    return new Map([...first].flatMap(([name, { folder, installable }]) =>
+      installable && skillNameSchema.safeParse(name).success && !RESERVED_SKILL_NAMES.includes(name) ? [[name, folder] as const] : []));
+  }
+
+  /** The Pin of a proposed skill: its folder at the newest commit, up to the request's, that changed it. */
+  async function proposalPin(repo: Repo, commit: string, tree: Tree, proposal: StoredProposal): Promise<FolderVersion> {
+    const [latest] = await gh.folderHistory(repo.fullName, commit, proposal.path);
+    if (!latest) throw new NotFoundError(`${repo.fullName} has no history for ${proposal.path || 'its root'}.`);
+    const treeSha = proposal.path ? tree.tree.find((item) => item.path === proposal.path)?.sha : tree.sha;
+    if (!treeSha) throw new NotFoundError(`${repo.fullName} has no folder ${proposal.path}.`);
+    const installedHash = await installedFolderHash(tree.tree, proposal.path);
+    await cacheFolderVersion(env, { repoId: repo.id, commit: latest.sha, path: proposal.path, treeSha, installedHash, skillName: proposal.name });
+    return { commit: latest.sha, treeSha, installedHash, committedAt: latest.committedAt.getTime() };
+  }
+
+  /** A request as the contract shows it. `rows` are the account's Skills, to say which names can't be approved. */
+  function presentRequest(row: SkillRequestRow, nickname: string, rows: Pick<SkillRow, 'name' | 'repoId'>[], moved: boolean | null = null, now = new Date()): SkillRequest {
+    const audits = row.audits ?? {};
+    return {
+      id: row.id,
+      repo: { id: row.repoId, fullName: row.repoFullName },
+      commit: row.commit,
+      machine: { id: row.machineId, nickname },
+      skills: row.skills.flatMap((proposal) => {
+        if (!proposal.pin) return [];
+        const existing = rows.find((skill) => skill.name === proposal.name);
+        return [{
+          name: proposal.name, path: proposal.path, pin: toPin(proposal.pin), audits: auditsOf(audits[proposal.name] ?? null),
+          conflict: existing ? existing.repoId === row.repoId ? 'added' as const : 'taken' as const : null,
+        }];
+      }),
+      status: row.status === 'open' && row.expiresAt <= now ? 'expired' : row.status === 'resolving' ? 'open' : row.status,
+      added: row.added,
+      moved,
+      url: `${getAppOrigin(env)}/skills?request=${row.id}`,
+      createdAt: row.createdAt,
+      expiresAt: row.expiresAt,
+    };
+  }
+
+  /** One of the account's requests, once the server has finished pinning it. */
+  async function ownRequest(userId: string, requestId: string) {
+    const found = await getRequestRow(env, userId, requestId);
+    if (!found || found.request.status === 'resolving') throw new NotFoundError('No such Skill Request.');
+    return found;
+  }
+
   return {
     async overview(userId: string): Promise<SkillsOverview> {
-      const [rows, settings, ignored] = await Promise.all([listSkillRows(env, userId), getSettings(env, userId), listExclusions(env, userId)]);
+      const [rows, settings, ignored, requests] = await Promise.all([
+        listSkillRows(env, userId), getSettings(env, userId), listExclusions(env, userId), openRequestRows(env, userId),
+      ]);
       const { skills, reports, machines } = await present(rows, userId);
       const names = new Set(rows.map((row) => row.name));
       const github = new Map<string, Extract<FoundSkill, { kind: 'github' }>>();
@@ -415,6 +493,7 @@ export function skillsService(worker: Env) {
       return {
         settings,
         skills,
+        requests: requests.flatMap(({ request, nickname }) => request.status === 'open' ? [presentRequest(request, nickname, rows)] : []),
         ignored,
         found: [...github.values(), ...local.values()],
         machines: machines.map((machine) => ({
@@ -557,7 +636,111 @@ export function skillsService(worker: Env) {
       }));
     },
 
-    report: (machineId: string, scan: ScannedSkill[], results?: SkillSyncResult[]) => saveReport(env, machineId, scan, results),
+    report: (machineId: string, scan: ScannedSkill[], results?: SkillSyncResult[], partial?: boolean) => saveReport(env, machineId, scan, results, partial),
+
+    /**
+     * A Machine's Skill Request (see `skills.request` in the contract). One call pins as many proposed
+     * skills as fit in its budget; `reading` asks the Machine to call again for the rest.
+     */
+    async request(userId: string, machine: Machine, input: { repo: string; names?: string[] | undefined }) {
+      const source = input.repo.toLowerCase();
+      const names = input.names ? [...new Set(input.names)].sort() : null;
+      let row = await openRequestFor(env, machine.id, source);
+      let replaces: string | null = null;
+      if (row && JSON.stringify(row.names) !== JSON.stringify(names)) {
+        replaces = row.id;
+        row = undefined;
+      }
+      const resumed = row?.status === 'open';
+      /** The repository at the request's commit, while some Pins are still to resolve. */
+      let snapshot: { repo: Repo; tree: Tree } | null = null;
+      if (!row) {
+        let at: RepoHead;
+        let offered: Map<string, string>;
+        try {
+          at = await readHead(input.repo);
+          offered = await skillsAt(at);
+        } catch (error) {
+          if (error instanceof StillReadingError) return { status: 'reading' as const };
+          throw error;
+        }
+        const unknown = names?.filter((name) => !offered.has(name)) ?? [];
+        if (unknown.length) throw new UnknownSkillsError(unknown, [...offered.keys()].sort());
+        const wanted = names ?? [...offered.keys()].sort();
+        if (!wanted.length) throw new UnsupportedSkillFolder(`${at.repo.fullName} has no skills AgentSync can install.`);
+        if (wanted.length > SKILL_REQUEST_LIMITS.skills) {
+          throw new UnsupportedSkillFolder(`${at.repo.fullName} has ${wanted.length} skills. Name up to ${SKILL_REQUEST_LIMITS.skills} of them.`);
+        }
+        row = await insertRequest(env, {
+          userId, machineId: machine.id, repo: { id: at.repo.id, fullName: at.repo.fullName }, source, commit: at.commit, names,
+          skills: wanted.map((name) => ({ name, path: offered.get(name)!, pin: null })),
+        }, replaces) ?? undefined;
+        if (!row) throw new RequestLimitError(`The account already has ${SKILL_REQUEST_LIMITS.open} open Skill Requests.`);
+        snapshot = { repo: at.repo, tree: at.tree };
+      } else if (row.status === 'resolving') {
+        const repo = await publicRepo(row.repoFullName);
+        snapshot = { repo, tree: await gh.tree(repo.fullName, row.commit) };
+      }
+      if (snapshot) {
+        const { repo, tree } = snapshot;
+        const skills = [...row.skills];
+        for (const [index, proposal] of skills.entries()) {
+          if (proposal.pin) continue;
+          if (outOfBudget()) {
+            await saveResolution(env, row.id, skills, null);
+            return { status: 'reading' as const };
+          }
+          skills[index] = { ...proposal, pin: await proposalPin(repo, row.commit, tree, proposal) };
+        }
+        const verdicts = await auditsOfSkills(repo.fullName, skills.map((proposal) => proposal.name)).catch(() => null);
+        // skills.sh down: every skill reads as not audited, so none starts ticked.
+        const audits = Object.fromEntries(skills.map((proposal) => [proposal.name, storedAudits(verdicts?.get(proposal.name) ?? noAudits)]));
+        await saveResolution(env, row.id, skills, audits);
+        row = { ...row, skills, audits, status: 'open' };
+      }
+      return { status: 'ready' as const, request: presentRequest(row, machine.nickname, await listSkillRows(env, userId)), resumed };
+    },
+
+    /** A request: any of the account's for a browser (`machineId` undefined), which also checks if the repository moved; only its own for a Machine. */
+    async getRequest(userId: string, requestId: string, machineId?: string) {
+      const { request, nickname } = await ownRequest(userId, requestId);
+      if (machineId !== undefined && request.machineId !== machineId) throw new NotFoundError('No such Skill Request.');
+      let moved: boolean | null = null;
+      if (machineId === undefined && request.status === 'open') {
+        try {
+          const repo = await gh.repoById(request.repoId);
+          moved = (await gh.commit(repo.fullName, repo.defaultBranch)).sha !== request.commit;
+        } catch {
+          // GitHub didn't answer: the page just doesn't say.
+        }
+      }
+      return presentRequest(request, nickname, await listSkillRows(env, userId), moved);
+    },
+
+    /** Approve a request: add `names` at the Pins it shows. See `approveRequestRow`. */
+    async approveRequest(userId: string, requestId: string, names: string[], assignment: SkillAssignment) {
+      const { request } = await ownRequest(userId, requestId);
+      if (request.status !== 'open' || request.expiresAt <= new Date()) throw new NotFoundError('The Skill Request is no longer open.');
+      const audits = request.audits ?? {};
+      const chosen = [...new Set(names)].map((name) => {
+        const proposal = request.skills.find((item) => item.name === name);
+        if (!proposal?.pin) throw new NotFoundError(`The request doesn't propose ${name}.`);
+        return { name, path: proposal.path, pin: proposal.pin, audits: audits[name] ?? storedAudits(noAudits) };
+      });
+      const rows = await listSkillRows(env, userId);
+      const taken = chosen.filter(({ name }) => rows.some((row) => row.name === name));
+      if (taken.length) throw new NameTakenError(`${taken.map(({ name }) => name).join(', ')} already in the account.`);
+      if (await approveRequestRow(env, request, chosen, assignment) === null) throw new NotFoundError('The Skill Request is no longer open.');
+      const updated = await ownRequest(userId, requestId);
+      return presentRequest(updated.request, updated.nickname, await listSkillRows(env, userId));
+    },
+
+    async rejectRequest(userId: string, requestId: string) {
+      if (!await rejectRequestRow(env, userId, requestId)) throw new NotFoundError('The Skill Request is no longer open.');
+      const { request, nickname } = await ownRequest(userId, requestId);
+      return presentRequest(request, nickname, await listSkillRows(env, userId));
+    },
+
 
     /**
      * The scheduled update check: Skills not checked for about a day, oldest first, as many as fit in

@@ -1,25 +1,32 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState } from 'react';
+import { z } from 'zod';
 import { AddSkillDialog } from '../../components/AddSkillDialog';
 import { CollectionDialog } from '../../components/CollectionDialog';
 import { Icon } from '../../components/Icon';
+import { RequestDialog } from '../../components/RequestDialog';
 import { SkillCollections } from '../../components/SkillCollections';
 import { rpc } from '../../rpc';
 import { useSkillActions } from '../../skill-actions';
 
 export const Route = createFileRoute('/_app/skills')({
+  /** `request` opens that Skill Request: the link `agentsync skills add` prints. */
+  validateSearch: z.object({ request: z.string().optional() }),
   loader: () => rpc.skills.overview(),
   component: SkillsPage,
 });
 
 function SkillsPage() {
   const overview = Route.useLoaderData();
+  const { request } = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const review = (requestId: string | undefined) => void navigate({ search: requestId ? { request: requestId } : {}, replace: !requestId });
   const actions = useSkillActions();
   const { run, busy, status } = actions;
   const [adding, setAdding] = useState(false);
   const [browsing, setBrowsing] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const hasAny = overview.skills.length > 0 || overview.found.length > 0 || overview.ignored.length > 0;
+  const hasAny = overview.skills.length > 0 || overview.found.length > 0 || overview.ignored.length > 0 || overview.requests.length > 0;
   const autoApprove = overview.settings.autoUpdate;
 
   return (
@@ -32,7 +39,7 @@ function SkillsPage() {
       <div className="sk-status" role="status">
         {status ? <span key={status.at} className="status-line" data-tone={status.tone}>{status.text}</span> : null}
       </div>
-      {hasAny ? <SkillCollections overview={overview} actions={actions} query={query} onClearQuery={() => setQuery('')} onBrowse={setBrowsing} /> : (
+      {hasAny ? <SkillCollections overview={overview} actions={actions} query={query} onClearQuery={() => setQuery('')} onBrowse={setBrowsing} onReview={review} /> : (
         <div className="empty">
           <Icon name="collection" size={32} />
           <h2>Your skills, together</h2>
@@ -54,6 +61,7 @@ function SkillsPage() {
       <AddSkillDialog open={adding} onClose={() => setAdding(false)} taken={new Set(overview.skills.map((skill) => skill.name))} actions={actions}
         onCollection={(repo) => { setAdding(false); setBrowsing(repo); }} />
       <CollectionDialog repo={browsing} onClose={() => setBrowsing(null)} overview={overview} actions={actions} />
+      <RequestDialog requestId={request ?? null} overview={overview} actions={actions} onClose={() => review(undefined)} />
     </div>
   );
 }

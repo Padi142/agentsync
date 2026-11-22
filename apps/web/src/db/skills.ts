@@ -64,9 +64,17 @@ export async function getReport(env: Pick<Env, 'DB'>, machineId: string): Promis
   return createDb(env).select().from(machineSkillReport).where(eq(machineSkillReport.machineId, machineId)).get();
 }
 
-/** Save a Machine's scan, and the results of its `skills sync` if it sent them. */
-export async function saveReport(env: Pick<Env, 'DB'>, machineId: string, scan: ScannedSkill[], results?: SkillSyncResult[]) {
+/**
+ * Save a Machine's scan, and the results of its `skills sync` if it sent them. `partial` results cover only
+ * some Skills, so they replace the last results for those names and keep the rest.
+ */
+export async function saveReport(env: Pick<Env, 'DB'>, machineId: string, scan: ScannedSkill[], results?: SkillSyncResult[], partial = false) {
   const now = new Date();
+  if (results && partial) {
+    const names = new Set(results.map((result) => result.name));
+    const kept = (await getReport(env, machineId))?.results?.filter((result) => !names.has(result.name)) ?? [];
+    results = [...kept, ...results];
+  }
   await createDb(env).insert(machineSkillReport)
     .values({ machineId, scan, reportedAt: now, ...(results ? { results, syncedAt: now } : {}) })
     .onConflictDoUpdate({

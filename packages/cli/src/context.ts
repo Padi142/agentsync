@@ -28,6 +28,8 @@ export interface Flags {
   /** `--skills` installs the account's Skills during `init`, `--no-skills` skips them; unset asks at a terminal. */
   skills?: boolean;
   wait: boolean;
+  /** `--no-sync`: `skills add` doesn't install what was approved. */
+  sync: boolean;
   file?: string;
   base?: string;
   out?: string;

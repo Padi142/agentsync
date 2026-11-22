@@ -402,3 +402,82 @@ describe('finishing a removal', () => {
     expect(readFileSync(t.path('.agents/skills/animate/SKILL.md'), 'utf8')).toBe('edited meanwhile');
   });
 });
+
+describe('skills add', () => {
+  /** `animate` and `polish` set for the Machine already; `team/kit` offers `animate` (already set) and `motion`. */
+  async function machineWithRequestable() {
+    const t = await machineWithSkills();
+    const motion = await t.skills.publish('team/kit', sha('2'), 'motion', { 'SKILL.md': 'motion v1' });
+    const proposed = (name: string, installedHash: string) => ({
+      name, path: `skills/${name}`, conflict: null,
+      pin: { commit: sha('2'), treeSha: sha('3'), installedHash, committedAt: new Date() },
+      audits: { gen: null, socket: null, snyk: null },
+    });
+    t.server.state.repoSkills.set('team/kit', [proposed('motion', motion)]);
+    return { t, motion };
+  }
+
+  it('asks once, prints the link, and resumes the same request when run again', async () => {
+    const { t } = await machineWithRequestable();
+    t.server.state.readingCalls = 2;
+
+    const first = await t.cli('skills', 'add', 'https://github.com/team/kit', '--no-wait', '--json');
+    expect(first.code).toBe(6);
+    expect(first.json()).toMatchObject({ ok: false, status: 'pending', request: { repo: 'team/kit', skills: ['motion'], resumed: false } });
+    expect(first.stderr).toContain(first.json().request.url);
+
+    const again = await t.cli('skills', 'add', 'team/kit', '--no-wait', '--json');
+    expect(again.json().request).toMatchObject({ id: first.json().request.id, resumed: true });
+    expect(t.server.state.skillRequests.size).toBe(1);
+    expect(t.skills.calls).toEqual([]);
+  });
+
+  it('fails as a usage error on a name the repository lacks, listing what it has', async () => {
+    const { t } = await machineWithRequestable();
+    const result = await t.cli('skills', 'add', 'team/kit', 'nope', '--json');
+    expect(result.code).toBe(2);
+    expect(result.json().error).toMatchObject({ unknown: ['nope'], available: ['motion'] });
+    expect(t.server.state.skillRequests.size).toBe(0);
+  });
+
+  it('waits for approval, then installs only what was approved, leaving other pending Skills alone', async () => {
+    const { t, motion } = await machineWithRequestable();
+    t.server.state.skills.push({ name: 'motion', repo: 'team/kit', commit: sha('2'), installedHash: motion, sources: ['team/kit'] });
+    t.server.state.decideAfter = { polls: 2, status: 'approved', added: ['motion'] };
+
+    const result = await t.cli('skills', 'add', 'team/kit', '--json');
+
+    expect(result.code).toBe(0);
+    expect(result.json()).toMatchObject({ status: 'approved', added: ['motion'], skills: [{ name: 'motion', status: 'installed' }] });
+    expect(t.skills.calls).toEqual([['add', `team/kit#${sha('2')}`, '--skill', 'motion', '-g', '-a', 'claude-code', 'codex', '-y', '--json']]);
+    // Only motion's result is sent, marked partial, so the server keeps what it knew of the others.
+    expect(t.server.state.reports.at(-1)).toMatchObject({ partial: true, results: [{ name: 'motion', status: 'installed' }] });
+  });
+
+  it('warns about a hand-installed copy, then reports it blocked after approval', async () => {
+    const { t, motion } = await machineWithRequestable();
+    t.write('.claude/skills/motion/SKILL.md', 'my own motion');
+    t.server.state.skills.push({ name: 'motion', repo: 'team/kit', commit: sha('2'), installedHash: motion, sources: ['team/kit'] });
+    t.server.state.decideAfter = { polls: 1, status: 'approved', added: ['motion'] };
+
+    const result = await t.cli('skills', 'add', 'team/kit', '--json');
+
+    expect(result.stderr).toContain('motion is already on this Machine, installed outside AgentSync');
+    expect(result.code).toBe(3);
+    expect(statuses(result)).toEqual({ motion: 'blocked' });
+    expect(readFileSync(t.path('.claude/skills/motion/SKILL.md'), 'utf8')).toBe('my own motion');
+  });
+
+  it('exits 1 when rejected, and 6 when nobody decides within the wait', async () => {
+    const { t } = await machineWithRequestable();
+    t.server.state.decideAfter = { polls: 1, status: 'rejected', added: [] };
+    const rejected = await t.cli('skills', 'add', 'team/kit', '--json');
+    expect(rejected.code).toBe(1);
+    expect(rejected.json().error.message).toContain('rejected');
+
+    t.server.state.repoSkills.set('team/other', t.server.state.repoSkills.get('team/kit')!);
+    const waited = await t.cli('skills', 'add', 'team/other', '--json');
+    expect(waited.code).toBe(6);
+    expect(t.sleeps.reduce((sum, ms) => sum + ms, 0)).toBeGreaterThanOrEqual(10 * 60 * 1000);
+  });
+});

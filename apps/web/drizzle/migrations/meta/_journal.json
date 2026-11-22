@@ -57,6 +57,13 @@
       "when": 1795287213860,
       "tag": "0008_spaces",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1795370838487,
+      "tag": "0009_skill_requests",
+      "breakpoints": true
     }
   ]
 }
