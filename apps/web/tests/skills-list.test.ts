@@ -11,7 +11,7 @@ const skill = (name: string, states: Skill['machines'], update: Skill['update'] 
   autoUpdate: true, update, machines: states, createdAt: new Date(0),
 });
 const overview = (skills: Skill[], found: SkillsOverview['found'] = []): SkillsOverview =>
-  ({ settings: { autoUpdate: false }, skills, found, machines, ignored: [] });
+  ({ settings: { autoUpdate: false }, skills, requests: [], found, machines, ignored: [] });
 
 describe('the Skills list', () => {
   it('groups mixed sources case-insensitively and keeps exclusions after scans disappear', () => {

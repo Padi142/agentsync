@@ -1,0 +1,1 @@
+ALTER TABLE `skill_request` ADD `decision_id` text;

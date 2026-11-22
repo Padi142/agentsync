@@ -8,6 +8,8 @@ export const EXIT = {
   drift: 3,
   conflict: 4,
   auth: 5,
+  /** Waiting on someone else: a Skill Request not approved yet. Run the command again to keep waiting. */
+  pending: 6,
   /** The person interrupted a prompt or wait (Ctrl+C), by the usual shell convention. */
   cancelled: 130,
 } as const;

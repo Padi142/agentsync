@@ -17,7 +17,7 @@ const synced: Skill = {
   machines: [{ machineId: 'laptop', status: 'installed' }],
 };
 const overview: SkillsOverview = {
-  settings: { autoUpdate: false }, skills: [],
+  settings: { autoUpdate: false }, skills: [], requests: [],
   found: [
     { kind: 'github', name: 'animate', source: 'emilkowalski/skill', machines: [{ machineId: 'laptop', ref: null }] },
     { kind: 'github', name: 'apple-design', source: 'emilkowalski/skill', machines: [{ machineId: 'laptop', ref: null }] },
@@ -31,7 +31,7 @@ const audit = { risk: 'safe' as const, analyzedAt: new Date(0) };
 
 function Library({ data = overview, query = '' }: { data?: SkillsOverview; query?: string }) {
   const actions = useSkillActions();
-  return <><SkillCollections overview={data} actions={actions} query={query} onClearQuery={api.clear} onBrowse={api.browse} /><p role="status">{actions.status?.text}</p></>;
+  return <><SkillCollections overview={data} actions={actions} query={query} onClearQuery={api.clear} onBrowse={api.browse} onReview={() => undefined} /><p role="status">{actions.status?.text}</p></>;
 }
 function Picker() {
   const actions = useSkillActions();

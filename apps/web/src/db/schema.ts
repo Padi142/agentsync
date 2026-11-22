@@ -299,6 +299,52 @@ export const skillFolderVersion = sqliteTable(
   (table) => [primaryKey({ columns: [table.repoId, table.commit, table.path] }), index('skill_folder_version_hash_idx').on(table.repoId, table.path, table.installedHash)],
 );
 
+/** A Skill a Skill Request proposes, as its JSON column keeps it. `pin` is `null` until the server resolved it. */
+export interface StoredProposal {
+  name: string;
+  path: string;
+  pin: FolderVersion | null;
+}
+
+/**
+ * A Machine's Skill Request: Skills of one repository, pinned and audited by the server, waiting for a
+ * signed-in browser. `resolving` while the server still pins some (a large repository takes several
+ * calls); it counts as open, but only until `expires_at`, a few minutes after its last progress, so an
+ * interrupted one frees its place. Open requests past `expires_at` are expired, whatever their status says.
+ */
+export const skillRequest = sqliteTable(
+  'skill_request',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    machineId: text('machine_id')
+      .notNull()
+      .references(() => machine.id, { onDelete: 'cascade' }),
+    repoId: integer('repo_id').notNull(),
+    repoFullName: text('repo_full_name').notNull(),
+    /** The repository as the Machine named it, lowercase: what a later `skills add` resumes by. */
+    source: text('source').notNull(),
+    /** The default branch's head when the request was made: every Pin is read at it. */
+    commit: text('commit').notNull(),
+    /** The names asked for, sorted; `null` for every skill in the repository. */
+    names: text('names', { mode: 'json' }).$type<string[]>(),
+    skills: text('skills', { mode: 'json' }).$type<StoredProposal[]>().notNull(),
+    /** skills.sh verdicts by name, once every Pin is resolved. */
+    audits: text('audits', { mode: 'json' }).$type<Record<string, StoredAudits>>(),
+    status: text('status', { enum: ['resolving', 'open', 'approved', 'rejected'] }).notNull(),
+    /** The Skills approval added. */
+    added: text('added', { mode: 'json' }).$type<string[]>().notNull(),
+    createdAt: timestamp('created_at'),
+    expiresAt: timestamp('expires_at'),
+    decidedAt: integer('decided_at', { mode: 'timestamp_ms' }),
+    /** A random id the approval that closed the request writes, so the rest of its batch knows it won. */
+    decisionId: text('decision_id'),
+  },
+  (table) => [index('skill_request_user_idx').on(table.userId, table.status), index('skill_request_machine_idx').on(table.machineId, table.source)],
+);
+
 /**
  * A Space: a live collection of files shared by its Share Link. Status is derived (`spaceStatus` in the
  * contract) from `is_private` and `expires_at`; the cron purges Spaces `SPACE_LIMITS.graceDays` after they expire.
@@ -349,6 +395,6 @@ export const schema = {
   user, session, account, verification,
   template, templateRevision, machine, machineCredential,
   machineVariables, machineVariablesRevision, conflict, deviceAuthorization,
-  skill, skillMachine, skillPinMove, skillSettings, skillExclusion, machineSkillReport, skillFolderVersion,
+  skill, skillMachine, skillPinMove, skillSettings, skillExclusion, machineSkillReport, skillFolderVersion, skillRequest,
   space, spaceFile,
 };

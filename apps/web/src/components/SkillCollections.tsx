@@ -6,6 +6,7 @@ import { collectionsOf, entriesOf, entryName, machineNames, waitingOn, type Coll
 import { Command } from './Copy';
 import { Icon } from './Icon';
 import { EntryRow } from './SkillEntryRow';
+import { Ago } from './Time';
 import { SyncDialog, type SyncRequest } from './SyncDialog';
 
 function toggleKey(current: ReadonlySet<string>, key: string) {
@@ -21,12 +22,14 @@ const count = (n: number) => `${n} ${n === 1 ? 'skill' : 'skills'}`;
  * found. Machines with changes waiting and Skills that need the person come first. Repositories stay
  * closed until opened; `query` reveals matching skills inside theirs.
  */
-export function SkillCollections({ overview, actions, query, onClearQuery, onBrowse }: {
+export function SkillCollections({ overview, actions, query, onClearQuery, onBrowse, onReview }: {
   overview: SkillsOverview;
   actions: SkillActions;
   query: string;
   onClearQuery: () => void;
   onBrowse: (repo: string) => void;
+  /** Open a Skill Request. */
+  onReview: (requestId: string) => void;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [searchCollapsed, setSearchCollapsed] = useState<ReadonlySet<string>>(new Set());
@@ -47,6 +50,7 @@ export function SkillCollections({ overview, actions, query, onClearQuery, onBro
   const found = section('found');
   const ignored = section('ignored');
   const needs = entriesOf(overview).filter((entry) => entry.type === 'skill' && entry.asks.length && matches(entry.skill.repo.fullName, entry.skill.name));
+  const requests = overview.requests.filter((request) => request.skills.some((skill) => matches(request.repo.fullName, skill.name)));
   const updates = overview.skills.filter((skill) => skill.update).length;
   const waiting = waitingOn(overview);
   const local = overview.found.flatMap((item) => item.kind === 'local' && matches('', item.name) ? [item] : []);
@@ -55,7 +59,7 @@ export function SkillCollections({ overview, actions, query, onClearQuery, onBro
   // Open while there's nothing else to look at, and while searching. Otherwise out of the way until asked for.
   const showFound = !!term || (foundOpen ?? overview.skills.length === 0);
   const showIgnored = ignoredOpen || (!!term && ignoredCount > 0);
-  const nothing = !synced.length && !found.length && !ignored.length && !local.length;
+  const nothing = !synced.length && !found.length && !ignored.length && !local.length && !requests.length;
 
   const repoProps = (name: string, group: SkillCollection) => {
     const key = `${name}:${group.key}`;
@@ -87,13 +91,22 @@ export function SkillCollections({ overview, actions, query, onClearQuery, onBro
         <Command command="agentsync skills sync" />
       </div> : null}
 
-      {needs.length ? <section className="sk-section" aria-label="Needs you">
-        <div className="sk-section-head"><h2>Needs you</h2><span>{needs.length}</span>
+      {needs.length || requests.length ? <section className="sk-section" aria-label="Needs you">
+        <div className="sk-section-head"><h2>Needs you</h2><span>{needs.length + requests.length}</span>
           {updates >= 2 ? <button type="button" className="button small secondary" disabled={!!actions.busy}
             onClick={() => actions.run('update-all', () => rpc.skills.updateAll(), ({ updated }) => `${updated} skills updated`)}>Update all</button> : null}
         </div>
         <div className="sk-collection"><div className="sk-collection-body sk-flat">
           <ul className="rows sk-rows">
+            {requests.map((request) => <li key={request.id}><div className="sk-line">
+              <div className="sk-row-static">
+                <span className="row-title"><strong>{request.repo.fullName}</strong></span>
+                <span className="sk-dots">{request.machine.nickname} asked for {count(request.skills.length)} <Ago date={request.createdAt} /></span>
+              </div>
+              <div className="sk-line-action">
+                <button type="button" className="button small" disabled={!!actions.busy} onClick={() => onReview(request.id)}>Review</button>
+              </div>
+            </div></li>)}
             {needs.map((entry) => <EntryRow key={entry.key} entry={entry} overview={overview} actions={actions}
               open={detail === entry.key} onToggle={() => setDetail(detail === entry.key ? null : entry.key)} />)}
           </ul>

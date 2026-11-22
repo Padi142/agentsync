@@ -32,7 +32,8 @@ Commands:
   template    Print the Template
   vars        Show or change this Machine's Variables
   conflict    List, get, or resolve open Conflicts
-  skills      Install this Machine's Skills (skills sync), or show them (skills status)
+  skills      Install this Machine's Skills (skills sync), show them (skills status),
+              or ask to add some from GitHub (skills add)
   space       Share files as a live Space, or read one from its Share Link
   rename      Change this Machine's nickname
   logout      Revoke this Machine and remove its hooks
@@ -47,7 +48,8 @@ Common flags:
   --server <url>  The AgentSync server (default: the one this Machine registered with)
 
 Run agentsync help <command> for its flags and examples.
-Exit codes: 0 ok, 1 error, 2 usage, 3 Drift (or a blocked Skill), 4 Conflict, 5 auth, 130 cancelled.`;
+Exit codes: 0 ok, 1 error, 2 usage, 3 Drift (or a blocked Skill), 4 Conflict, 5 auth,
+6 waiting for approval (skills add), 130 cancelled.`;
 
 const COMMAND_HELP: Record<string, string> = {
   init: `Usage: agentsync init [--server <url>] [--nickname <nickname>] [--agent <id>]... [--target <agent>=<path>]...
@@ -140,12 +142,13 @@ Save a merged file as the resolution. It must have no markers left and must pars
   --base <revision>   The Template revision it was merged against (default: the Conflict's)`,
   skills: `Usage: agentsync skills sync [--overwrite]
        agentsync skills status
+       agentsync skills add <owner/repo> [names…] [--no-wait] [--no-sync]
 
 Skills are agent skills picked on the web dashboard, each pinned to a commit of a GitHub
-repository. skills sync is the only command that installs or removes them, with the official
-\`skills\` CLI. It only replaces or removes folders AgentSync installed: a folder of the same
-name that you wrote or installed yourself blocks the Skill, and a Skill edited by hand is left
-alone (exit 3) until --overwrite.
+repository. skills sync installs and removes them, with the official \`skills\` CLI. It only
+replaces or removes folders AgentSync installed: a folder of the same name that you wrote or
+installed yourself blocks the Skill, and a Skill edited by hand is left alone (exit 3) until
+--overwrite. skills add asks for new Skills, which you approve in the browser, then installs them.
 
   --overwrite   Replace or remove Skills edited by hand
 
@@ -161,6 +164,22 @@ Exit 3 if a Skill is blocked by your own folder or was edited by hand, 1 if an i
   'skills status': `Usage: agentsync skills status
 
 Show each of this Machine's Skills against its Pin, without changing anything.`,
+  'skills add': `Usage: agentsync skills add <owner/repo | https://github.com/owner/repo> [names…] [--no-wait] [--no-sync]
+
+Ask to add Skills from a public GitHub repository: the named ones, or every skill it has. This
+Machine can't add them itself: it prints a link where you approve them in the browser, choosing
+which to add and their Machines, and waits up to 10 minutes. Then it installs the ones approved
+on this Machine. Running the same command again resumes the same request.
+
+  --no-wait   Print the link and exit 6 without waiting
+  --no-sync   Don't install what was approved; skills sync does it later
+
+Exit 6 if the request is still waiting (it expires after 24 hours), 1 if it was rejected,
+2 if the repository has no skill of a name given, 3 if an approved Skill is blocked here.
+
+Examples:
+  agentsync skills add t3dotgg/tstack
+  agentsync skills add https://github.com/t3dotgg/tstack babysit-pr --no-wait --json`,
   space: `Usage: ${SPACE_USAGE.create}
        ${SPACE_USAGE.put}
        ${SPACE_USAGE.push}
@@ -290,6 +309,7 @@ function parse(argv: string[]): { flags: Flags & SpaceFlags; positionals: string
       skill: { type: 'boolean', default: true },
       skills: { type: 'boolean' },
       wait: { type: 'boolean', default: true },
+      sync: { type: 'boolean', default: true },
       file: { type: 'string' },
       base: { type: 'string' },
       out: { type: 'string' },

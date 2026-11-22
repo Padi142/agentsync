@@ -2,11 +2,13 @@ import { createHash } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  desiredSkillSchema, gitShaSchema, RESERVED_SKILL_NAMES, skillNameSchema, type ContractClient, type DesiredSkill, type SkillSyncResult, type SyncPayload,
+  desiredSkillSchema, gitShaSchema, repoNameSchema, RESERVED_SKILL_NAMES, SKILL_REQUEST_LIMITS, skillNameSchema,
+  type ContractClient, type DesiredSkill, type SkillRequest, type SkillSyncResult, type SyncPayload,
 } from '@agentsync/contract';
+import { safe } from '@orpc/client';
 import { findAgent } from '../agents.js';
 import type { Context, Outcome } from '../context.js';
-import { describeError, EXIT, usage } from '../exit.js';
+import { CliError, describeError, EXIT, usage } from '../exit.js';
 import { machineClient } from '../session.js';
 import { foreign, pendingCounts, planSkills, requiredPlaces, type SkillStep } from '../skills/plan.js';
 import { addSkills, removeSkills } from '../skills/runner.js';
@@ -37,10 +39,10 @@ function installAgents(agents: readonly string[], owned: readonly Place[]): stri
 const scanHash = (scan: Scan) => createHash('sha256').update(JSON.stringify(scan.items)).digest('hex');
 
 /** Send a scan (and `skills sync` results), and remember it so the hook doesn't send it again. */
-async function report(ctx: Context, client: ContractClient, scan: Scan, results?: SkillSyncResult[], until?: number) {
+async function report(ctx: Context, client: ContractClient, scan: Scan, results?: SkillSyncResult[], until?: number, partial = false) {
   // A result for a name the server couldn't have sent validly is the person's to see, not the server's.
   const valid = results?.filter((result) => skillNameSchema.safeParse(result.name).success);
-  await client.skills.report({ scan: scan.items, ...(valid ? { results: valid } : {}) });
+  await client.skills.report({ scan: scan.items, ...(valid ? { results: valid, ...(partial ? { partial } : {}) } : {}) });
   // A hook past its deadline has already printed and is on its way out: it leaves the files alone.
   if (until !== undefined && Date.now() > until) return;
   updateSkillsState(ctx.io, (state) => { state.report = { hash: scanHash(scan), at: Date.now() }; });
@@ -71,12 +73,17 @@ function checkedDesired(payload: SyncPayload) {
  * holding the Skills lock. Only folders AgentSync recorded as its own are replaced or removed, drifted
  * ones only with `overwrite`; anything else of a Skill's name blocks it. Each install is planned again
  * from a fresh look at the disk just before it runs. Saves the record, then reports to the server.
+ * With `only`, it acts on those names alone and leaves every other Skill as it is.
  */
-export async function syncSkills(ctx: Context, client: ContractClient, payload: SyncPayload, overwrite: boolean) {
+export async function syncSkills(ctx: Context, client: ContractClient, payload: SyncPayload, overwrite: boolean, only?: ReadonlySet<string>) {
   const { io } = ctx;
+  const inScope = (name: string) => !only || only.has(name);
   return withSkillsLock(io, async () => {
     const { managed } = readSkillsState(io);
-    const { valid: desired, invalid, keep } = checkedDesired(payload);
+    const checked = checkedDesired(payload);
+    const { keep } = checked;
+    const desired = checked.valid.filter((skill) => inScope(skill.name));
+    const invalid = checked.invalid.filter((result) => inScope(result.name));
     const results: SkillSyncResult[] = [...invalid];
     const result = (name: string, commit: string, status: SkillSyncResult['status'], error?: string) =>
       results.push({ name, commit, status, ...(error ? { error: error.slice(0, 2000) } : {}) });
@@ -104,7 +111,8 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
     };
 
     try {
-      const steps = planSkills(desired, (await scanSkills(io, managed, desired.map((skill) => skill.name))).folders, managed, required, overwrite, keep);
+      const steps = planSkills(desired, (await scanSkills(io, managed, desired.map((skill) => skill.name))).folders, managed, required, overwrite, keep)
+        .filter((step) => inScope(step.name));
       for (const step of steps) settle(step);
 
       const removals = steps.filter((step) => step.action === 'remove').map((step) => step.name);
@@ -196,7 +204,7 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
     let reportError: string | undefined;
     const scan = await scanSkills(io, managed);
     try {
-      await report(ctx, client, scan, results);
+      await report(ctx, client, scan, results, undefined, only !== undefined);
     } catch (error) {
       reportError = describeError(error);
     }
@@ -296,10 +304,140 @@ async function skillsStatus(ctx: Context): Promise<Outcome> {
 
 export async function skills(ctx: Context): Promise<Outcome> {
   const [action, ...rest] = ctx.args;
+  if (action === 'add') return skillsAdd(ctx, rest);
   if (rest.length) throw usage(`Unexpected argument "${rest[0]}". Run agentsync help skills for usage.`);
   if (action === 'sync') return skillsSync(ctx);
   if (action === 'status') return skillsStatus(ctx);
-  throw usage(action ? `Unknown action "skills ${action}". Use skills sync or skills status.` : 'Use agentsync skills sync or agentsync skills status.');
+  throw usage(action ? `Unknown action "skills ${action}". Use skills sync, skills status or skills add.` : 'Use agentsync skills sync, skills status or skills add.');
+}
+
+/** How long `skills add` waits for the browser, and how often it looks. */
+const APPROVAL_WAIT_MS = 10 * 60 * 1000;
+const APPROVAL_POLL_MS = 3000;
+/** How many calls `skills add` makes while the server is still reading a large repository. */
+const MAX_READS = 10;
+
+/** `owner/repo` from what a person may paste: `owner/repo`, or the repository's GitHub URL. */
+function repoArgument(input: string): string {
+  const repo = input.replace(/^https?:\/\/(www\.)?github\.com\//i, '').replace(/\/$/, '').replace(/\.git$/, '');
+  if (!repoNameSchema.safeParse(repo).success) {
+    throw usage(`"${input}" isn't a GitHub repository. Use owner/repo or https://github.com/owner/repo.`);
+  }
+  return repo;
+}
+
+/** Make (or resume) the Skill Request, calling again while the server reads a large repository. */
+async function requestSkills(ctx: Context, client: ContractClient, repo: string, names: string[]) {
+  for (let call = 0; call < MAX_READS; call++) {
+    const [error, made, defined] = await safe(client.skills.request({ repo, ...(names.length ? { names } : {}) }));
+    if (!error) {
+      if (made.status === 'ready') return made;
+      continue;
+    }
+    if (!defined) throw error;
+    switch (error.code) {
+      case 'UNKNOWN_SKILLS': throw new CliError(
+        `${repo} has no skill named ${error.data.unknown.join(', ')}. It has: ${error.data.available.join(', ') || 'none'}.`,
+        EXIT.usage, { unknown: error.data.unknown, available: error.data.available },
+      );
+      case 'REQUEST_LIMIT': throw new CliError(
+        `${SKILL_REQUEST_LIMITS.open} Skill Requests are already waiting. Approve or reject them at ${new URL('/skills', ctx.config.server)}, or let them expire.`,
+        EXIT.error, { code: error.code },
+      );
+      case 'NOT_FOUND': throw new CliError(`GitHub has no public repository ${repo}.`, EXIT.error, { code: error.code });
+      case 'UNSUPPORTED_SKILL': throw new CliError(error.data.reason, EXIT.error, { code: error.code });
+      case 'UPSTREAM_UNAVAILABLE': throw new CliError('GitHub or skills.sh didn’t answer. Try again in a minute.', EXIT.error, { code: error.code });
+      default: throw error;
+    }
+  }
+  throw new CliError(`AgentSync is still reading ${repo}. Run the command again to carry on.`, EXIT.error);
+}
+
+/** Look at the request until the browser decides or the wait is over (`null`). A dropped connection is retried. */
+async function waitForDecision(ctx: Context, client: ContractClient, requestId: string): Promise<SkillRequest | null> {
+  for (let waited = 0; waited < APPROVAL_WAIT_MS; waited += APPROVAL_POLL_MS) {
+    await ctx.io.sleep(APPROVAL_POLL_MS);
+    const [error, request] = await safe(client.skills.getRequest({ requestId }));
+    if (error) {
+      if (error instanceof TypeError || (error instanceof Error && error.name === 'TimeoutError')) continue;
+      throw error;
+    }
+    if (request.status !== 'open') return request;
+  }
+  return null;
+}
+
+/** Skills a request proposes that a folder AgentSync doesn't manage already holds here, unless `skills sync` would adopt it. */
+async function inTheWay(ctx: Context, request: SkillRequest) {
+  const { managed } = readSkillsState(ctx.io);
+  const { folders } = await scanSkills(ctx.io, managed, request.skills.map((skill) => skill.name), { only: true });
+  return request.skills.filter((skill) => {
+    const folder = folders.get(skill.name);
+    if (!folder?.present.length || recordOf(managed, skill.name)) return false;
+    const adoptable = folder.lockSource === request.repo.fullName.toLowerCase() && folder.hash === skill.pin.installedHash;
+    return !adoptable;
+  }).map((skill) => skill.name);
+}
+
+/**
+ * `skills add`: a Skill Request. Only a signed-in browser adds Skills (ADR 0005), so this asks, prints
+ * the link and waits; then it installs on this Machine just the Skills approved, as `skills sync` does.
+ */
+async function skillsAdd(ctx: Context, args: string[]): Promise<Outcome> {
+  const [input, ...names] = args;
+  if (!input) throw usage('Name a repository: agentsync skills add <owner/repo> [names…].');
+  const repo = repoArgument(input);
+  const bad = names.find((name) => !skillNameSchema.safeParse(name).success);
+  if (bad !== undefined) throw usage(`"${bad}" isn't a skill name.`);
+  if (names.length > SKILL_REQUEST_LIMITS.skills) throw usage(`Name at most ${SKILL_REQUEST_LIMITS.skills} skills at a time.`);
+  const client = machineClient(ctx);
+  const { request, resumed } = await ctx.during(`Reading ${repo}…`, () => requestSkills(ctx, client, repo, names));
+  const proposed = request.skills.map((skill) => skill.name);
+  const shown = { id: request.id, url: request.url, repo: request.repo.fullName, skills: proposed, resumed };
+
+  // The server hands back the same ask approved since the last run (`--no-wait`, or a wait that ran out): just install it.
+  let decided: SkillRequest | null = request.status === 'open' ? null : request;
+  if (!decided) {
+    ctx.say(`${resumed ? 'Still waiting for approval of' : 'Asked to add'} ${plural(proposed.length, 'skill')} from ${request.repo.fullName}: ${proposed.join(', ')}.\n\nApprove: ${request.url}\n`);
+    const blocked = await inTheWay(ctx, request).catch(() => []);
+    if (blocked.length) {
+      ctx.warn(`${blocked.join(', ')} ${blocked.length === 1 ? 'is' : 'are'} already on this Machine, installed outside AgentSync. If approved, ${blocked.length === 1 ? 'it stays' : 'they stay'} blocked here until you move or rename ${blocked.length === 1 ? 'that folder' : 'those folders'}.`);
+    }
+    const waiting = (): Outcome => {
+      ctx.say('Run the same command again to keep waiting.');
+      return { code: EXIT.pending, data: { status: 'pending', request: shown } };
+    };
+    if (!ctx.flags.wait) return waiting();
+    decided = await ctx.during('Waiting for approval in the browser…', () => waitForDecision(ctx, client, request.id));
+    if (!decided) {
+      ctx.warn('Not approved yet.');
+      return waiting();
+    }
+  }
+  if (decided.status === 'rejected') throw new CliError('The Skill Request was rejected.', EXIT.error, { status: 'rejected', request: shown });
+  if (decided.status === 'expired') throw new CliError('The Skill Request expired. Run the command again to ask again.', EXIT.error, { status: 'expired', request: shown });
+
+  const added = decided.added;
+  const approved = { status: 'approved', request: shown, added };
+  ctx.success(`Approved ${plural(added.length, 'Skill')}: ${added.join(', ')}`);
+  if (!ctx.flags.sync) {
+    ctx.say('Run `agentsync skills sync` to install them.');
+    return { data: approved };
+  }
+  const payload = await ctx.during('Fetching your Skills…', () => client.machines.sync());
+  const here = new Set(payload.skills.filter((skill) => added.includes(skill.name)).map((skill) => skill.name));
+  if (!here.size) {
+    ctx.say('None of them are set for this Machine.');
+    return { data: { ...approved, skills: [] } };
+  }
+  const { results, reportError } = await syncSkills(ctx, client, payload, false, here);
+  narrate(ctx, results);
+  if (reportError) ctx.warn(`Could not tell the server what changed: ${reportError}`);
+  const has = (...statuses: SkillSyncResult['status'][]) => results.some((result) => statuses.includes(result.status));
+  return {
+    code: has('failed') ? EXIT.error : has('blocked', 'drifted') ? EXIT.drift : EXIT.ok,
+    data: { ...approved, skills: results, ...(reportError ? { reportError } : {}) },
+  };
 }
 
 /** The words for what `skills sync` would do, or `null` if nothing. */

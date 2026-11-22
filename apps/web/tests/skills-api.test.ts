@@ -1,6 +1,7 @@
 import type { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/env';
+import { approveRequestRow, getRequestRow, insertRequest } from '../src/db/skill-requests';
 import { skillsService } from '../src/skills/service';
 import { fakeGitHub, skillMd } from './fake-github';
 import { createTestEnv, fakeWorkOSDevice, resetDb, rpcClient } from './helpers';
@@ -50,7 +51,7 @@ async function registerMachine(who: keyof typeof identities = 'alice', nickname 
   workos.approve(deviceCode, identities[who]);
   const result = await cli.machines.devicePoll({ deviceCode, nickname, hostname: nickname, os: 'linux', targets: [{ path: '~/.claude/CLAUDE.md', agent: 'claude' }] });
   if (result.status !== 'approved') throw new Error(result.status);
-  return { machine: result.machine, client: rpcClient(env, { token: result.token }) };
+  return { machine: result.machine, token: result.token, client: rpcClient(env, { token: result.token }) };
 }
 
 /** `env` with a count of its D1 statements, and of every outgoing request while `work` runs. */
@@ -606,5 +607,186 @@ describe('Skill collections', () => {
       await expect(caller.skills.collection({ repo: 'emil/skills' })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
       await expect(caller.skills.setIgnored({ repo: 'emil/skills', names: ['animate'], ignored: true })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     }
+  });
+});
+
+describe('Skill Requests', () => {
+  const userOf = async (machineId: string) =>
+    (await env.DB.prepare('SELECT user_id FROM machine WHERE id = ?').bind(machineId).first<{ user_id: string }>())!.user_id;
+
+  /** Three skills, one audited Safe, one High, one never audited. */
+  function requestRepo() {
+    const first = gh.repo('team/kit', {
+      'skills/safe/SKILL.md': skillMd('safe'),
+      'skills/risky/SKILL.md': skillMd('risky'),
+      'skills/fresh/SKILL.md': skillMd('fresh'),
+    });
+    gh.audit('team/kit', 'safe', 'safe');
+    gh.audit('team/kit', 'risky', 'high');
+    return first;
+  }
+
+  it('pins and audits what the repository has when asked, and resumes rather than duplicates', async () => {
+    const first = requestRepo();
+    const { machine, client } = await registerMachine();
+    const made = await client.skills.request({ repo: 'Team/Kit' });
+    if (made.status !== 'ready') throw new Error(made.status);
+    expect(made.resumed).toBe(false);
+    expect(made.request).toMatchObject({
+      repo: { fullName: 'team/kit' }, commit: first, machine: { id: machine.id, nickname: 'laptop' }, status: 'open', added: [],
+      url: `http://app.test/skills?request=${made.request.id}`,
+    });
+    expect(made.request.skills.map(({ name, pin, audits, conflict }) => [name, pin.commit, audits.gen?.risk ?? null, conflict])).toEqual([
+      ['fresh', first, null, null], ['risky', first, 'high', null], ['safe', first, 'safe', null],
+    ]);
+
+    // The same ask resumes it, even after the repository moved on; other names replace it.
+    gh.commit('team/kit', { 'skills/safe/SKILL.md': skillMd('safe', 'v2') });
+    expect(await client.skills.request({ repo: 'team/kit' })).toMatchObject({ status: 'ready', resumed: true, request: { id: made.request.id, commit: first } });
+    const narrowed = await client.skills.request({ repo: 'team/kit', names: ['safe'] });
+    expect(narrowed).toMatchObject({ status: 'ready', resumed: false });
+    expect((await browser().skills.overview()).requests.map((request) => request.id)).toEqual([narrowed.status === 'ready' && narrowed.request.id]);
+  });
+
+  it('refuses unknown names with what the repository has, and more open requests than the limit', async () => {
+    requestRepo();
+    const { client } = await registerMachine();
+    await expect(client.skills.request({ repo: 'team/kit', names: ['safe', 'nope'] }))
+      .rejects.toMatchObject({ code: 'UNKNOWN_SKILLS', data: { unknown: ['nope'], available: ['fresh', 'risky', 'safe'] } });
+    for (let index = 0; index < 5; index++) {
+      gh.repo(`team/kit-${index}`, { 'SKILL.md': skillMd(`kit-${index}`) });
+      expect(await client.skills.request({ repo: `team/kit-${index}` })).toMatchObject({ status: 'ready' });
+    }
+    await expect(client.skills.request({ repo: 'team/kit' })).rejects.toMatchObject({ code: 'REQUEST_LIMIT' });
+    // An expired request no longer counts or resumes: asking again starts a new one in its place.
+    await env.DB.prepare('UPDATE skill_request SET expires_at = ? WHERE source = ?').bind(Date.now() - 1, 'team/kit-0').run();
+    expect(await client.skills.request({ repo: 'team/kit-0' })).toMatchObject({ status: 'ready', resumed: false });
+    await expect(client.skills.request({ repo: 'team/kit' })).rejects.toMatchObject({ code: 'REQUEST_LIMIT' });
+  });
+
+  it('approves exactly the Pins shown, with the chosen assignment, once', async () => {
+    const first = requestRepo();
+    const laptop = await registerMachine('alice', 'laptop');
+    const desktop = await registerMachine('alice', 'desktop');
+    const made = await laptop.client.skills.request({ repo: 'team/kit' });
+    if (made.status !== 'ready') throw new Error(made.status);
+    const requestId = made.request.id;
+    gh.commit('team/kit', { 'skills/safe/SKILL.md': skillMd('safe', 'v2') });
+    expect(await browser().skills.getRequest({ requestId })).toMatchObject({ moved: true });
+
+    const approved = await browser().skills.approveRequest({ requestId, names: ['safe', 'fresh'], assignment: { to: 'chosen', machineIds: [laptop.machine.id] } });
+    expect(approved).toMatchObject({ status: 'approved', added: ['safe', 'fresh'] });
+    const { skills, requests } = await browser().skills.overview();
+    expect(requests).toEqual([]);
+    expect(skills.map((skill) => [skill.name, skill.pin.commit, skill.assignment])).toEqual([
+      ['fresh', first, { to: 'chosen', machineIds: [laptop.machine.id] }],
+      ['safe', first, { to: 'chosen', machineIds: [laptop.machine.id] }],
+    ]);
+    expect((await browser().skills.history({ skillId: skills[0]!.id })).map((move) => move.kind)).toEqual(['added']);
+    expect((await desktop.client.machines.sync()).skills).toEqual([]);
+    // The asking Machine sees the outcome; no other Machine can read it, and nobody can approve it again.
+    expect(await laptop.client.skills.getRequest({ requestId })).toMatchObject({ status: 'approved', added: ['safe', 'fresh'], moved: null });
+    await expect(desktop.client.skills.getRequest({ requestId })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(browser('bob').skills.getRequest({ requestId })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(browser().skills.approveRequest({ requestId, names: ['risky'], assignment: { to: 'all' } })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(browser().skills.rejectRequest({ requestId })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('marks names already in the account and refuses to approve them; only a browser decides', async () => {
+    requestRepo();
+    gh.repo('other/kit', { 'skills/fresh/SKILL.md': skillMd('fresh') });
+    await browser().skills.add({ repo: 'team/kit', name: 'safe' });
+    await browser().skills.add({ repo: 'other/kit', name: 'fresh' });
+    const { client } = await registerMachine();
+    const made = await client.skills.request({ repo: 'team/kit' });
+    if (made.status !== 'ready') throw new Error(made.status);
+    const requestId = made.request.id;
+    expect(made.request.skills.map(({ name, conflict }) => [name, conflict])).toEqual([['fresh', 'taken'], ['risky', null], ['safe', 'added']]);
+    await expect(browser().skills.approveRequest({ requestId, names: ['fresh'], assignment: { to: 'all' } })).rejects.toMatchObject({ code: 'SKILL_NAME_TAKEN' });
+    await expect(client.skills.approveRequest({ requestId, names: ['risky'], assignment: { to: 'all' } })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(client.skills.rejectRequest({ requestId })).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(await browser().skills.rejectRequest({ requestId })).toMatchObject({ status: 'rejected', added: [] });
+    expect((await browser().skills.overview()).skills.map((skill) => skill.name)).toEqual(['fresh', 'safe']);
+  });
+
+  it('pins as many skills as a request may propose across calls, and approves them all, within a Worker’s limits', async () => {
+    const names = Array.from({ length: 20 }, (_, i) => `skill-${String(i).padStart(2, '0')}`);
+    gh.repo('team/big', Object.fromEntries(names.map((name) => [`skills/${name}/SKILL.md`, skillMd(name)])));
+    const { machine, token } = await registerMachine();
+    const within = async <T>(work: (counted: Env) => Promise<T>) => {
+      const { result, used } = await counting(work);
+      expect(used.queries).toBeLessThanOrEqual(50);
+      expect(used.requests).toBeLessThanOrEqual(50);
+      return result;
+    };
+    const ask = () => within((counted) => rpcClient(counted, { token }).skills.request({ repo: 'team/big' }));
+    let made = await ask();
+    for (let calls = 1; made.status === 'reading'; calls++) {
+      expect(calls).toBeLessThan(5);
+      made = await ask();
+    }
+    expect(made.request.skills.map((skill) => skill.name)).toEqual(names);
+    const approved = await within((counted) => rpcClient(counted, { cookie: `wos-session=${identities.alice.id}` }).skills
+      .approveRequest({ requestId: made.request.id, names, assignment: { to: 'chosen', machineIds: [machine.id] } }));
+    expect(approved.added).toEqual(names);
+  }, 30_000);
+
+  it('leaves out a skill whose folder path is too long, and the Skills page survives a request it can’t show', async () => {
+    const deep = `${'a'.repeat(200)}/${'b'.repeat(200)}/${'c'.repeat(200)}`;
+    // No container folder, so `skills` looks five levels deep.
+    gh.repo('team/deep', { [`${deep}/SKILL.md`]: skillMd('deep'), 'more/ok/SKILL.md': skillMd('ok') });
+    const { client } = await registerMachine();
+    await expect(client.skills.request({ repo: 'team/deep', names: ['deep'] })).rejects.toMatchObject({ code: 'UNSUPPORTED_SKILL' });
+    const made = await client.skills.request({ repo: 'team/deep' });
+    if (made.status !== 'ready') throw new Error(made.status);
+    expect(made.request.skills.map((skill) => skill.name)).toEqual(['ok']);
+
+    await env.DB.prepare('UPDATE skill_request SET skills = ? WHERE id = ?')
+      .bind(JSON.stringify([{ name: 'ok', path: deep, pin: made.request.skills[0]!.pin }]), made.request.id).run();
+    expect((await browser().skills.overview()).requests).toEqual([]);
+  });
+
+  it('lets only one of two approvals at the same moment add anything', async () => {
+    requestRepo();
+    const { machine, client } = await registerMachine();
+    const made = await client.skills.request({ repo: 'team/kit' });
+    if (made.status !== 'ready') throw new Error(made.status);
+    const { request } = (await getRequestRow(env, await userOf(machine.id), made.request.id))!;
+    const approve = (name: string) => {
+      const proposal = request.skills.find((item) => item.name === name)!;
+      return approveRequestRow(env, request, [{ name, path: proposal.path, pin: proposal.pin!, audits: request.audits![name]! }], { to: 'all' }, new Date(1_000_000));
+    };
+    // Expiry is checked against `now`, so this moment must still be inside the request's life.
+    await env.DB.prepare('UPDATE skill_request SET expires_at = ? WHERE id = ?').bind(Date.now() + 60_000, request.id).run();
+    const results = await Promise.all([approve('safe'), approve('fresh')]);
+    expect(results.filter((result) => result !== null)).toHaveLength(1);
+    const winner = results.find((result) => result !== null)!;
+    expect((await browser().skills.overview()).skills.map((skill) => skill.name)).toEqual(winner);
+  });
+
+  it('makes one request of two identical ones asked at once', async () => {
+    requestRepo();
+    const { client } = await registerMachine();
+    // The call that loses the race may answer `reading` while the other one pins; asking again resumes it.
+    await Promise.all([client.skills.request({ repo: 'team/kit' }), client.skills.request({ repo: 'team/kit' })]);
+    expect(await client.skills.request({ repo: 'team/kit' })).toMatchObject({ status: 'ready', resumed: true });
+    expect((await env.DB.prepare('SELECT count(*) AS n FROM skill_request').first<{ n: number }>())!.n).toBe(1);
+  });
+
+  it('frees the place of a request whose reading stalled, while one still being read keeps it', async () => {
+    const { machine, client } = await registerMachine();
+    const userId = await userOf(machine.id);
+    const stalled = (source: string, at: Date) => insertRequest(env, {
+      userId, machineId: machine.id, repo: { id: 1, fullName: source }, source, commit: 'a'.repeat(40), names: null,
+      skills: [{ name: 'x', path: '', pin: null }],
+    }, null, at);
+    for (let index = 0; index < 4; index++) expect(await stalled(`team/stalled-${index}`, new Date(Date.now() - 11 * 60 * 1000))).not.toBeNull();
+    expect(await stalled('team/reading', new Date())).not.toBeNull();
+    for (let index = 0; index < 4; index++) {
+      gh.repo(`team/kit-${index}`, { 'SKILL.md': skillMd(`kit-${index}`) });
+      expect(await client.skills.request({ repo: `team/kit-${index}` })).toMatchObject({ status: 'ready' });
+    }
+    requestRepo();
+    await expect(client.skills.request({ repo: 'team/kit' })).rejects.toMatchObject({ code: 'REQUEST_LIMIT' });
   });
 });

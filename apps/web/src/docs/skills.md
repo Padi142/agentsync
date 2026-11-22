@@ -6,7 +6,7 @@ A **Skill** is an agent skill (a folder with a `SKILL.md`) from a public GitHub 
 
 **Synced** lists what AgentSync manages. **On your machines, not synced** lists skills your Machines have that it doesn't manage yet. Both group skills by GitHub repository, and search matches repository and skill names.
 
-**Needs you** appears when a synced Skill has an update or a problem. A strip at the top appears when a Machine has changes waiting, with the command that installs them.
+**Needs you** appears when a synced Skill has an update or a problem, or a Machine asked for new Skills. A strip at the top appears when a Machine has changes waiting, with the command that installs them.
 
 ## Syncing a skill you already have
 
@@ -20,6 +20,18 @@ A **Skill** is an agent skill (a folder with a `SKILL.md`) from a public GitHub 
 
 **Browse all skills in this repo** lists everything in a repository, including skills none of your Machines have. Nothing starts ticked, and new skills in a repository are never synced automatically, so come back here to pick them up. Skills your Machines have sync at the version they have; others use the newest version.
 
+## Asking from a Machine
+
+An agent can't add Skills, but it can ask. When you tell it "add the skills from t3dotgg/tstack", it runs:
+
+```sh
+agentsync skills add t3dotgg/tstack
+```
+
+Name skills after the repository to ask for just those; otherwise it asks for every skill there, up to 20. AgentSync pins and audits them right away, and the command prints a link to the request. It shows which Machine asked, each skill's commit and audits, and which Machines the Skills go to (all of them, unless you choose). Skills rated High or Critical, or not audited, start unticked. Approve adds exactly the versions shown, even if the repository changed since.
+
+The command waits up to 10 minutes, then installs on its Machine the Skills you approved, and nothing else. If you don't decide in time it exits 6; running it again picks up the same request, or installs what you approved meanwhile. A request expires after 24 hours, and an account can have 5 waiting at once. If the Machine already has a hand-installed skill of the same name, the command warns you, and the new Skill stays blocked there until you move that folder.
+
 ## Installing
 
 Nothing is installed until you run this on the Machine:
@@ -28,7 +40,7 @@ Nothing is installed until you run this on the Machine:
 agentsync skills sync
 ```
 
-It's the only command that installs or removes Skills; running it is your go-ahead. When agent sessions start, the hook only tells you what's waiting, such as "2 Skills to install". `agentsync init` offers to install them on a new Machine (`--skills` or `--no-skills` decides up front). See where each Skill stands with `agentsync skills status`.
+Apart from `skills add` installing what you just approved, it's the only command that installs or removes Skills; running it is your go-ahead. When agent sessions start, the hook only tells you what's waiting, such as "2 Skills to install". `agentsync init` offers to install them on a new Machine (`--skills` or `--no-skills` decides up front). See where each Skill stands with `agentsync skills status`.
 
 Every agent with a Target on the Machine gets every Skill: Claude Code, Codex, pi and OpenCode.
 
