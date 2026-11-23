@@ -50,7 +50,7 @@ Agents without the CLI can fetch `<link>.md` for a Markdown summary of the Space
 
 ## Limits
 
-25 MB per file, 100 MB and 500 files per Space, and 500 MB per account. The Spaces page shows how much you use.
+500 MB per file, 1 GB and 500 files per Space, and 2 GB per account. The CLI uploads files over 25 MB in parts. The Spaces page shows how much you use.
 
 ## The Spaces page
 

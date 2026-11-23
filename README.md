@@ -170,10 +170,14 @@ WebSockets.
 - `/rpc/spaces.*` — `create` (Machine token), `list`, `get`, `update`, `rotateLink`, `delete`,
   `deleteFile` (session).
 - `GET|PATCH|DELETE /api/spaces/:id` and `PUT|DELETE /api/spaces/:id/files/<path>` — Write Token
-  as `Authorization: Bearer`. `PUT` takes the raw body with its `Content-Type`, and verifies an
-  optional `X-Content-SHA256`. Writes work while a Space is active or private and fail with
-  `SPACE_EXPIRED` (410) once it expired; `GET` works in any state. A wrong token and an unknown ID
-  answer the same.
+  as `Authorization: Bearer`. `PUT` takes the raw body (at most 25 MB) with its `Content-Type`, and
+  verifies an optional `X-Content-SHA256`. Writes work while a Space is active or private and fail
+  with `SPACE_EXPIRED` (410) once it expired; `GET` works in any state. A wrong token and an unknown
+  ID answer the same.
+- `POST /api/spaces/:id/uploads`, `PUT …/uploads/<upload>/parts/<n>`, `POST …/uploads/<upload>/complete`
+  — a multipart upload, for files over 25 MB, in 25 MB parts that stream straight to R2. Completing
+  reads the joined object back once to check its SHA-256 and the limits. `DELETE …/uploads/<upload>`
+  aborts one, and R2 drops unfinished uploads after 7 days.
 - `/s/<token>` — the viewer for `Accept: text/html`, a Markdown digest for `text/markdown` (or
   `/s/<token>.md`), JSON for `application/json` (or `/s/<token>.json`). `/s/<token>/raw/<path>`
   streams a file, `/s/<token>/download.zip` streams a store-mode ZIP, `/s/<token>/ws` upgrades to
@@ -181,7 +185,7 @@ WebSockets.
 
 Errors on the HTTP routes are `{ error: { code, message } }` (`spaceErrorSchema`).
 
-**Limits**: 25 MB per file, 100 MB per Space, 500 MB per user (`SPACE_LIMITS`).
+**Limits**: 500 MB per file, 1 GB per Space, 2 GB per user (`SPACE_LIMITS`).
 
 **Lifecycle**: a Share Link works 7 days by default, up to 365 days, or forever. Status is derived
 from `isPrivate` and `expiresAt`, never stored: `active`, `expired` (owner-only for a 30-day grace

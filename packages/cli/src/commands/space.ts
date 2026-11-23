@@ -1,6 +1,8 @@
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
-import { normalizeSpacePath, parseShareUrl, spaceExpirySchema, type PublicSpace, type SpaceExpiry, type SpaceFile } from '@agentsync/contract';
+import {
+  normalizeSpacePath, parseShareUrl, SPACE_LIMITS, spaceExpirySchema, type PublicSpace, type SpaceExpiry, type SpaceFile, type SpaceUploadPart,
+} from '@agentsync/contract';
 import { normaliseServer } from '../client.js';
 import type { Context, Outcome } from '../context.js';
 import { CliError, describeError, EXIT, exitCodeFor, usage } from '../exit.js';
@@ -8,7 +10,8 @@ import { expandHome } from '../paths.js';
 import { machineClient } from '../session.js';
 import { readerClient, writerClient, type ReaderClient, type WriterClient } from '../spaces/http.js';
 import {
-  checkLimits, contentTypeFor, formatBytes, isText, localHash, localPath, removeLocal, sha256, walkDirectory, writeLocal, type LocalFile,
+  checkLimits, contentTypeFor, formatBytes, hashFile, isText, localHash, localPath, readRange, removeLocal, sha256, walkDirectory, writeLocal,
+  type LocalFile,
 } from '../spaces/local.js';
 import { watchSpace, type ClosedReason } from '../spaces/watch.js';
 
@@ -110,14 +113,56 @@ async function filesAt(ctx: Context, path: string): Promise<LocalFile[]> {
   return files;
 }
 
-/** Upload `files`, each with its type and SHA-256 taken from the bytes actually sent. */
-function upload(ctx: Context, client: WriterClient, files: readonly Pick<LocalFile, 'path' | 'abs'>[]): Promise<SpaceFile[]> {
-  return inPool(files, async ({ path, abs }) => {
-    const bytes = new Uint8Array(await readFile(abs));
-    const file = await client.put(path, bytes, contentTypeFor(path), sha256(bytes));
-    ctx.detail(`Uploaded ${path} (${formatBytes(file.size)})`);
+/**
+ * Upload `files`, each with its type, in one request or (over `SPACE_LIMITS.partBytes`) in parts. The
+ * server checks each against the SHA-256 of what was read, so a file changing meanwhile fails rather
+ * than mixing versions.
+ */
+function upload(ctx: Context, client: WriterClient, files: readonly LocalFile[]): Promise<SpaceFile[]> {
+  return inPool(files, async (local) => {
+    let file: SpaceFile;
+    if (local.size > SPACE_LIMITS.partBytes) file = await uploadInParts(ctx, client, local);
+    else {
+      const bytes = new Uint8Array(await readFile(local.abs));
+      file = await client.put(local.path, bytes, contentTypeFor(local.path), sha256(bytes));
+    }
+    ctx.detail(`Uploaded ${local.path} (${formatBytes(file.size)})`);
     return file;
   });
+}
+
+/**
+ * A multipart upload of one large file, a part at a time so at most one part is in memory. A part that
+ * fails without a Space error (a dropped connection, a 5xx) is sent again, twice at most; if the upload
+ * fails anyway, it is aborted so its parts don't linger.
+ */
+async function uploadInParts(ctx: Context, client: WriterClient, { path, abs, size }: LocalFile): Promise<SpaceFile> {
+  const { partBytes } = SPACE_LIMITS;
+  const [sha256, { uploadId }] = await Promise.all([hashFile(abs), client.startUpload({ path, size, contentType: contentTypeFor(path) })]);
+  try {
+    const count = Math.ceil(size / partBytes);
+    const parts: SpaceUploadPart[] = [];
+    for (let n = 1; n <= count; n++) {
+      const bytes = await readRange(abs, (n - 1) * partBytes, partBytes);
+      parts.push(await retrying(() => client.uploadPart(uploadId, n, bytes)));
+      ctx.detail(`  ${path}: part ${n} of ${count}`);
+    }
+    return await client.completeUpload(uploadId, { path, sha256, parts });
+  } catch (error) {
+    await client.abortUpload(uploadId).catch(() => {});
+    throw error;
+  }
+}
+
+/** `work`, tried up to three times while it fails without a Space error code. */
+async function retrying<T>(work: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await work();
+    } catch (error) {
+      if (attempt === 3 || (error instanceof CliError && error.details.code)) throw error;
+    }
+  }
 }
 
 const describeExpiry = (space: Pick<PublicSpace, 'status' | 'expiresAt'>) =>
@@ -174,7 +219,7 @@ async function put(ctx: Context, flags: SpaceFlags): Promise<Outcome> {
   if (!info?.isFile()) throw usage(`Not a file: ${local}`);
   const path = remotePathOf(remote ?? basename(abs));
   checkLimits([{ path, size: info.size }]);
-  const [file] = await ctx.during(`Uploading ${path}…`, () => upload(ctx, writerFor(ctx, flags, spaceId), [{ path, abs }]));
+  const [file] = await ctx.during(`Uploading ${path}…`, () => upload(ctx, writerFor(ctx, flags, spaceId), [{ path, abs, size: info.size }]));
   ctx.success(`Uploaded ${path} (${formatBytes(file!.size)})`);
   return { data: { file } };
 }
@@ -194,7 +239,7 @@ async function push(ctx: Context, flags: SpaceFlags): Promise<Outcome> {
     if (skipped.length) ctx.warn(`Skipped ${plural(skipped.length, 'symlink or unusual name')}: ${skipped.join(', ')}`);
     // Before reading anything, so a huge file fails fast instead of filling memory.
     checkLimits(files);
-    const hashed = await inPool(files, async (file) => ({ ...file, sha256: sha256(await readFile(file.abs)) }));
+    const hashed = await inPool(files, async (file) => ({ ...file, sha256: await hashFile(file.abs) }));
     return [space, hashed] as const;
   });
 

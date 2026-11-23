@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SPACE_LIMITS } from '@agentsync/contract';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -102,13 +102,37 @@ describe('space create, push and pull', () => {
     const t = setup();
     t.registered();
     mkdirSync(t.path('big'));
-    writeFileSync(t.path('big/huge.bin'), Buffer.alloc(SPACE_LIMITS.fileBytes + 1));
+    // Sparse, so the test doesn't write 500 MB.
+    writeFileSync(t.path('big/huge.bin'), '');
+    truncateSync(t.path('big/huge.bin'), SPACE_LIMITS.fileBytes + 1);
 
     const result = await t.cli('space', 'create', t.path('big'));
 
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain('at most 25.0 MB');
+    expect(result.stderr).toContain('at most 500.0 MB');
     expect(t.server.state.spaces.size).toBe(0);
+  });
+
+  it('uploads a file over a part\'s size in parts, sending a dropped part again', async () => {
+    const { t, id, token, stored } = await withSpace({ 'a.txt': 'a' });
+    const apk = Buffer.alloc(SPACE_LIMITS.partBytes + 5, 1).fill(2, SPACE_LIMITS.partBytes);
+    writeFileSync(t.path('app.apk'), apk);
+    t.server.state.spaceRequests.length = 0;
+    t.server.state.dropParts = 1;
+
+    const result = await t.cli('space', 'put', id, t.path('app.apk'), '--token', token);
+
+    expect(result.code).toBe(0);
+    const file = stored().files.get('app.apk')!;
+    expect(Buffer.from(file.bytes).equals(apk)).toBe(true);
+    expect(file.contentType).toBe('application/vnd.android.package-archive');
+    expect(t.server.state.spaceRequests.map((request) => request.replace(/uploads\/[^/]+/, 'uploads/<id>'))).toEqual([
+      `POST /api/spaces/${id}/uploads`,
+      `PUT /api/spaces/${id}/uploads/<id>/parts/1`,
+      `PUT /api/spaces/${id}/uploads/<id>/parts/2`,
+      `POST /api/spaces/${id}/uploads/<id>/complete`,
+    ]);
+    expect(t.server.state.uploads.size).toBe(0);
   });
 });
 

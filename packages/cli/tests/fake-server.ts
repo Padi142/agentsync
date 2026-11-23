@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  contract, normalizeSpacePath, SPACE_ERROR_STATUS, SPACE_LIMITS, spaceExpiresAt, spaceStatus, spaceWriterUpdateSchema,
+  contract, normalizeSpacePath, SPACE_ERROR_STATUS, SPACE_LIMITS, spaceExpiresAt, spaceStatus, spaceUploadCompleteSchema,
+  spaceUploadStartSchema, spaceWriterUpdateSchema,
   type Conflict, type DesiredSkill, type ProposedSkill, type SkillRequest, type Machine, type PublicSpace, type ScannedSkill, type SkillSyncResult, type SpaceErrorCode,
   type SpaceEvent, type SpaceFile, type Target,
 } from '@agentsync/contract';
@@ -70,6 +71,10 @@ export function fakeServer() {
     /** Each `skills.report`, in order. */
     reports: [] as { machineId: string; scan: ScannedSkill[]; results?: SkillSyncResult[] }[],
     spaces: new Map<string, FakeSpace>(),
+    /** Multipart uploads in progress, by upload id. */
+    uploads: new Map<string, { spaceId: string; contentType: string; parts: Map<number, Uint8Array<ArrayBuffer>> }>(),
+    /** Part requests that fail like a dropped connection before reaching the server, counted down. */
+    dropParts: 0,
     /** Each Spaces HTTP request (`PUT /api/spaces/…`, `GET /s/…`), so tests can see what was uploaded or skipped. */
     spaceRequests: [] as string[],
     /** The Space WebSockets ever opened, open or closed. */
@@ -380,6 +385,7 @@ export function fakeServer() {
       broadcast(space, { type: 'space', space: metadata });
       return Response.json(publicSpace(space));
     }
+    if (files === 'uploads') return uploadRoute(request, space, rest);
     const path = rest.map(decodeURIComponent).join('/');
     if (normalizeSpacePath(path) !== path) return fail('INVALID_PATH');
     if (request.method === 'DELETE') {
@@ -387,6 +393,15 @@ export function fakeServer() {
       broadcast(space, { type: 'fileDeleted', path });
       return new Response(null, { status: 204 });
     }
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.length > SPACE_LIMITS.partBytes) return fail('FILE_TOO_LARGE');
+    const claimed = request.headers.get('X-Content-SHA256');
+    if (claimed && claimed !== sha256(bytes)) return fail('INVALID_REQUEST', 'X-Content-SHA256 does not match the body.');
+    return store(space, path, bytes, request.headers.get('Content-Type') ?? 'application/octet-stream');
+  }
+
+  /** Make `bytes` the file at `path`, within the Space's limits. */
+  function store(space: FakeSpace, path: string, bytes: Uint8Array<ArrayBuffer>, contentType: string): Response {
     for (const existing of space.files.keys()) {
       if (existing !== path && (path.startsWith(`${existing}/`) || existing.startsWith(`${path}/`))) {
         return fail('INVALID_PATH', `Path "${path}" conflicts with "${existing}".`);
@@ -395,17 +410,43 @@ export function fakeServer() {
     if (!space.files.has(path) && space.files.size >= SPACE_LIMITS.maxFiles) {
       return fail('SPACE_FULL', `A Space may hold at most ${SPACE_LIMITS.maxFiles} files.`);
     }
-    const bytes = new Uint8Array(await request.arrayBuffer());
     if (bytes.length > SPACE_LIMITS.fileBytes) return fail('FILE_TOO_LARGE');
-    const hash = sha256(bytes);
-    const claimed = request.headers.get('X-Content-SHA256');
-    if (claimed && claimed !== hash) return fail('INVALID_REQUEST', 'X-Content-SHA256 does not match the body.');
     const others = [...space.files].filter(([other]) => other !== path).reduce((sum, [, file]) => sum + file.size, 0);
     if (others + bytes.length > SPACE_LIMITS.spaceBytes) return fail('SPACE_FULL');
-    const file = { size: bytes.length, contentType: request.headers.get('Content-Type') ?? 'application/octet-stream', sha256: hash, updatedAt: new Date() };
+    const file = { size: bytes.length, contentType, sha256: sha256(bytes), updatedAt: new Date() };
     space.files.set(path, { ...file, bytes });
     broadcast(space, { type: 'file', file: { path, ...file } });
     return Response.json({ path, ...file });
+  }
+
+  /** The multipart upload routes under `/api/spaces/<id>/uploads`. A part's ETag is its SHA-256. */
+  async function uploadRoute(request: Request, space: FakeSpace, [uploadId, kind, partNumber]: string[]): Promise<Response> {
+    if (!uploadId) {
+      const start = spaceUploadStartSchema.parse(await request.json());
+      if (start.size > SPACE_LIMITS.fileBytes) return fail('FILE_TOO_LARGE');
+      const id = randomBytes(8).toString('hex');
+      state.uploads.set(id, { spaceId: space.id, contentType: start.contentType ?? 'application/octet-stream', parts: new Map() });
+      return Response.json({ uploadId: id });
+    }
+    const upload = state.uploads.get(decodeURIComponent(uploadId));
+    if (!upload || upload.spaceId !== space.id) return fail('NOT_FOUND');
+    if (request.method === 'DELETE') {
+      state.uploads.delete(decodeURIComponent(uploadId));
+      return new Response(null, { status: 204 });
+    }
+    if (kind === 'parts') {
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      if (bytes.length > SPACE_LIMITS.partBytes) return fail('FILE_TOO_LARGE');
+      upload.parts.set(Number(partNumber), bytes);
+      return Response.json({ partNumber: Number(partNumber), etag: sha256(bytes) });
+    }
+    const { path, sha256: claimed, parts } = spaceUploadCompleteSchema.parse(await request.json());
+    const chunks = parts.map(({ partNumber: n, etag }) => upload.parts.get(n)?.length && sha256(upload.parts.get(n)!) === etag ? upload.parts.get(n)! : null);
+    if (chunks.some((chunk) => chunk === null)) return fail('INVALID_REQUEST', 'A part is missing or its ETag is wrong.');
+    const bytes = new Uint8Array(Buffer.concat(chunks as Uint8Array[]));
+    if (sha256(bytes) !== claimed) return fail('INVALID_REQUEST', 'sha256 does not match the uploaded parts.');
+    state.uploads.delete(decodeURIComponent(uploadId));
+    return store(space, path, bytes, upload.contentType);
   }
 
   /** The Share Link routes the CLI reads: `.json` and `/raw/<path>`. */
@@ -455,6 +496,7 @@ export function fakeServer() {
   const fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
     if (state.offline || [...state.down].some((path) => request.url.endsWith(path))) throw new TypeError('fetch failed');
+    if (request.url.includes('/parts/') && state.dropParts > 0 && state.dropParts--) throw new TypeError('fetch failed');
     state.requests.push(request.headers);
     const { pathname } = new URL(request.url);
     const [, area, sub, ...segments] = pathname.split('/');

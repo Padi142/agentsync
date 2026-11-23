@@ -1,7 +1,7 @@
 /**
  * A streaming ZIP writer in store mode (no compression). Each entry's bytes pass straight through
  * while their CRC-32 is computed; the CRC and sizes follow the data in a data descriptor and are
- * repeated in the central directory, so nothing is buffered whole. No ZIP64: a Space stays far below 4 GB.
+ * repeated in the central directory, so nothing is buffered whole. No ZIP64: a Space stays below 4 GB (`SPACE_LIMITS.spaceBytes`).
  */
 
 export interface ZipEntry {
@@ -20,10 +20,10 @@ const CRC_TABLE = (() => {
   return table;
 })();
 
-/** Continue a CRC-32 over `bytes`. Start from `0`. */
+/** Continue a CRC-32 over `bytes`. Start from `0`. An indexed loop: `for…of` is ~8x slower, which a 500 MB file feels. */
 export function crc32(bytes: Uint8Array, crc = 0) {
   let c = ~crc >>> 0;
-  for (const byte of bytes) c = CRC_TABLE[(c ^ byte) & 0xff]! ^ (c >>> 8);
+  for (let i = 0, n = bytes.length; i < n; i++) c = CRC_TABLE[(c ^ bytes[i]!) & 0xff]! ^ (c >>> 8);
   return ~c >>> 0;
 }
 

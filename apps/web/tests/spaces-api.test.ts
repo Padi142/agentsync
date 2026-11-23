@@ -3,7 +3,11 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { SPACE_LIMITS, SPACE_OWNER_ROUTES, SPACE_PUBLIC_ROUTES, SPACE_WRITER_ROUTES, parseShareUrl, type CreatedSpace } from '@agentsync/contract';
+import { createHash } from 'node:crypto';
+import {
+  SPACE_LIMITS, SPACE_MAX_PARTS, SPACE_OWNER_ROUTES, SPACE_PUBLIC_ROUTES, SPACE_WRITER_ROUTES, parseShareUrl, type CreatedSpace,
+  type SpaceUploadPart,
+} from '@agentsync/contract';
 import type { Miniflare } from 'miniflare';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api';
@@ -245,9 +249,9 @@ describe('files', () => {
 });
 
 describe('storage limits', () => {
-  it('rejects a file over 25 MB from its Content-Length, and while reading a body without one', async () => {
+  it('rejects a one-request file over a part\'s size from its Content-Length, and while reading a body without one', async () => {
     const { space, writeToken } = await createSpace();
-    const declared = await put(space.id, 'big.bin', writeToken, 'small', { 'Content-Length': String(SPACE_LIMITS.fileBytes + 1) });
+    const declared = await put(space.id, 'big.bin', writeToken, 'small', { 'Content-Length': String(SPACE_LIMITS.partBytes + 1) });
     expect(declared.status).toBe(413);
     expect(await errorCode(declared)).toBe('FILE_TOO_LARGE');
 
@@ -262,14 +266,14 @@ describe('storage limits', () => {
     const streamed = await put(space.id, 'big.bin', writeToken, endless);
     expect(streamed.status).toBe(413);
     expect(await errorCode(streamed)).toBe('FILE_TOO_LARGE');
-    expect(sent).toBeLessThan(SPACE_LIMITS.fileBytes + 4 * MB);
+    expect(sent).toBeLessThan(SPACE_LIMITS.partBytes + 4 * MB);
     expect(await objectKeys(`${space.id}/`)).toEqual([]);
   });
 
-  it('keeps a Space under 100 MB, counting the size of the file being replaced', async () => {
+  it('keeps a Space under its limit, counting the size of the file being replaced', async () => {
     const { space, writeToken } = await createSpace();
     await put(space.id, 'a.txt', writeToken, '1234567890');
-    // Pretend the Space already holds 100 MB but 5 bytes, 10 of them `a.txt`.
+    // Pretend the Space is 5 bytes short of full, 10 of them `a.txt`.
     await env.DB.prepare('UPDATE space SET total_bytes = ? WHERE id = ?').bind(SPACE_LIMITS.spaceBytes - 5, space.id).run();
     const full = await put(space.id, 'b.txt', writeToken, '123456');
     expect(full.status).toBe(413);
@@ -280,7 +284,7 @@ describe('storage limits', () => {
     expect(await objectKeys(`${space.id}/`)).toHaveLength(2);
   });
 
-  it('keeps a user under 500 MB across Spaces, and stops creating Spaces at the limit', async () => {
+  it('keeps a user under their limit across Spaces, and stops creating Spaces at the limit', async () => {
     const big = await createSpace('alice', 'Big');
     const { space, writeToken } = await createSpace('alice', 'Small');
     await env.DB.prepare('UPDATE space SET total_bytes = ? WHERE id = ?').bind(SPACE_LIMITS.userBytes - 3, big.space.id).run();
@@ -429,6 +433,111 @@ describe('lifecycle', () => {
     });
     expect((await api.fetch(request, racing)).status).toBe(404);
     expect(await objectKeys(`${space.id}/`)).toEqual([]);
+  });
+});
+
+// Parts are 25 MB, and Miniflare's R2 is slow with them.
+describe('multipart uploads', { timeout: 60_000 }, () => {
+  const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+  /** A file one byte over a part, the parts distinct so a mixed-up order shows. */
+  const bigFile = () => new Uint8Array(SPACE_LIMITS.partBytes + 1).fill(1, 0, SPACE_LIMITS.partBytes).fill(2, SPACE_LIMITS.partBytes);
+  const partOf = (bytes: Uint8Array, n: number) => bytes.subarray((n - 1) * SPACE_LIMITS.partBytes, n * SPACE_LIMITS.partBytes);
+  const json = (body: unknown) => ({ body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
+
+  async function start(spaceId: string, token: string, path: string, size: number) {
+    const response = await call('POST', SPACE_WRITER_ROUTES.uploads(spaceId), { token, ...json({ path, size }) });
+    return { response, uploadId: response.ok ? ((await response.clone().json()) as { uploadId: string }).uploadId : '' };
+  }
+  const sendPart = (spaceId: string, token: string, uploadId: string, n: number, body: Uint8Array) =>
+    call('PUT', SPACE_WRITER_ROUTES.uploadPart(spaceId, uploadId, n), { token, body, headers: { 'Content-Length': String(body.byteLength) } });
+  const complete = (spaceId: string, token: string, uploadId: string, body: { path: string; sha256: string; parts: SpaceUploadPart[] }) =>
+    call('POST', SPACE_WRITER_ROUTES.uploadComplete(spaceId, uploadId), { token, ...json(body) });
+  /** Every part of `bytes`, last first, to show the order they arrive in doesn't matter. */
+  async function sendAll(spaceId: string, token: string, uploadId: string, bytes: Uint8Array) {
+    const count = Math.ceil(bytes.byteLength / SPACE_LIMITS.partBytes);
+    const parts: SpaceUploadPart[] = [];
+    for (let n = count; n >= 1; n--) {
+      const response = await sendPart(spaceId, token, uploadId, n, partOf(bytes, n));
+      expect(response.status).toBe(200);
+      parts.unshift((await response.json()) as SpaceUploadPart);
+    }
+    return parts;
+  }
+
+  it('joins parts into one file, checked against its SHA-256, and serves it whole', async () => {
+    const { space, writeToken, shareToken } = await createSpace();
+    const bytes = bigFile();
+    const { response, uploadId } = await start(space.id, writeToken, 'builds/app.apk', bytes.byteLength);
+    expect(response.status).toBe(200);
+    const parts = await sendAll(space.id, writeToken, uploadId, bytes);
+    // No file until the upload completes.
+    expect((await browser().spaces.get({ spaceId: space.id })).files).toEqual([]);
+
+    const done = await complete(space.id, writeToken, uploadId, { path: 'builds/app.apk', sha256: sha256(bytes), parts });
+    expect(done.status).toBe(200);
+    expect(await done.json()).toMatchObject({
+      path: 'builds/app.apk', size: bytes.byteLength, sha256: sha256(bytes), contentType: 'application/vnd.android.package-archive',
+    });
+    const raw = await call('GET', SPACE_PUBLIC_ROUTES.raw(shareToken, 'builds/app.apk'));
+    expect(sha256(new Uint8Array(await raw.arrayBuffer()))).toBe(sha256(bytes));
+    expect(raw.headers.get('Content-Disposition')).toContain('attachment');
+    expect((await browser().spaces.list()).usedBytes).toBe(bytes.byteLength);
+    expect(hub.eventsOf(space.id).map((e) => e.type === 'file' && e.file.size)).toEqual([bytes.byteLength]);
+    expect(await objectKeys(`${space.id}/`)).toHaveLength(1);
+    // A completed upload is gone.
+    expect((await sendPart(space.id, writeToken, uploadId, 1, partOf(bytes, 1))).status).toBe(404);
+  });
+
+  it('deletes the joined object when its SHA-256 differs or it no longer fits', async () => {
+    const { space, writeToken } = await createSpace();
+    const bytes = bigFile();
+    const wrong = await start(space.id, writeToken, 'a.apk', bytes.byteLength);
+    const wrongParts = await sendAll(space.id, writeToken, wrong.uploadId, bytes);
+    const mismatch = await complete(space.id, writeToken, wrong.uploadId, { path: 'a.apk', sha256: sha256(new Uint8Array(1)), parts: wrongParts });
+    expect(mismatch.status).toBe(400);
+    expect(await errorCode(mismatch)).toBe('INVALID_REQUEST');
+
+    const late = await start(space.id, writeToken, 'b.apk', bytes.byteLength);
+    const lateParts = await sendAll(space.id, writeToken, late.uploadId, bytes);
+    // Another upload filled the Space meanwhile.
+    await env.DB.prepare('UPDATE space SET total_bytes = ? WHERE id = ?').bind(SPACE_LIMITS.spaceBytes - 10, space.id).run();
+    const full = await complete(space.id, writeToken, late.uploadId, { path: 'b.apk', sha256: sha256(bytes), parts: lateParts });
+    expect(await errorCode(full)).toBe('SPACE_FULL');
+
+    expect(await objectKeys(`${space.id}/`)).toEqual([]);
+    expect((await browser().spaces.get({ spaceId: space.id })).files).toEqual([]);
+  });
+
+  it('refuses what can\'t fit before any part is sent, and checks every part', async () => {
+    const { space, writeToken } = await createSpace();
+    expect(await errorCode((await start(space.id, writeToken, 'huge.apk', SPACE_LIMITS.fileBytes + 1)).response)).toBe('FILE_TOO_LARGE');
+    await put(space.id, 'docs', writeToken, 'a file in the way');
+    expect(await errorCode((await start(space.id, writeToken, 'docs/app.apk', 10)).response)).toBe('INVALID_PATH');
+
+    const { uploadId } = await start(space.id, writeToken, 'app.apk', SPACE_LIMITS.partBytes * 2);
+    for (const n of [0, SPACE_MAX_PARTS + 1]) {
+      expect(await errorCode(await sendPart(space.id, writeToken, uploadId, n, new Uint8Array(1)))).toBe('INVALID_REQUEST');
+    }
+    const oversized = await call('PUT', SPACE_WRITER_ROUTES.uploadPart(space.id, uploadId, 1), {
+      token: writeToken, body: 'small', headers: { 'Content-Length': String(SPACE_LIMITS.partBytes + 1) },
+    });
+    expect(await errorCode(oversized)).toBe('FILE_TOO_LARGE');
+  });
+
+  it('keeps an upload to its own Space, and aborts it', async () => {
+    const { space, writeToken } = await createSpace();
+    const other = await createSpace('alice', 'Other');
+    const { uploadId } = await start(space.id, writeToken, 'app.apk', SPACE_LIMITS.partBytes * 2);
+    const part = new Uint8Array(SPACE_LIMITS.partBytes);
+    // The other Space's own Write Token, with this Space's upload id.
+    expect((await sendPart(other.space.id, other.writeToken, uploadId, 1, part)).status).toBe(404);
+    expect((await sendPart(space.id, other.writeToken, uploadId, 1, part)).status).toBe(401);
+    expect((await sendPart(space.id, writeToken, 'not-an-upload', 1, part)).status).toBe(404);
+
+    expect((await sendPart(space.id, writeToken, uploadId, 1, part)).status).toBe(200);
+    expect((await call('DELETE', SPACE_WRITER_ROUTES.upload(space.id, uploadId), { token: writeToken })).status).toBe(204);
+    expect((await call('DELETE', SPACE_WRITER_ROUTES.upload(space.id, uploadId), { token: writeToken })).status).toBe(204);
+    expect((await sendPart(space.id, writeToken, uploadId, 2, part)).status).toBe(404);
   });
 });
 

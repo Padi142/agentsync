@@ -47,6 +47,7 @@ const BY_EXTENSION: Record<string, string> = {
   webm: 'video/webm',
   wasm: 'application/wasm',
   zip: 'application/zip',
+  apk: 'application/vnd.android.package-archive',
 };
 
 const GENERIC = 'application/octet-stream';
