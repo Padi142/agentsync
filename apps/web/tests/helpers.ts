@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { Miniflare } from 'miniflare';
 import { createORPCClient } from '@orpc/client';
@@ -21,7 +22,7 @@ export async function createTestEnv() {
   });
   const env: Env = {
     DB: (await mf.getD1Database('DB')) as unknown as D1Database,
-    SPACES_BUCKET: (await mf.getR2Bucket('SPACES_BUCKET')) as unknown as R2Bucket,
+    SPACES_BUCKET: withBufferedParts((await mf.getR2Bucket('SPACES_BUCKET')) as unknown as R2Bucket),
     SPACE_HUB: hub.namespace,
     WORKOS_API_KEY: 'sk_test_fixture',
     WORKOS_CLIENT_ID: 'client_fixture',
@@ -37,6 +38,41 @@ export async function createTestEnv() {
   }
   return { mf, env, hub };
 }
+
+/**
+ * Miniflare's R2 wants a part body of known length. In the Workers runtime a request's own body has one;
+ * in Node it doesn't, so streamed parts are read into memory here first.
+ */
+function withBufferedParts(bucket: R2Bucket): R2Bucket {
+  const bound = <T extends object>(target: T, property: string | symbol) => {
+    const value: unknown = Reflect.get(target, property);
+    return typeof value === 'function' ? value.bind(target) : value;
+  };
+  return new Proxy(bucket, { get(target, property) {
+    if (property !== 'resumeMultipartUpload') return bound(target, property);
+    return (key: string, uploadId: string) => new Proxy(target.resumeMultipartUpload(key, uploadId), { get(upload, name) {
+      if (name !== 'uploadPart') return bound(upload, name);
+      return async (partNumber: number, value: Parameters<R2MultipartUpload['uploadPart']>[1]) =>
+        upload.uploadPart(partNumber, value instanceof ReadableStream ? new Uint8Array(await new Response(value).arrayBuffer()) : value);
+    } });
+  } });
+}
+
+/** `crypto.DigestStream`, which the Workers runtime has and Node doesn't: a WritableStream that hashes what it is sent. */
+class DigestStream extends WritableStream<ArrayBuffer | ArrayBufferView> {
+  readonly digest: Promise<ArrayBuffer>;
+  constructor(algorithm: string) {
+    const hash = createHash(algorithm.replace('-', '').toLowerCase());
+    let done!: (digest: ArrayBuffer) => void;
+    const digest = new Promise<ArrayBuffer>((resolve) => { done = resolve; });
+    super({
+      write: (chunk) => void hash.update(ArrayBuffer.isView(chunk) ? new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength) : new Uint8Array(chunk)),
+      close: () => done(new Uint8Array(hash.digest()).buffer),
+    });
+    this.digest = digest;
+  }
+}
+if (!('DigestStream' in crypto)) Object.defineProperty(crypto, 'DigestStream', { value: DigestStream });
 
 /** Delete every row, children first. */
 export async function resetDb(env: Env) {

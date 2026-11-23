@@ -424,9 +424,15 @@ export const templateIssueSchema = z.object({
 
 /** Storage limits, enforced by the server on every upload. */
 export const SPACE_LIMITS = {
-  fileBytes: 25 * 1024 * 1024,
-  spaceBytes: 100 * 1024 * 1024,
-  userBytes: 500 * 1024 * 1024,
+  fileBytes: 500 * 1024 * 1024,
+  /**
+   * The most one request carries: a whole file on `PUT SPACE_WRITER_ROUTES.file`, or one part of a
+   * multipart upload (`SPACE_WRITER_ROUTES.uploads`), which larger files need. Every part but the last
+   * has exactly this size (R2 wants equal parts of at least 5 MiB).
+   */
+  partBytes: 25 * 1024 * 1024,
+  spaceBytes: 1024 * 1024 * 1024,
+  userBytes: 2 * 1024 * 1024 * 1024,
   /** Maximum files in one Space (keeps R2 deletion to one page and stays below ZIP's 65,535 limit). */
   maxFiles: 500,
   /** Days a new Space's Share Link works for, unless `expires` says otherwise. */
@@ -592,9 +598,40 @@ export const spaceWriterUpdateSchema = z.object({
   expires: spaceExpirySchema.optional(),
 });
 
+/** Parts a multipart upload may have: enough for the largest file. */
+export const SPACE_MAX_PARTS = Math.ceil(SPACE_LIMITS.fileBytes / SPACE_LIMITS.partBytes);
+
+/** The body of `POST SPACE_WRITER_ROUTES.uploads`: the file a multipart upload will become. */
+export const spaceUploadStartSchema = z.object({
+  path: spacePathSchema,
+  /** Checked against the limits now, and against the bytes actually sent on completion. */
+  size: z.number().int().min(0),
+  contentType: z.string().min(1).max(255).optional(),
+});
+
+/** A multipart upload in progress. `uploadId` is opaque; it works until completed, aborted, or 7 days old. */
+export const spaceUploadSchema = z.object({ uploadId: z.string().min(1) });
+
+/** One uploaded part, as `PUT SPACE_WRITER_ROUTES.uploadPart` answers and completion takes it back. */
+export const spaceUploadPartSchema = z.object({
+  partNumber: z.number().int().min(1).max(SPACE_MAX_PARTS),
+  etag: z.string().min(1),
+});
+
+/** The body of `POST SPACE_WRITER_ROUTES.uploadComplete`. The server checks `sha256` against the joined parts. */
+export const spaceUploadCompleteSchema = z.object({
+  path: spacePathSchema,
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  parts: z.array(spaceUploadPartSchema).min(1).max(SPACE_MAX_PARTS),
+});
+
 /**
  * The Write Token routes. Each takes `Authorization: Bearer <write-token>`, never a Machine token or cookie.
  * Binary uploads go here rather than through oRPC so they stream as raw bodies.
+ *
+ * A file of at most `SPACE_LIMITS.partBytes` is one `PUT` to `file`. A larger one (up to `fileBytes`) is a
+ * multipart upload: `POST uploads`, a `PUT uploadPart` for each `partBytes` slice (1-based, any order),
+ * then `POST uploadComplete`, which makes it the file at `path`. `DELETE upload` drops an unfinished one.
  */
 export const SPACE_WRITER_ROUTES = {
   /** `GET` → `publicSpaceSchema` (works while expired, so a writer can see why it fails). `PATCH` with `spaceWriterUpdateSchema` → `publicSpaceSchema`. `DELETE` → 204. */
@@ -605,6 +642,17 @@ export const SPACE_WRITER_ROUTES = {
    */
   file: (spaceId: string, path: string) =>
     `/api/spaces/${encodeURIComponent(spaceId)}/files/${path.split('/').map(encodeURIComponent).join('/')}`,
+  /** `POST` with `spaceUploadStartSchema` → `spaceUploadSchema`. Fails now if the file can't fit. */
+  uploads: (spaceId: string) => `/api/spaces/${encodeURIComponent(spaceId)}/uploads`,
+  /** `DELETE` → 204: abort the upload, also when it is already gone. */
+  upload: (spaceId: string, uploadId: string) =>
+    `/api/spaces/${encodeURIComponent(spaceId)}/uploads/${encodeURIComponent(uploadId)}`,
+  /** `PUT` one part's raw bytes, with `Content-Length` → `spaceUploadPartSchema`. Sending a part again replaces it. */
+  uploadPart: (spaceId: string, uploadId: string, partNumber: number) =>
+    `/api/spaces/${encodeURIComponent(spaceId)}/uploads/${encodeURIComponent(uploadId)}/parts/${partNumber}`,
+  /** `POST` with `spaceUploadCompleteSchema` → `spaceFileSchema`. */
+  uploadComplete: (spaceId: string, uploadId: string) =>
+    `/api/spaces/${encodeURIComponent(spaceId)}/uploads/${encodeURIComponent(uploadId)}/complete`,
 } as const;
 
 /** The public routes of a Share Link, relative to the app origin. Anyone with the link may call them. */
@@ -1038,3 +1086,6 @@ export type CreatedSpace = z.infer<typeof createdSpaceSchema>;
 export type SpaceEvent = z.infer<typeof spaceEventSchema>;
 export type SpaceErrorCode = z.infer<typeof spaceErrorCodeSchema>;
 export type SpaceWriterUpdate = z.infer<typeof spaceWriterUpdateSchema>;
+export type SpaceUploadStart = z.infer<typeof spaceUploadStartSchema>;
+export type SpaceUploadPart = z.infer<typeof spaceUploadPartSchema>;
+export type SpaceUploadComplete = z.infer<typeof spaceUploadCompleteSchema>;

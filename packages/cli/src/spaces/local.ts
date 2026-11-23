@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { lstat, mkdir, readdir, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { lstat, mkdir, open, readdir, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { normalizeSpacePath, SPACE_LIMITS } from '@agentsync/contract';
 import { CliError, EXIT } from '../exit.js';
@@ -20,6 +21,30 @@ export interface LocalFile {
 }
 
 export const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+
+/** The SHA-256 of the file at `abs`, streamed so a large file is never read whole. */
+export async function hashFile(abs: string): Promise<string> {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(abs)) hash.update(chunk as Buffer);
+  return hash.digest('hex');
+}
+
+/** `length` bytes of the file at `abs` from `offset` (fewer at its end). */
+export async function readRange(abs: string, offset: number, length: number): Promise<Uint8Array<ArrayBuffer>> {
+  const handle = await open(abs);
+  try {
+    const bytes = new Uint8Array(length);
+    let read = 0;
+    while (read < length) {
+      const { bytesRead } = await handle.read(bytes, read, length - read, offset + read);
+      if (bytesRead === 0) break;
+      read += bytesRead;
+    }
+    return read === length ? bytes : bytes.slice(0, read);
+  } finally {
+    await handle.close();
+  }
+}
 
 const MB = 1024 * 1024;
 export const formatBytes = (bytes: number) =>
@@ -92,6 +117,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.pdf': 'application/pdf',
   '.zip': 'application/zip',
+  '.apk': 'application/vnd.android.package-archive',
   '.wasm': 'application/wasm',
   '.woff2': 'font/woff2',
   '.mp4': 'video/mp4',
@@ -154,7 +180,7 @@ async function existing(root: string, remote: string) {
 /** The SHA-256 of the regular file at `remote` under `root`, or `null` (missing, a symlink, a directory). */
 export async function localHash(root: string, remote: string): Promise<string | null> {
   const file = await existing(root, remote);
-  return file?.isFile ? sha256(await readFile(file.target)) : null;
+  return file?.isFile ? hashFile(file.target) : null;
 }
 
 /**

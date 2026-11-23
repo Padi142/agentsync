@@ -1,6 +1,8 @@
 import {
-  normalizeSpacePath, SPACE_ERROR_STATUS, shareTokenSchema, spaceStatus, spaceWriterUpdateSchema,
+  normalizeSpacePath, SPACE_ERROR_STATUS, SPACE_MAX_PARTS, shareTokenSchema, spaceStatus, spaceUploadCompleteSchema,
+  spaceUploadStartSchema, spaceWriterUpdateSchema,
 } from '@agentsync/contract';
+import type { z } from 'zod';
 import { Hono, type Context } from 'hono';
 import { getSession } from '../auth';
 import { getSpaceByShareToken, getSpaceByWriteToken, getUserSpace, type SpaceRow } from '../db/spaces';
@@ -88,6 +90,19 @@ async function ownerSpace(c: SpaceContext): Promise<SpaceRow> {
   return row;
 }
 
+/** The request's JSON body parsed with `schema`, or `INVALID_REQUEST`. */
+async function jsonBody<T extends z.ZodType>(c: SpaceContext, schema: T): Promise<z.output<T>> {
+  const body = schema.safeParse(await c.req.json().catch(() => undefined));
+  if (!body.success) throw new SpaceError('INVALID_REQUEST', body.error.issues[0]?.message ?? 'Invalid body.');
+  return body.data;
+}
+
+/** The request's `Content-Length`, or `null` without a valid one. */
+function contentLength(c: SpaceContext) {
+  const length = c.req.header('Content-Length');
+  return length && /^\d+$/.test(length) ? Number(length) : null;
+}
+
 const contentDisposition = (kind: 'inline' | 'attachment', path: string) =>
   `${kind}; filename*=UTF-8''${encodeURIComponent(path.slice(path.lastIndexOf('/') + 1))}`;
 
@@ -123,10 +138,9 @@ spacesApi.get('/api/spaces/:id', async (c) => c.json(await spacesService(c.env).
 
 spacesApi.patch('/api/spaces/:id', async (c) => {
   const row = await writer(c, { write: true });
-  const body = spaceWriterUpdateSchema.safeParse(await c.req.json().catch(() => undefined));
-  if (!body.success) throw new SpaceError('INVALID_REQUEST', body.error.issues[0]?.message ?? 'Invalid body.');
+  const body = await jsonBody(c, spaceWriterUpdateSchema);
   const service = spacesService(c.env);
-  return c.json(await service.publicSpace(await service.update(row, body.data)));
+  return c.json(await service.publicSpace(await service.update(row, body)));
 });
 
 spacesApi.delete('/api/spaces/:id', async (c) => {
@@ -139,11 +153,10 @@ const FILE_PREFIX = /^\/api\/spaces\/[^/]+\/files\//;
 spacesApi.put('/api/spaces/:id/files/*', async (c) => {
   const row = await writer(c, { write: true });
   const path = pathIn(c, FILE_PREFIX);
-  const length = c.req.header('Content-Length');
   const file = await spacesService(c.env).putFile(row, path, {
     body: c.req.raw.body,
     contentType: c.req.header('Content-Type') ?? null,
-    contentLength: length && /^\d+$/.test(length) ? Number(length) : null,
+    contentLength: contentLength(c),
     sha256: c.req.header('X-Content-SHA256') ?? null,
   });
   return c.json(file);
@@ -152,6 +165,37 @@ spacesApi.put('/api/spaces/:id/files/*', async (c) => {
 spacesApi.delete('/api/spaces/:id/files/*', async (c) => {
   const row = await writer(c, { write: true });
   await spacesService(c.env).deleteFile(row, pathIn(c, FILE_PREFIX));
+  return c.body(null, 204);
+});
+
+// Multipart uploads, for files over `SPACE_LIMITS.partBytes`.
+
+spacesApi.post('/api/spaces/:id/uploads', async (c) => {
+  const row = await writer(c, { write: true });
+  return c.json(await spacesService(c.env).startUpload(row, await jsonBody(c, spaceUploadStartSchema)));
+});
+
+spacesApi.put('/api/spaces/:id/uploads/:upload/parts/:part', async (c) => {
+  const row = await writer(c, { write: true });
+  const part = c.req.param('part');
+  const partNumber = /^\d{1,5}$/.test(part) ? Number(part) : 0;
+  if (partNumber < 1 || partNumber > SPACE_MAX_PARTS) {
+    throw new SpaceError('INVALID_REQUEST', `A part number is 1 to ${SPACE_MAX_PARTS}.`);
+  }
+  return c.json(await spacesService(c.env).uploadPart(row, c.req.param('upload'), partNumber, {
+    body: c.req.raw.body,
+    contentLength: contentLength(c),
+  }));
+});
+
+spacesApi.post('/api/spaces/:id/uploads/:upload/complete', async (c) => {
+  const row = await writer(c, { write: true });
+  return c.json(await spacesService(c.env).completeUpload(row, c.req.param('upload'), await jsonBody(c, spaceUploadCompleteSchema)));
+});
+
+spacesApi.delete('/api/spaces/:id/uploads/:upload', async (c) => {
+  // Allowed on an expired Space too, so a writer can always clean up.
+  await spacesService(c.env).abortUpload(await writer(c, { write: false }), c.req.param('upload'));
   return c.body(null, 204);
 });
 

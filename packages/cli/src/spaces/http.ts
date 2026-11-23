@@ -1,6 +1,7 @@
 import {
   publicSpaceSchema, SPACE_LIMITS, SPACE_PUBLIC_ROUTES, SPACE_WRITER_ROUTES, spaceErrorSchema, spaceFileSchema,
-  type SpaceErrorCode, type SpaceWriterUpdate,
+  spaceUploadPartSchema, spaceUploadSchema,
+  type SpaceErrorCode, type SpaceUploadComplete, type SpaceUploadStart, type SpaceWriterUpdate,
 } from '@agentsync/contract';
 import type { z } from 'zod';
 import { CliError, EXIT } from '../exit.js';
@@ -92,6 +93,24 @@ export function writerClient(io: Io, server: string, spaceId: string, token: str
         body: bytes,
       })).json()),
     remove: async (path: string) => void await send(SPACE_WRITER_ROUTES.file(spaceId, path), { method: 'DELETE' }),
+    /** Start a multipart upload, for a file over `SPACE_LIMITS.partBytes`. */
+    startUpload: async (start: SpaceUploadStart) => parsed(spaceUploadSchema, await (await send(SPACE_WRITER_ROUTES.uploads(spaceId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(start),
+    })).json()),
+    uploadPart: async (uploadId: string, partNumber: number, bytes: Uint8Array<ArrayBuffer>) =>
+      parsed(spaceUploadPartSchema, await (await send(SPACE_WRITER_ROUTES.uploadPart(spaceId, uploadId, partNumber), {
+        method: 'PUT',
+        body: bytes,
+      })).json()),
+    completeUpload: async (uploadId: string, complete: SpaceUploadComplete) =>
+      parsed(spaceFileSchema, await (await send(SPACE_WRITER_ROUTES.uploadComplete(spaceId, uploadId), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(complete),
+      })).json()),
+    abortUpload: async (uploadId: string) => void await send(SPACE_WRITER_ROUTES.upload(spaceId, uploadId), { method: 'DELETE' }),
   };
 }
 

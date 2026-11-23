@@ -1,7 +1,7 @@
 import {
-  SPACE_LIMITS, SPACE_PUBLIC_ROUTES, spaceDeleteAt, spaceExpiresAt, spaceStatus,
+  SPACE_LIMITS, SPACE_PUBLIC_ROUTES, SPACE_WRITER_ROUTES, spaceDeleteAt, spaceExpiresAt, spaceStatus,
   type CreatedSpace, type PublicSpace, type Space, type SpaceDetail, type SpaceErrorCode, type SpaceEvent,
-  type SpaceExpiry, type SpaceFile,
+  type SpaceExpiry, type SpaceFile, type SpaceUploadComplete, type SpaceUploadPart, type SpaceUploadStart,
 } from '@agentsync/contract';
 import { getAppOrigin } from '../auth';
 import {
@@ -14,7 +14,7 @@ import { contentTypeFor } from './content-type';
 import type { SpaceHub } from './hub';
 import { hubStateOf } from './hub-protocol';
 import { spaceDigest } from './digest';
-import { BodyTooLarge, deleteObjectsByPrefix, newObjectKey, readLimited, sha256Hex } from './storage';
+import { BodyTooLarge, deleteObjectsByPrefix, newObjectKey, objectSha256, readLimited, sha256Hex } from './storage';
 import { zipStream } from './zip';
 
 /** A Spaces failure with its contract code; the HTTP routes answer it as `{ error: { code, message } }`. */
@@ -106,6 +106,98 @@ export function spacesService(env: Env) {
     return true;
   }
 
+  const mb = (bytes: number) => `${bytes / 1024 / 1024} MB`;
+
+  /**
+   * How many bytes the file at `path` may take by the Space's and the user's limits, counting the size
+   * of the version it replaces. Throws if `path` conflicts with a folder of files (or a file is in the way
+   * of its folder), or if a new file would pass the Space's file count.
+   */
+  async function roomFor(row: SpaceRow, path: string) {
+    const [existing, used, fileCount, conflictPath] = await Promise.all([
+      getSpaceFile(env, row.id, path),
+      userUsedBytes(env, row.userId),
+      countSpaceFiles(env, row.id),
+      findSpacePathConflict(env, row.id, path),
+    ]);
+    if (conflictPath) {
+      throw new SpaceError('INVALID_PATH', `Path "${path}" conflicts with existing file "${conflictPath}" in this Space.`);
+    }
+    if (!existing && fileCount >= SPACE_LIMITS.maxFiles) {
+      throw new SpaceError('SPACE_FULL', `A Space may hold at most ${SPACE_LIMITS.maxFiles} files.`);
+    }
+    const oldSize = existing?.size ?? 0;
+    return { space: SPACE_LIMITS.spaceBytes - (row.totalBytes - oldSize), user: SPACE_LIMITS.userBytes - (used - oldSize) };
+  }
+
+  /** The error for a file of `size` bytes that `room` has no space for, or `null`. `room.file` is the upload's own cap. */
+  function limitError(size: number, room: { file: number; space: number; user: number }) {
+    if (size > room.file) {
+      return new SpaceError('FILE_TOO_LARGE', room.file < SPACE_LIMITS.fileBytes
+        ? `A file over ${mb(room.file)} must be sent as a multipart upload (POST ${SPACE_WRITER_ROUTES.uploads('<id>')}).`
+        : `A file may be at most ${mb(SPACE_LIMITS.fileBytes)}.`);
+    }
+    if (size > room.space) return new SpaceError('SPACE_FULL', `A Space may hold at most ${mb(SPACE_LIMITS.spaceBytes)}.`);
+    if (size > room.user) return new SpaceError('QUOTA_EXCEEDED', `Your Spaces may hold at most ${mb(SPACE_LIMITS.userBytes)}.`);
+    return null;
+  }
+
+  /**
+   * Point `path` at the R2 object `file.r2Key`, already written, replacing any older version, and tell the
+   * viewers. D1 checks the limits once more; if it refuses (another upload took the room meanwhile, or the
+   * Space is gone), the object is deleted and the error says which limit the file hits now. The old
+   * version's object is deleted only after, so a failure never leaves a file without its bytes.
+   */
+  async function record(row: SpaceRow, path: string, file: Omit<SpaceFileRow, 'spaceId' | 'path' | 'updatedAt'>): Promise<SpaceFile> {
+    let stored: Awaited<ReturnType<typeof putSpaceFile>>;
+    try {
+      stored = await putSpaceFile(env, row.userId, { spaceId: row.id, path, ...file });
+    } catch (error) {
+      await discard(file.r2Key);
+      throw error;
+    }
+    if (!stored.ok) {
+      await discard(file.r2Key);
+      if (stored.reason === 'path_conflict') {
+        throw new SpaceError('INVALID_PATH', `Path "${path}" conflicts with existing file "${stored.conflictPath}" in this Space.`);
+      }
+      const fresh = await getUserSpace(env, row.userId, row.id);
+      if (!fresh) throw new SpaceError('NOT_FOUND', 'No such Space.');
+      throw limitError(file.size, { file: SPACE_LIMITS.fileBytes, ...await roomFor(fresh, path) })
+        ?? new SpaceError('QUOTA_EXCEEDED', 'A storage limit was reached.');
+    }
+    if (stored.replacedKey) await discard(stored.replacedKey);
+    const { r2Key: _, ...rest } = file;
+    const saved: SpaceFile = { path, ...rest, updatedAt: stored.updatedAt };
+    await broadcast(row, { type: 'file', file: saved });
+    return saved;
+  }
+
+  /**
+   * The R2 multipart upload `uploadId` names: `<object id>.<R2 upload id>`, the object always under this
+   * Space's prefix, so an id can't reach another Space's uploads. R2 itself checks the upload exists.
+   */
+  function multipart(row: SpaceRow, uploadId: string) {
+    const match = uploadId.match(/^([0-9a-f-]{36})\.(.+)$/);
+    if (!match) throw new SpaceError('NOT_FOUND', 'No such upload.');
+    return env.SPACES_BUCKET.resumeMultipartUpload(`${row.id}/${match[1]}`, match[2]!);
+  }
+
+  /**
+   * An R2 multipart call, with an upload R2 doesn't know (completed, aborted or expired) as `NOT_FOUND`.
+   * With `rejected`, R2's other refusals (a wrong ETag, a part too small) are `INVALID_REQUEST`.
+   */
+  async function r2Upload<T>(work: () => Promise<T>, rejected?: string): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message.includes('(10024)')) throw new SpaceError('NOT_FOUND', 'No such upload: it was completed, aborted or has expired.');
+      if (rejected && /\(\d{5}\)/.test(message)) throw new SpaceError('INVALID_REQUEST', `${rejected}: ${message}`);
+      throw error;
+    }
+  }
+
   return {
     meta,
 
@@ -179,48 +271,25 @@ export function spacesService(env: Env) {
     },
 
     /**
-     * Store `body` as the file at `path` (already normalized), replacing any older version. Checks the
-     * file, Space and user limits from `Content-Length` before reading, while reading, and once more in
-     * D1. The new bytes go to a new R2 key before D1 points at them, and the old key is deleted only
-     * after, so a failure never leaves a file without its bytes. `sha256` (if given) must match.
+     * Store `body` (at most `SPACE_LIMITS.partBytes`; larger files use `startUpload`) as the file at
+     * `path`, replacing any older version. Checks the limits from `Content-Length` before reading and
+     * while reading; `record` checks them once more in D1. `sha256` (if given) must match.
      */
     async putFile(
       row: SpaceRow,
       path: string,
       upload: { body: ReadableStream<Uint8Array> | null; contentType: string | null; contentLength: number | null; sha256: string | null },
     ): Promise<SpaceFile> {
-      const [existing, used, fileCount, conflictPath] = await Promise.all([
-        getSpaceFile(env, row.id, path),
-        userUsedBytes(env, row.userId),
-        countSpaceFiles(env, row.id),
-        findSpacePathConflict(env, row.id, path),
-      ]);
-      if (conflictPath) {
-        throw new SpaceError('INVALID_PATH', `Path "${path}" conflicts with existing file "${conflictPath}" in this Space.`);
-      }
-      if (!existing && fileCount >= SPACE_LIMITS.maxFiles) {
-        throw new SpaceError('SPACE_FULL', `A Space may hold at most ${SPACE_LIMITS.maxFiles} files.`);
-      }
-      const oldSize = existing?.size ?? 0;
-      const room = {
-        file: SPACE_LIMITS.fileBytes,
-        space: SPACE_LIMITS.spaceBytes - (row.totalBytes - oldSize),
-        user: SPACE_LIMITS.userBytes - (used - oldSize),
-      };
-      const limitError = (size: number) =>
-        size > room.file ? new SpaceError('FILE_TOO_LARGE', `A file may be at most ${SPACE_LIMITS.fileBytes / 1024 / 1024} MB.`)
-          : size > room.space ? new SpaceError('SPACE_FULL', `A Space may hold at most ${SPACE_LIMITS.spaceBytes / 1024 / 1024} MB.`)
-            : size > room.user ? new SpaceError('QUOTA_EXCEEDED', `Your Spaces may hold at most ${SPACE_LIMITS.userBytes / 1024 / 1024} MB.`)
-              : null;
+      const room = { file: SPACE_LIMITS.partBytes, ...await roomFor(row, path) };
       if (upload.contentLength !== null) {
-        const error = limitError(upload.contentLength);
+        const error = limitError(upload.contentLength, room);
         if (error) throw error;
       }
       let bytes: Uint8Array<ArrayBuffer>;
       try {
         bytes = await readLimited(upload.body, Math.min(room.file, room.space, room.user), upload.contentLength);
       } catch (error) {
-        if (error instanceof BodyTooLarge) throw limitError(error.size) ?? error;
+        if (error instanceof BodyTooLarge) throw limitError(error.size, room) ?? error;
         throw error;
       }
       const sha256 = await sha256Hex(bytes);
@@ -230,34 +299,73 @@ export function spacesService(env: Env) {
       const contentType = contentTypeFor(path, upload.contentType);
       const r2Key = newObjectKey(row.id);
       await env.SPACES_BUCKET.put(r2Key, bytes, { sha256, httpMetadata: { contentType } });
-      let stored: Awaited<ReturnType<typeof putSpaceFile>>;
+      return record(row, path, { size: bytes.byteLength, contentType, sha256, r2Key });
+    },
+
+    /**
+     * Start a multipart upload of a file of `size` bytes at `path`, failing now if it can't fit. Its R2
+     * object is under the Space's prefix, but exists only once `completeUpload` joins the parts; an
+     * unfinished upload is aborted by R2 after 7 days.
+     */
+    async startUpload(row: SpaceRow, { path, size, contentType }: SpaceUploadStart): Promise<{ uploadId: string }> {
+      const error = limitError(size, { file: SPACE_LIMITS.fileBytes, ...await roomFor(row, path) });
+      if (error) throw error;
+      const key = newObjectKey(row.id);
+      const upload = await env.SPACES_BUCKET.createMultipartUpload(key, {
+        httpMetadata: { contentType: contentTypeFor(path, contentType) },
+      });
+      return { uploadId: `${key.slice(row.id.length + 1)}.${upload.uploadId}` };
+    },
+
+    /**
+     * Store part `partNumber` of an upload, streamed straight to R2. `body` must come with its
+     * `Content-Length`, at most `SPACE_LIMITS.partBytes`.
+     */
+    async uploadPart(
+      row: SpaceRow,
+      uploadId: string,
+      partNumber: number,
+      part: { body: ReadableStream<Uint8Array> | null; contentLength: number | null },
+    ): Promise<SpaceUploadPart> {
+      if (part.contentLength === null) throw new SpaceError('INVALID_REQUEST', 'A part needs its Content-Length.');
+      if (part.contentLength > SPACE_LIMITS.partBytes) {
+        throw new SpaceError('FILE_TOO_LARGE', `A part may be at most ${mb(SPACE_LIMITS.partBytes)}.`);
+      }
+      const upload = multipart(row, uploadId);
+      const { etag } = await r2Upload(() => upload.uploadPart(partNumber, part.body ?? new Uint8Array()));
+      return { partNumber, etag };
+    },
+
+    /**
+     * Join an upload's parts into the file at `path`. The joined object is read back once, streamed, to
+     * check its size against the limits and its SHA-256 against `sha256`; if either fails it is deleted.
+     */
+    async completeUpload(row: SpaceRow, uploadId: string, { path, sha256, parts }: SpaceUploadComplete): Promise<SpaceFile> {
+      const room = { file: SPACE_LIMITS.fileBytes, ...await roomFor(row, path) };
+      const upload = multipart(row, uploadId);
+      const object = await r2Upload(() => upload.complete(parts), 'The parts can\'t be joined');
       try {
-        stored = await putSpaceFile(env, row.userId, { spaceId: row.id, path, size: bytes.byteLength, contentType, sha256, r2Key });
+        const error = limitError(object.size, room);
+        if (error) throw error;
+        if (await objectSha256(env, object.key) !== sha256) {
+          throw new SpaceError('INVALID_REQUEST', 'sha256 does not match the uploaded parts.');
+        }
       } catch (error) {
-        await discard(r2Key);
+        await discard(object.key);
         throw error;
       }
-      if (!stored.ok) {
-        await discard(r2Key);
-        if (stored.reason === 'path_conflict') {
-          throw new SpaceError('INVALID_PATH', `Path "${path}" conflicts with existing file "${stored.conflictPath}" in this Space.`);
-        }
-        // Another upload took the room meanwhile, or the Space is gone: say which limit it hits now.
-        const [fresh, freshFile, nowUsed, nowFiles] = await Promise.all([
-          getUserSpace(env, row.userId, row.id), getSpaceFile(env, row.id, path), userUsedBytes(env, row.userId), countSpaceFiles(env, row.id),
-        ]);
-        if (!fresh) throw new SpaceError('NOT_FOUND', 'No such Space.');
-        if (!freshFile && nowFiles >= SPACE_LIMITS.maxFiles) {
-          throw new SpaceError('SPACE_FULL', `A Space may hold at most ${SPACE_LIMITS.maxFiles} files.`);
-        }
-        room.space = SPACE_LIMITS.spaceBytes - (fresh.totalBytes - (freshFile?.size ?? 0));
-        room.user = SPACE_LIMITS.userBytes - (nowUsed - (freshFile?.size ?? 0));
-        throw limitError(bytes.byteLength) ?? new SpaceError('QUOTA_EXCEEDED', 'A storage limit was reached.');
+      const contentType = contentTypeFor(path, object.httpMetadata?.contentType);
+      return record(row, path, { size: object.size, contentType, sha256, r2Key: object.key });
+    },
+
+    /** Abort an unfinished upload and drop its parts. One that is already gone is fine. */
+    async abortUpload(row: SpaceRow, uploadId: string) {
+      try {
+        const upload = multipart(row, uploadId);
+        await r2Upload(() => upload.abort());
+      } catch (error) {
+        if (!(error instanceof SpaceError && error.code === 'NOT_FOUND')) throw error;
       }
-      if (stored.replacedKey) await discard(stored.replacedKey);
-      const file: SpaceFile = { path, size: bytes.byteLength, contentType, sha256, updatedAt: stored.updatedAt };
-      await broadcast(row, { type: 'file', file });
-      return file;
     },
 
     async deleteFile(row: SpaceRow, path: string) {

@@ -12,9 +12,9 @@ export class BodyTooLarge extends Error {
 
 /**
  * Read a request body of at most `limit` bytes into memory, stopping as soon as it passes the limit.
- * R2 needs a body of known length, and only a request's own untouched body has one, so an upload
- * is read whole (at most 25 MB) to be hashed and then written. With `expectedLength` (from
- * `Content-Length`) the buffer is allocated once instead of joined from chunks.
+ * R2 needs a body of known length, and only a request's own untouched body has one, so a one-request
+ * upload is read whole (at most `SPACE_LIMITS.partBytes`) to be hashed and then written. With
+ * `expectedLength` (from `Content-Length`) the buffer is allocated once instead of joined from chunks.
  */
 export async function readLimited(
   body: ReadableStream<Uint8Array> | null,
@@ -43,9 +43,21 @@ export async function readLimited(
   return size === bytes.byteLength ? bytes : bytes.slice(0, size);
 }
 
+const hex = (digest: ArrayBuffer) => Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+
 export async function sha256Hex(bytes: Uint8Array<ArrayBuffer>) {
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+  return hex(await crypto.subtle.digest('SHA-256', bytes));
+}
+
+/** The hex SHA-256 of the R2 object at `key`, streamed so a large file is never held whole; `null` if it is gone. */
+export async function objectSha256(env: Pick<Env, 'SPACES_BUCKET'>, key: string) {
+  const object = await env.SPACES_BUCKET.get(key);
+  if (!object) return null;
+  // The DOM lib's `Crypto` type wins over the Workers one, which has `DigestStream`.
+  const workersCrypto = crypto as Crypto & { DigestStream: typeof DigestStream };
+  const digest = new workersCrypto.DigestStream('SHA-256');
+  await object.body.pipeTo(digest);
+  return hex(await digest.digest);
 }
 
 /** Delete every R2 object under `prefix` (a Space's `<id>/`), a page of up to 1000 at a time. */
