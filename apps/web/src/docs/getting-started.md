@@ -45,7 +45,7 @@ agentsync edit
 
 ## When changes arrive
 
-A saved Template reaches a Machine the next time an agent session starts there. Claude Code, Codex and Antigravity read their instructions before the hook runs, so a change applies **from the session after that**. pi and OpenCode wait for the hook, so they have it straight away. To update a Machine right away, run:
+A saved Template reaches a Machine the next time an agent session starts there. Claude Code and Codex read their instructions before the hook runs, so a change applies **from the session after that**. Antigravity rereads rules before each turn (so a change applies on the next message, and the hook tells it to read the updated file on the first turn). pi and OpenCode wait for the hook, so they have it straight away. To update a Machine right away, run:
 
 ```sh
 agentsync sync

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -351,6 +351,45 @@ describe('init', () => {
         expect(existsSync(t.path(`${dir}/skills/${name}/SKILL.md`))).toBe(false);
       }
     }
+  });
+
+  it('keeps non-Claude hooks in the agent home when a custom --target path is given', async () => {
+    const t = setup();
+    mkdirSync(t.path('dotfiles'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url, '--target', 'codex=~/dotfiles/AGENTS.md');
+
+    expect(result.code).toBe(0);
+    expect(existsSync(t.path('dotfiles/hooks.json'))).toBe(false);
+    expect(JSON.parse(readFileSync(t.path('.codex/hooks.json'), 'utf8'))).toMatchObject({
+      hooks: { SessionStart: [{ hooks: [{ command: 'agentsync sync --hook codex' }] }] },
+    });
+  });
+
+  it('with --agent claude includes a not-yet-existing CLAUDE_CONFIG_DIR even when ~/.claude exists', async () => {
+    const t = setup({ env: { CLAUDE_CONFIG_DIR: '~/brand-new-claude' } });
+    mkdirSync(t.path('.claude'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url, '--agent', 'claude');
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([
+      { path: '~/.claude/CLAUDE.md', agent: 'claude' },
+      { path: '~/brand-new-claude/CLAUDE.md', agent: 'claude' },
+    ]);
+  });
+
+  it('with --agent claude does not duplicate a CLAUDE_CONFIG_DIR symlink pointing at ~/.claude', async () => {
+    const t = setup({ env: { CLAUDE_CONFIG_DIR: '~/claude-alias' } });
+    mkdirSync(t.path('.claude'));
+    symlinkSync(t.path('.claude'), t.path('claude-alias'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url, '--agent', 'claude');
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([{ path: '~/.claude/CLAUDE.md', agent: 'claude' }]);
   });
 
   it('leaves a pi extension AgentSync did not write alone, and says so', async () => {

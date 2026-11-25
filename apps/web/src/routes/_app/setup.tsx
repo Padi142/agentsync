@@ -53,7 +53,7 @@ function Setup() {
             </li>
           </ol>
           <p className="muted">
-            After that, every agent session fetches the latest Template when it starts. Claude Code, Codex and Antigravity get a change from the session after; pi and OpenCode get it in that session. <Link to="/docs/$page" params={{ page: 'cli' }}>See every command</Link>
+            After that, every agent session fetches the latest Template when it starts. Claude Code and Codex get a change from the session after; Antigravity rereads rules each turn; pi and OpenCode get it in that session. <Link to="/docs/$page" params={{ page: 'cli' }}>See every command</Link>
           </p>
         </section>
       </div>

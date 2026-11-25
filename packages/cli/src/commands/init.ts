@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type { ContractClient, DeviceAuthorization, MachineOs, Target } from '@agentsync/contract';
 import { referencedVariables } from '@agentsync/template';
@@ -41,6 +42,7 @@ async function chooseTargets(ctx: Context): Promise<Target[]> {
       const homes = detectClaudeHomes(io);
       if (homes.length) for (const dir of homes) addTarget(targetFor(agent, io, dir));
       else addTarget(targetFor(agent, io));
+      if (io.env.CLAUDE_CONFIG_DIR?.trim() && !existsSync(agent.home(io))) addTarget(targetFor(agent, io));
     } else {
       addTarget(targetFor(agent, io));
     }

@@ -21,6 +21,8 @@ function fakeSkills(home: string) {
   const invocations: { args: string[]; env?: Record<string, string> }[] = [];
   /** Names whose next `add` writes the canonical copy, then fails before Claude Code's link. */
   const failHalfway = new Set<string>();
+  /** Claude config dirs whose next `add` fails without touching disk. */
+  const failClaudeHome = new Set<string>();
   const lockFile = join(home, '.agents', '.skill-lock.json');
   const lock = () => {
     try {
@@ -76,17 +78,26 @@ function fakeSkills(home: string) {
     const results = names.map((name) => {
       const files = published.get(`${repo}#${commit}`)?.get(name);
       if (!files) return { name, status: 'skipped', reason: 'No matching skill found in source' };
+      if (agents.includes('claude-code') && failClaudeHome.delete(claudeHome)) {
+        return { name, status: 'failed', error: `EACCES: ${claudeHome}` };
+      }
       const canonical = join(home, '.agents', 'skills', name);
       const claude = join(claudeHome, 'skills', name);
       const antigravity = join(home, '.gemini', 'config', 'skills', name);
-      const needsCanonical = agents.some((agent) => agent !== 'claude-code');
-      if (needsCanonical) {
+      // In skills 1.9.0, symlink mode is chosen only when agents have >1 distinct project `skillsDir`,
+      // i.e. claude-code (`.claude/skills`) paired with any `.agents/skills` agent (codex/pi/opencode/antigravity).
+      // Other combinations (including antigravity alone or codex+antigravity) use independent copies.
+      const usesSymlink = agents.includes('claude-code') && agents.some((agent) => agent !== 'claude-code');
+      const hasUniversal = agents.some((agent) => agent !== 'claude-code' && agent !== 'antigravity');
+      if (usesSymlink) {
         writeFolder(canonical, files);
         if (failHalfway.delete(name)) return { name, status: 'failed', error: 'EACCES: Claude Code link' };
-        if (agents.includes('claude-code')) linkTo(claude, canonical);
+        linkTo(claude, canonical);
         if (agents.includes('antigravity')) linkTo(antigravity, canonical);
       } else {
-        writeFolder(claude, files);
+        if (hasUniversal) writeFolder(canonical, files);
+        if (agents.includes('claude-code')) writeFolder(claude, files);
+        if (agents.includes('antigravity')) writeFolder(antigravity, files);
       }
       current.skills[name] = { source: repo, sourceType: 'github', ref: commit, skillFolderHash: 'x'.repeat(40) };
       return { name, status: 'installed', source: repo, ref: commit };
@@ -107,6 +118,7 @@ function fakeSkills(home: string) {
     invocations,
     run,
     failHalfway,
+    failClaudeHome,
     lockSource,
     /** Make `name` installable from `repo` at `commit`, and return its installed hash (the Pin's). */
     async publish(repo: string, commit: string, name: string, files: SkillFiles) {

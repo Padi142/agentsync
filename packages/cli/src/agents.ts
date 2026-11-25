@@ -272,8 +272,9 @@ export const targetFor = (agent: Agent, io: Io, homeDir?: string): Target => ({
   agent: agent.id,
 });
 
-/** The config directory for a registered Target of `agent` (e.g. `~/.claude_personal` for `~/.claude_personal/CLAUDE.md`). */
+/** The config directory for a registered Target of `agent` (inferred from the path only for Claude Code). */
 export function targetHome(agent: Agent, target: Target, io: Io): string {
+  if (agent.id !== 'claude') return agent.home(io);
   const expanded = expandHome(target.path, io);
   return basename(expanded) === agent.instructionsFile ? dirname(expanded) : agent.home(io);
 }

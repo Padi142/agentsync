@@ -22,7 +22,7 @@ You see it too: when files changed, Claude Code shows a message under the sessio
 
 ## When a change applies
 
-Claude Code, Codex and Antigravity read their instructions before a `SessionStart` hook can change them. So when the hook writes a new Template, the session that's starting still has the old one, and the next session gets the new one. To soften this, the hook's line names the updated file and tells the agent to read it if the current instructions matter.
+Claude Code and Codex read their instructions before a `SessionStart` hook can change them. So when the hook writes a new Template, the session that's starting still has the old one, and the next session gets the new one. Antigravity rereads rules before each turn (so a change applies from the next message in the same session, though first-turn ordering after `SessionStart` is unverified). To soften this, the hook's line names the updated file and tells the agent to read it if the current instructions matter.
 
 pi waits for the extension before it reads its instructions, so a pi session gets the new Template as it starts. OpenCode waits for the plugin too, and reads its instructions again before each request, so it also picks up a file another agent's hook updated while it was open.
 

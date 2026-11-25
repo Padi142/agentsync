@@ -130,9 +130,11 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
 - **Installing.** `skills sync` runs `skills add <owner/repo>#<commit> --skill <names…> -g -a <agents> -y --json`,
   once per repository and commit (plus one extra `skills add -g -a claude-code` per additional
   Claude Code instance with `CLAUDE_CONFIG_DIR` set). The agents are those the Machine has Targets
-  for (`claude` → `claude-code`, `codex`, `pi`, `opencode`, `antigravity`). The canonical copy goes
-  to `~/.agents/skills/<name>`, with symlinks for each Claude Code instance's `skills/` directory
-  and Antigravity's `~/.gemini/config/skills/`.
+  for (`claude` → `claude-code`, `codex`, `pi`, `opencode`, `antigravity`). When Claude Code is
+  installed alongside another agent in the same call, `skills` writes the canonical copy to
+  `~/.agents/skills/<name>` with symlinks for Claude Code and Antigravity; single-directory calls
+  (such as Claude Code alone, Antigravity alone, Codex/pi + Antigravity, or extra Claude Code
+  instances) receive independent copies.
 - **Ownership.** `skills` itself replaces any folder silently, so AgentSync keeps its own record in
   `skills.json` beside the config: each Skill it installed or adopted, with its Pin, the
   repositories its lock entry may name, and which skills directories hold its copies.
@@ -205,10 +207,12 @@ The pi extension shows the line as a notice and appends it to the system prompt.
 appends it to the system prompt of every request (`experimental.chat.system.transform` in 1.x, which
 also covers its title requests, and the session `context` hook in 2.x).
 
-### Does a change apply to the current session? Not for Claude Code or Codex; yes for pi and OpenCode
+### Does a change apply to the current session? Not for Claude Code or Codex; next turn for Antigravity; yes for pi and OpenCode
 
 Claude Code and Codex read their instructions file before the `SessionStart` hook's write
 can reach them, so a Template change the hook writes takes effect from the next session.
+Antigravity rereads rules before each turn, while first-turn ordering after `SessionStart`
+is unverified.
 
 - **Claude Code.** The [memory docs](https://code.claude.com/docs/en/memory) say
   CLAUDE.md files above the working directory "are loaded at launch", and the
@@ -223,6 +227,11 @@ can reach them, so a Template change the hook writes takes effect from the next 
   usually means once per launched session)". Tested with codex-cli 0.164.0 (`codex exec`
   with a `~/.codex/hooks.json` SessionStart hook that rewrites `AGENTS.md`): the session's
   rollout file records the old `AGENTS.md` text, even though the hook had already run.
+- **Antigravity.** `SessionStart` fires once when a session starts before the first model
+  invocation, and Antigravity rereads rules before each turn (so an update can apply on the
+  next message in the same session). Because first-turn ordering after `SessionStart` is not
+  guaranteed, AgentSync conservatively tells the model to read `~/.gemini/config/AGENTS.md`
+  when it was updated.
 
 To soften the lag, the hook's line names the updated Target and tells the agent to read
 it when the current instructions matter. The `agentsync-instructions` skill says the same.

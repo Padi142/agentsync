@@ -1,5 +1,5 @@
-import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { closeSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { CliError, EXIT } from '../exit.js';
 import { readJson, removeFile, writeJson } from '../files.js';
 import type { Io } from '../io.js';
@@ -11,16 +11,102 @@ import { configDir, expandHome, tildify } from '../paths.js';
  * - `claude`: `~/.claude/skills` (the default Claude Code instance)
  * - `claude:<dir>`: `<dir>/skills` (an additional or custom Claude Code instance, e.g. `claude:~/.claude_personal`)
  * - `antigravity`: `~/.gemini/config/skills` (Antigravity App, CLI and IDE)
+ * - `dir:<path>`: a persisted canonical skills directory scanned when all aliases pointing to it are gone
  */
-export type Place = 'agents' | 'claude' | 'antigravity' | `claude:${string}`;
+export type Place = 'agents' | 'claude' | 'antigravity' | `claude:${string}` | `dir:${string}`;
 
 export const isClaudePlace = (place: Place): boolean => place === 'claude' || place.startsWith('claude:');
 
-/** The Place key for a Claude Code config directory (`'claude'` for `~/.claude`, else `'claude:<path>'`). */
+/** Resolve `path` through symlinks, following a symlink even when its target does not exist yet. */
+function canonicalPath(path: string, depth = 0): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    if (depth < 8) {
+      try {
+        return canonicalPath(resolve(dirname(path), readlinkSync(path)), depth + 1);
+      } catch {
+        // Not a symlink (or unreadable): resolve the deepest existing ancestor below.
+      }
+    }
+    const parent = dirname(path);
+    if (parent === path) return resolve(path);
+    return join(canonicalPath(parent, depth + 1), basename(path));
+  }
+}
+
+/** Canonical path of a Place's skills directory, used to deduplicate aliases consistently across scan and plan. */
+export const canonicalSkillsDir = (dir: string): string => canonicalPath(dir);
+
+/** Whether `dir` resolves through a symlink relative to `io.home` (tolerating OS-level symlinks above `io.home`, e.g. `/var` -> `/private/var`). */
+export function isSymlinkedSkillsDir(dir: string, io: Io): boolean {
+  const resolvedHome = resolve(io.home);
+  const canonicalHome = canonicalSkillsDir(resolvedHome);
+  const resolvedDir = resolve(dir);
+  const expected =
+    resolvedDir === resolvedHome || resolvedDir.startsWith(`${resolvedHome}/`) || resolvedDir.startsWith(`${resolvedHome}\\`)
+      ? join(canonicalHome, resolvedDir.slice(resolvedHome.length))
+      : resolvedDir;
+  return canonicalSkillsDir(dir) !== expected;
+}
+
+/** Persisted canonical directory Places for `record`, so orphaned copies stay visible even if all aliases were deleted. */
+export function persistedDirPlaces(record: ManagedSkill, io: Io): Place[] {
+  if (!record.placeDirs) return [];
+  return Object.entries(record.placeDirs)
+    .filter(([owned]) => !(owned === 'claude' && record.legacyClaude))
+    .map(([, dir]): Place => `dir:${tildify(dir, io)}`);
+}
+
+/** Canonical skills directories owned by `record` (persisted `placeDirs` when present, else non-symlinked `places`). */
+export function ownedDirs(record: ManagedSkill, io: Io): Set<string> {
+  if (record.placeDirs) {
+    return new Set(
+      Object.entries(record.placeDirs)
+        .filter(([owned]) => !(owned === 'claude' && record.legacyClaude))
+        .map(([, dir]) => dir),
+    );
+  }
+  return new Set(
+    record.places
+      .filter((place) => !(place === 'claude' && record.legacyClaude) && !isSymlinkedSkillsDir(skillDir(io, place), io))
+      .map((place) => canonicalSkillsDir(skillDir(io, place))),
+  );
+}
+
+/** A skills directory for `place`, matching `skills` 1.9.0's layout. */
+export function skillDir(io: Io, place: Place): string {
+  if (place === 'agents') return join(io.home, '.agents', 'skills');
+  if (place === 'antigravity') return join(io.home, '.gemini', 'config', 'skills');
+  if (place.startsWith('dir:')) return expandHome(place.slice('dir:'.length), io);
+  if (isClaudePlace(place)) return join(claudeHomeForPlace(place, io), 'skills');
+  return join(io.home, '.agents', 'skills');
+}
+
+/**
+ * The canonical Place key for `place`, following symlinks on its `skills/` directory so planning and
+ * scanning agree on one key whenever two agents share a directory (`agents` > `claude` > `antigravity`).
+ */
+export function canonicalPlace(place: Place, io: Io): Place {
+  const dir = canonicalSkillsDir(skillDir(io, place));
+  if (dir === canonicalSkillsDir(join(io.home, '.agents', 'skills'))) return 'agents';
+  if (dir === canonicalSkillsDir(join(io.home, '.claude', 'skills'))) return 'claude';
+  if (dir === canonicalSkillsDir(join(io.home, '.gemini', 'config', 'skills'))) return 'antigravity';
+  if (isClaudePlace(place) && basename(dir) === 'skills') return `claude:${tildify(dirname(dir), io)}`;
+  return place;
+}
+
+/**
+ * The Place key for a Claude Code config directory: `'agents'`, `'claude'`, or `'antigravity'` when its
+ * `skills/` directory resolves to one of those built-in directories, else `'claude:<canonical>'`.
+ */
 export function claudePlace(homeDir: string, io: Io): Place {
-  const defaultClaude = join(io.home, '.claude');
-  if (resolve(homeDir) === resolve(defaultClaude)) return 'claude';
-  return `claude:${tildify(homeDir, io)}`;
+  const dir = canonicalSkillsDir(join(homeDir, 'skills'));
+  if (dir === canonicalSkillsDir(join(io.home, '.agents', 'skills'))) return 'agents';
+  if (dir === canonicalSkillsDir(join(io.home, '.claude', 'skills'))) return 'claude';
+  if (dir === canonicalSkillsDir(join(io.home, '.gemini', 'config', 'skills'))) return 'antigravity';
+  if (basename(dir) === 'skills') return `claude:${tildify(dirname(dir), io)}`;
+  return `claude:${tildify(canonicalPath(homeDir), io)}`;
 }
 
 /** The Claude Code config directory a Claude Place refers to. */
@@ -38,8 +124,16 @@ export interface ManagedSkill {
   sources: string[];
   /** The directories whose `<name>` folder AgentSync wrote or adopted. A folder anywhere else is never touched. */
   places: Place[];
+  /** Canonical skills directory recorded for each owned Place when ownership was established (prevents symlink repointing). */
+  placeDirs?: Record<string, string>;
   /** A `skills add` of this Pin failed partway: the copies are AgentSync's but mixed, so the next sync retries. */
   incomplete?: true;
+  /** Pin hashes from before interrupted updates, so untouched copies at earlier Pins aren't mistaken for hand edits. */
+  previousHashes?: string[];
+  /** Canonical dirs of verified orphans whose removal failed partway, so a missing SKILL.md there stays retryable. */
+  orphanDirs?: string[];
+  /** Legacy pre-v2 `'claude'` entry not yet verified at `~/.claude` or migrated (`'ambiguous'` saw another matching Claude home). */
+  legacyClaude?: true | 'ambiguous';
 }
 
 /**
@@ -47,16 +141,27 @@ export interface ManagedSkill {
  * writes only `report`) and `skills sync` (which writes only `managed`) never overwrite each other's part.
  */
 export interface SkillsState {
+  /** Schema version: `2` records custom Claude Code instances explicitly as `claude:<dir>`. Omitted in legacy files. */
+  version?: number;
   managed: Record<string, ManagedSkill>;
+  /** Last-known required Places from the Machine's registered Targets, so hooks scan custom homes on the first pass. */
+  places?: Place[];
   /** The last scan the hook sent: its hash, and when (ms since the epoch). */
   report?: { hash: string; at: number };
 }
+
+export const SKILLS_STATE_VERSION = 2;
 
 const stateFile = (io: Io) => join(configDir(io), 'skills.json');
 
 export function readSkillsState(io: Io): SkillsState {
   const state = readJson<Partial<SkillsState>>(stateFile(io), {});
-  return { managed: state.managed ?? {}, ...(state.report ? { report: state.report } : {}) };
+  return {
+    ...(state.version === undefined ? {} : { version: state.version }),
+    managed: state.managed ?? {},
+    ...(Array.isArray(state.places) ? { places: state.places } : {}),
+    ...(state.report ? { report: state.report } : {}),
+  };
 }
 
 /** Change the record on disk: read it fresh, apply `change`, write it back, so a concurrent writer's other part survives. */
