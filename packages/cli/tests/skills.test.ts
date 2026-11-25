@@ -114,7 +114,7 @@ describe('skills sync', () => {
 
     expect(result.code).toBe(3);
     expect(statuses(result)).toEqual({ animate: 'removed', polish: 'drifted' });
-    expect(t.skills.calls).toEqual([['remove', 'animate', '-g', '-y', '-a', 'claude-code', 'codex', 'pi']]);
+    expect(t.skills.calls).toEqual([['remove', 'animate', '-g', '-y', '-a', 'claude-code', 'codex', 'pi', 'antigravity']]);
     expect(existsSync(t.path('.agents/skills/animate'))).toBe(false);
     expect(existsSync(t.path('.claude/skills/animate'))).toBe(false);
     expect(readFileSync(t.path('.agents/skills/polish/SKILL.md'), 'utf8')).toBe('polish, edited by hand');
@@ -479,5 +479,110 @@ describe('skills add', () => {
     const waited = await t.cli('skills', 'add', 'team/other', '--json');
     expect(waited.code).toBe(6);
     expect(t.sleeps.reduce((sum, ms) => sum + ms, 0)).toBeGreaterThanOrEqual(10 * 60 * 1000);
+  });
+});
+
+describe('Antigravity and multiple Claude Code instances', () => {
+  it('installs, keeps in sync, and removes Skills for Antigravity alongside other agents', async () => {
+    const t = await machineWithSkills();
+    t.registered([
+      { path: '~/.claude/CLAUDE.md', agent: 'claude' },
+      { path: '~/.gemini/config/AGENTS.md', agent: 'antigravity' },
+    ]);
+
+    const installed = await t.cli('skills', 'sync', '--json');
+    expect(installed.code).toBe(0);
+    expect(t.skills.calls).toEqual([
+      ['add', `emil/skills#${sha('1')}`, '--skill', 'animate', 'polish', '-g', '-a', 'claude-code', 'antigravity', '-y', '--json'],
+    ]);
+    expect(readFileSync(t.path('.gemini/config/skills/animate/SKILL.md'), 'utf8')).toBe('animate v1');
+    expect(readFileSync(t.path('.claude/skills/animate/SKILL.md'), 'utf8')).toBe('animate v1');
+
+    // Second sync sees both copies and makes no changes.
+    t.skills.calls.length = 0;
+    const second = await t.cli('skills', 'sync', '--json');
+    expect(second.code).toBe(0);
+    expect(statuses(second)).toEqual({ animate: 'unchanged', polish: 'unchanged' });
+    expect(t.skills.calls).toEqual([]);
+
+    // Removing deletes Antigravity's symlink too.
+    t.server.state.skills = [];
+    const removed = await t.cli('skills', 'sync', '--json');
+    expect(removed.code).toBe(0);
+    expect(statuses(removed)).toEqual({ animate: 'removed', polish: 'removed' });
+    expect(existsSync(t.path('.gemini/config/skills/animate'))).toBe(false);
+    expect(existsSync(t.path('.claude/skills/animate'))).toBe(false);
+  });
+
+  it('blocks on a hand-written skill in ~/.gemini/config/skills even when Antigravity is not a Target', async () => {
+    const t = await machineWithSkills();
+    t.write('.gemini/config/skills/animate/SKILL.md', 'my own antigravity animate');
+
+    const result = await t.cli('skills', 'sync', '--json', '--overwrite');
+
+    expect(result.code).toBe(3);
+    expect(statuses(result)).toEqual({ animate: 'blocked', polish: 'installed' });
+    expect(readFileSync(t.path('.gemini/config/skills/animate/SKILL.md'), 'utf8')).toBe('my own antigravity animate');
+  });
+
+  it('installs, blocks, updates and removes Skills across multiple Claude Code instances even with CLAUDE_CONFIG_DIR set', async () => {
+    const t = setup({ env: { CLAUDE_CONFIG_DIR: '~/.claude_personal' } });
+    const animate = await t.skills.publish('emil/skills', sha('1'), 'animate', { 'SKILL.md': 'animate v1' });
+    const polish = await t.skills.publish('emil/skills', sha('1'), 'polish', { 'SKILL.md': 'polish v1' });
+    t.server.state.skills = [
+      { name: 'animate', repo: 'emil/skills', commit: sha('1'), installedHash: animate, sources: ['emil/skills'] },
+      { name: 'polish', repo: 'emil/skills', commit: sha('1'), installedHash: polish, sources: ['emil/skills'] },
+    ];
+    t.registered([
+      { path: '~/.claude/CLAUDE.md', agent: 'claude' },
+      { path: '~/.claude_personal/CLAUDE.md', agent: 'claude' },
+      { path: '~/.codex/AGENTS.md', agent: 'codex' },
+    ]);
+    t.write('.claude_personal/skills/polish/SKILL.md', 'personal hand-written polish');
+
+    const result = await t.cli('skills', 'sync', '--json');
+    expect(result.code).toBe(3);
+    expect(statuses(result)).toEqual({ animate: 'installed', polish: 'blocked' });
+    expect(readFileSync(t.path('.claude/skills/animate/SKILL.md'), 'utf8')).toBe('animate v1');
+    expect(readFileSync(t.path('.claude_personal/skills/animate/SKILL.md'), 'utf8')).toBe('animate v1');
+    expect(readFileSync(t.path('.agents/skills/animate/SKILL.md'), 'utf8')).toBe('animate v1');
+    expect(readFileSync(t.path('.claude_personal/skills/polish/SKILL.md'), 'utf8')).toBe('personal hand-written polish');
+    expect(t.skills.invocations).toEqual([
+      {
+        args: ['add', `emil/skills#${sha('1')}`, '--skill', 'animate', '-g', '-a', 'claude-code', 'codex', '-y', '--json'],
+        env: { CLAUDE_CONFIG_DIR: t.path('.claude') },
+      },
+      {
+        args: ['add', `emil/skills#${sha('1')}`, '--skill', 'animate', '-g', '-a', 'claude-code', '-y', '--json'],
+        env: { CLAUDE_CONFIG_DIR: t.path('.claude_personal') },
+      },
+    ]);
+
+    // Removing animate removes it from both Claude Code instances and ~/.agents/skills.
+    t.server.state.skills = [];
+    t.skills.invocations.length = 0;
+    const removed = await t.cli('skills', 'sync', '--json');
+    expect(removed.code).toBe(0);
+    expect(statuses(removed)).toEqual({ animate: 'removed' });
+    expect(existsSync(t.path('.claude/skills/animate'))).toBe(false);
+    expect(existsSync(t.path('.claude_personal/skills/animate'))).toBe(false);
+    expect(existsSync(t.path('.agents/skills/animate'))).toBe(false);
+  });
+
+  it('fills in a newly added Claude Code instance and Antigravity copy on the next skills sync', async () => {
+    const t = await machineWithSkills();
+    await t.cli('skills', 'sync');
+    // Now add ~/.claude_personal and Antigravity to the registered Machine.
+    const [machine] = t.server.state.machines.values();
+    machine!.targets.push(
+      { path: '~/.claude_personal/CLAUDE.md', agent: 'claude' },
+      { path: '~/.gemini/config/AGENTS.md', agent: 'antigravity' },
+    );
+
+    const updated = await t.cli('skills', 'sync', '--json');
+    expect(updated.code).toBe(0);
+    expect(statuses(updated)).toEqual({ animate: 'updated', polish: 'updated' });
+    expect(readFileSync(t.path('.claude_personal/skills/animate/SKILL.md'), 'utf8')).toBe('animate v1');
+    expect(readFileSync(t.path('.gemini/config/skills/animate/SKILL.md'), 'utf8')).toBe('animate v1');
   });
 });

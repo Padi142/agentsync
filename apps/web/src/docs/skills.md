@@ -42,7 +42,7 @@ agentsync skills sync
 
 Apart from `skills add` installing what you just approved, it's the only command that installs or removes Skills; running it is your go-ahead. When agent sessions start, the hook only tells you what's waiting, such as "2 Skills to install". `agentsync init` offers to install them on a new Machine (`--skills` or `--no-skills` decides up front). See where each Skill stands with `agentsync skills status`.
 
-Every agent with a Target on the Machine gets every Skill: Claude Code, Codex, pi and OpenCode.
+Every agent with a Target on the Machine gets every Skill: every Claude Code instance, Codex, pi, OpenCode and Antigravity.
 
 ## Your own skills are safe
 

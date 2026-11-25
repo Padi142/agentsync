@@ -325,9 +325,24 @@ function ranOut(deadline: number): Promise<null> {
 /**
  * What a hook prints: `model` for the agent, and for an agent that reads JSON from its hooks,
  * `person` for the person too. The JSON must be all of stdout, or the agent reads it as plain text.
+ * Antigravity expects a JSON object on stdout even when there is nothing to inject (`{}`).
  */
 export function hookOutput(agent: string, model: string, person = ''): string {
-  if (!model || !findAgent(agent)?.hookJson) return model;
+  const format = findAgent(agent)?.hookOutput;
+  if (format === 'antigravity') {
+    if (!model) return '{}';
+    return JSON.stringify({
+      injectSteps: [
+        {
+          systemMessage: {
+            systemMessage: model,
+            ...(person ? { metadata: { user_markdown: person } } : {}),
+          },
+        },
+      ],
+    });
+  }
+  if (!model || format !== 'claude') return model;
   return JSON.stringify({
     ...(person ? { systemMessage: person } : {}),
     hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: model },

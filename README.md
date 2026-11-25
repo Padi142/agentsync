@@ -10,7 +10,7 @@ Machine registration through the WorkOS device flow, and Skills (agent skills fr
 repositories, pinned to a commit; see `docs/adr/0002-…`), and Spaces (live-updating files shared
 through a Share Link; see [Spaces](#spaces)). The `agentsync` CLI
 (`packages/cli`) Renders the Template into each agent's Global Instructions and keeps
-them current from Claude Code and Codex `SessionStart` hooks, a pi extension and an OpenCode plugin.
+them current from Claude Code, Codex and Antigravity `SessionStart` hooks, a pi extension and an OpenCode plugin.
 
 The web UI has five sections. **Template** edits the Template (live syntax
 errors, Cmd/Ctrl+S) beside a per-Machine, per-agent preview that renders the

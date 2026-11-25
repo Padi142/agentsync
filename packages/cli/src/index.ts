@@ -47,7 +47,7 @@ const SKILLS_TIMEOUT_MS = 5 * 60_000;
  * fetches audits), git never prompts, and `core.autocrlf` is off for its clone so the checked-out bytes
  * match GitHub's and a Pin doesn't read as Drift. The rest of the person's git config (proxies) stays.
  */
-function runSkills(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+function runSkills(args: string[], env?: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> {
   const count = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? '0', 10) || 0;
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [skillsBin(), ...args], {
@@ -55,6 +55,7 @@ function runSkills(args: string[]): Promise<{ code: number; stdout: string; stde
       timeout: SKILLS_TIMEOUT_MS,
       env: {
         ...process.env,
+        ...env,
         DISABLE_TELEMETRY: '1',
         GIT_TERMINAL_PROMPT: '0',
         GIT_CONFIG_COUNT: String(count + 1),

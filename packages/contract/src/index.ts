@@ -157,7 +157,7 @@ export const repoNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/
 export const gitShaSchema = z.string().regex(/^[0-9a-f]{40}$/);
 
 /**
- * What `skills` 1.7.4 leaves out when it copies a skill folder, at any depth. Both the server (from GitHub's tree) and the CLI (from disk) skip
+ * What `skills` 1.9.0 leaves out when it copies a skill folder, at any depth. Both the server (from GitHub's tree) and the CLI (from disk) skip
  * them when they hash a folder, so the hashes agree. Bump with the `skills` version.
  */
 export const SKILL_COPY_EXCLUDES = {
@@ -380,10 +380,10 @@ export const desiredSkillSchema = z.object({
 });
 
 /**
- * One skill folder on a Machine (in `~/.agents/skills` or the Claude Code skills directory).
- * `source` is the `skills` lock's source, or `null` for a hand-written folder; `hash` is the git
- * tree hash on disk (`null` for hand-written folders, which report their name only, or when two
- * copies disagree). `managed`: AgentSync installed or adopted it.
+ * One skill folder on a Machine (in `~/.agents/skills`, any Claude Code skills directory, or Antigravity's
+ * `~/.gemini/config/skills`). `source` is the `skills` lock's source, or `null` for a hand-written folder;
+ * `hash` is the git tree hash on disk (`null` for hand-written folders, which report their name only, or
+ * when two copies disagree). `managed`: AgentSync installed or adopted it.
  */
 export const scannedSkillSchema = z.object({
   name: z.string().min(1).max(255),

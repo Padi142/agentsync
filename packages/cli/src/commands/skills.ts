@@ -13,7 +13,7 @@ import { machineClient } from '../session.js';
 import { foreign, pendingCounts, planSkills, requiredPlaces, type SkillStep } from '../skills/plan.js';
 import { addSkills, removeSkills } from '../skills/runner.js';
 import { forgetLockEntry, scanSkills, skillDir, type Scan } from '../skills/scan.js';
-import { readSkillsState, recordOf, updateSkillsState, withSkillsLock, type ManagedSkill, type Place } from '../skills/state.js';
+import { readSkillsState, recordOf, updateSkillsState, withSkillsLock, claudeHomeForPlace, isClaudePlace, type ManagedSkill, type Place } from '../skills/state.js';
 
 /** The hook reports an unchanged scan again after this long, so the dashboard knows the Machine checked in. */
 const REPORT_EVERY_MS = 24 * 60 * 60 * 1000;
@@ -21,19 +21,56 @@ const REPORT_EVERY_MS = 24 * 60 * 60 * 1000;
 const short = (commit: string) => commit.slice(0, 7);
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`;
 
-/** The `skills` agent names for this Machine's Targets: every agent with a Target gets every Skill. */
-const skillsAgents = (payload: SyncPayload) =>
-  [...new Set(payload.machine.targets.flatMap((target) => findAgent(target.agent)?.skillsAgent ?? []))];
+interface InstallBatch {
+  agents: string[];
+  env?: Record<string, string>;
+}
 
 /**
- * The agents to pass `skills add` so it writes every directory the Skill needs, and keeps every
- * directory AgentSync already owns in step (a stale copy there would read as Drift).
+ * Plan the `skills add` calls needed so every directory required by this Machine's Targets, plus every
+ * directory AgentSync already owns for these Skills (a stale copy there would read as Drift), gets
+ * updated. Extra Claude Code instances each need their own call with `CLAUDE_CONFIG_DIR` set.
  */
-function installAgents(agents: readonly string[], owned: readonly Place[]): string[] {
-  const all = new Set(agents);
-  if (owned.includes('claude')) all.add('claude-code');
-  if (owned.includes('agents') && ![...all].some((agent) => agent !== 'claude-code')) all.add('codex');
-  return [...all];
+function installPlan(payload: SyncPayload, owned: readonly Place[], io: Context['io']): { batches: InstallBatch[]; places: Place[] } {
+  const required = requiredPlaces(payload.machine.targets, io);
+  const places = [...new Set([...required, ...owned])];
+  const claudeHomes = places.filter(isClaudePlace).map((place) => claudeHomeForPlace(place, io));
+  const wantAgentsDir = places.includes('agents');
+  const wantAntigravity = places.includes('antigravity');
+
+  // Preserve the Machine's target order for the primary `skills add` invocation.
+  const primaryAgents: string[] = [];
+  const addPrimary = (agent: string) => {
+    if (!primaryAgents.includes(agent)) primaryAgents.push(agent);
+  };
+  let hasUniversal = false;
+  for (const target of payload.machine.targets) {
+    const agent = findAgent(target.agent);
+    if (!agent) continue;
+    if (agent.id === 'claude') {
+      if (claudeHomes.length) addPrimary('claude-code');
+    } else if (agent.id === 'antigravity') {
+      if (wantAntigravity) addPrimary('antigravity');
+    } else if (wantAgentsDir) {
+      addPrimary(agent.skillsAgent);
+      hasUniversal = true;
+    }
+  }
+  if (claudeHomes.length) addPrimary('claude-code');
+  if (wantAgentsDir && !hasUniversal) addPrimary('codex');
+  if (wantAntigravity) addPrimary('antigravity');
+
+  const batches: InstallBatch[] = [];
+  if (primaryAgents.length) {
+    batches.push({
+      agents: primaryAgents,
+      ...(claudeHomes[0] ? { env: { CLAUDE_CONFIG_DIR: claudeHomes[0] } } : {}),
+    });
+  }
+  for (const homeDir of claudeHomes.slice(1)) {
+    batches.push({ agents: ['claude-code'], env: { CLAUDE_CONFIG_DIR: homeDir } });
+  }
+  return { batches, places };
 }
 
 const scanHash = (scan: Scan) => createHash('sha256').update(JSON.stringify(scan.items)).digest('hex');
@@ -87,11 +124,10 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
     const results: SkillSyncResult[] = [...invalid];
     const result = (name: string, commit: string, status: SkillSyncResult['status'], error?: string) =>
       results.push({ name, commit, status, ...(error ? { error: error.slice(0, 2000) } : {}) });
-    const agents = skillsAgents(payload);
-    const required = requiredPlaces(agents);
+    const required = requiredPlaces(payload.machine.targets, io);
     /** Plan `names` again from the disk as it is now. */
     const replan = async (names: string[]) => {
-      const now = await scanSkills(io, managed, names, { only: true });
+      const now = await scanSkills(io, managed, names, { only: true, places: required });
       return planSkills(desired.filter((skill) => names.includes(skill.name)), now.folders, managed, required, overwrite, keep)
         .filter((step) => names.includes(step.name));
     };
@@ -111,8 +147,14 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
     };
 
     try {
-      const steps = planSkills(desired, (await scanSkills(io, managed, desired.map((skill) => skill.name))).folders, managed, required, overwrite, keep)
-        .filter((step) => inScope(step.name));
+      const steps = planSkills(
+        desired,
+        (await scanSkills(io, managed, desired.map((skill) => skill.name), { places: required })).folders,
+        managed,
+        required,
+        overwrite,
+        keep,
+      ).filter((step) => inScope(step.name));
       for (const step of steps) settle(step);
 
       const removals = steps.filter((step) => step.action === 'remove').map((step) => step.name);
@@ -121,9 +163,15 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
         for (const step of still) if (step.action !== 'remove') settle(step);
         const names = still.filter((step) => step.action === 'remove').map((step) => step.name);
         if (names.length) {
-          await ctx.during(`Removing ${names.join(', ')}…`, () => removeSkills(ctx, names));
+          const extraClaudeHomes = [...new Set(
+            names
+              .flatMap((name) => recordOf(managed, name)?.places ?? [])
+              .filter((place) => place.startsWith('claude:'))
+              .map((place) => claudeHomeForPlace(place, io)),
+          )];
+          await ctx.during(`Removing ${names.join(', ')}…`, () => removeSkills(ctx, names, extraClaudeHomes));
           // Hashed against AgentSync's records, so a copy edited since the plan is never deleted below.
-          const after = await scanSkills(io, managed, names, { only: true });
+          const after = await scanSkills(io, managed, names, { only: true, places: required });
           for (const name of names) {
             const record = recordOf(managed, name)!;
             const leftover = after.folders.get(name);
@@ -135,7 +183,7 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
             if (left.length && ours) {
               for (const place of left) await rm(join(skillDir(io, place), name), { recursive: true, force: true });
               await forgetLockEntry(io, name);
-              left = (await scanSkills(io, {}, [name], { only: true })).folders.get(name)?.present ?? [];
+              left = (await scanSkills(io, {}, [name], { only: true, places: [...required, ...record.places] })).folders.get(name)?.present ?? [];
             }
             if (left.length) result(name, record.commit, 'failed', 'skills remove left it on disk.');
             else {
@@ -156,8 +204,8 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
       }
       for (const group of groups.values()) {
         const { repo, commit } = group[0]!.desired;
-        if (!agents.length) {
-          for (const step of group) result(step.name, commit, 'failed', 'No agent on this Machine takes Skills: AgentSync installs them for Claude Code, Codex, pi and OpenCode.');
+        if (!required.length) {
+          for (const step of group) result(step.name, commit, 'failed', 'No agent on this Machine takes Skills: AgentSync installs them for Claude Code, Codex, pi, OpenCode and Antigravity.');
           continue;
         }
         // The disk may have changed while earlier groups installed: act only on what still holds.
@@ -168,18 +216,28 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
         if (!go.length) continue;
         const names = go.map((step) => step.name);
         const owned = [...new Set(go.flatMap((step) => recordOf(managed, step.name)?.places ?? []))];
-        const targets = installAgents(agents, owned);
-        let outcome: Awaited<ReturnType<typeof addSkills>> | Error;
+        const { batches, places: wrote } = installPlan(payload, owned, io);
+        const outcomes = new Map<string, { ok: true } | { ok: false; error: string }>();
         try {
-          outcome = await ctx.during(`Installing ${names.join(', ')} from ${repo}…`, () => addSkills(ctx, repo, commit, names, targets));
+          await ctx.during(`Installing ${names.join(', ')} from ${repo}…`, async () => {
+            for (const batch of batches) {
+              const part = await addSkills(ctx, repo, commit, names, batch.agents, batch.env);
+              for (const [name, status] of part) {
+                const prev = outcomes.get(name);
+                if (!prev || (prev.ok && !status.ok)) outcomes.set(name, status);
+              }
+            }
+          });
         } catch (error) {
-          outcome = error instanceof Error ? error : new Error(String(error));
+          const message = describeError(error);
+          for (const name of names) {
+            if (!outcomes.get(name) || outcomes.get(name)!.ok) outcomes.set(name, { ok: false, error: message });
+          }
         }
-        const wrote = requiredPlaces(targets);
-        const after = await scanSkills(io, {}, names, { only: true });
+        const after = await scanSkills(io, {}, names, { only: true, places: wrote });
         for (const step of go) {
           const folder = after.folders.get(step.name);
-          const said = outcome instanceof Error ? { ok: false as const, error: describeError(outcome) } : outcome.get(step.name);
+          const said = outcomes.get(step.name);
           const placed = wrote.filter((place) => folder?.present.includes(place));
           const before = recordOf(managed, step.name);
           const present = folder?.present ?? [];
@@ -202,7 +260,7 @@ export async function syncSkills(ctx: Context, client: ContractClient, payload: 
     }
 
     let reportError: string | undefined;
-    const scan = await scanSkills(io, managed);
+    const scan = await scanSkills(io, managed, [], { places: required });
     try {
       await report(ctx, client, scan, results, undefined, only !== undefined);
     } catch (error) {
@@ -275,8 +333,9 @@ const describeStep = {
 async function currentPlan(ctx: Context, payload: SyncPayload) {
   const { managed } = readSkillsState(ctx.io);
   const { valid: desired, keep } = checkedDesired(payload);
-  const { folders } = await scanSkills(ctx.io, managed, desired.map((skill) => skill.name));
-  return planSkills(desired, folders, managed, requiredPlaces(skillsAgents(payload)), false, keep).filter((step) => step.action !== 'forget');
+  const required = requiredPlaces(payload.machine.targets, ctx.io);
+  const { folders } = await scanSkills(ctx.io, managed, desired.map((skill) => skill.name), { places: required });
+  return planSkills(desired, folders, managed, required, false, keep).filter((step) => step.action !== 'forget');
 }
 
 /** `skills status`: each Skill on this Machine against its Pin, without changing anything. */
@@ -481,8 +540,9 @@ export async function hookSkills(ctx: Context, payload: Promise<SyncPayload>, de
     try {
       const resolved = await payload;
       const { valid: desired, keep } = checkedDesired(resolved);
+      const required = requiredPlaces(resolved.machine.targets, ctx.io);
       // Names the listing didn't see are simply absent: they count as to install.
-      line = pendingText(planSkills(desired, scan.folders, managed, requiredPlaces(skillsAgents(resolved)), false, keep));
+      line = pendingText(planSkills(desired, scan.folders, managed, required, false, keep));
     } catch {
       // The Template part reports why the server could not be reached.
     }
@@ -501,10 +561,16 @@ export async function hookSkills(ctx: Context, payload: Promise<SyncPayload>, de
 export async function initSkills(ctx: Context, client: ContractClient, payload: SyncPayload) {
   const { io } = ctx;
   const desired = checkedDesired(payload).valid;
-  const required = requiredPlaces(skillsAgents(payload));
+  const required = requiredPlaces(payload.machine.targets, io);
   const steps = await withSkillsLock(io, async () => {
     const { managed } = readSkillsState(io);
-    const planned = planSkills(desired, (await scanSkills(io, managed, desired.map((skill) => skill.name))).folders, managed, required, false);
+    const planned = planSkills(
+      desired,
+      (await scanSkills(io, managed, desired.map((skill) => skill.name), { places: required })).folders,
+      managed,
+      required,
+      false,
+    );
     const adopted = planned.filter((step) => step.action === 'adopt' && 'desired' in step);
     if (adopted.length) {
       updateSkillsState(io, (state) => {
@@ -519,7 +585,7 @@ export async function initSkills(ctx: Context, client: ContractClient, payload: 
   const inTheWay = steps.filter((step) => step.action === 'blocked' || step.action === 'drifted').length;
   const total = payload.skills.length;
   const skip = async () => {
-    const scan = await scanSkills(io, readSkillsState(io).managed);
+    const scan = await scanSkills(io, readSkillsState(io).managed, [], { places: required });
     await report(ctx, client, scan).catch(() => undefined);
     sayFound(ctx, scan);
     return { set: total, installed: present, results: [] as SkillSyncResult[] };

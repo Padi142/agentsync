@@ -18,10 +18,10 @@ const bundledText = (name: (typeof BUNDLED_SKILLS)[number]) =>
  * exactly what AgentSync wrote (by the hash in the config); a file someone wrote or changed is
  * left alone. Returns each skill file and whether it was written.
  */
-export function installSkills(ctx: Context, agent: Agent): { file: string; written: boolean }[] {
+export function installSkills(ctx: Context, agent: Agent, homeDir?: string): { file: string; written: boolean }[] {
   const record = (ctx.config.skills ??= {});
   const results = BUNDLED_SKILLS.map((name) => {
-    const file = join(agent.skillsDir(ctx.io), name, 'SKILL.md');
+    const file = join(agent.skillsDir(ctx.io, homeDir), name, 'SKILL.md');
     return { file, written: writeOwned(record, file, bundledText(name)) };
   });
   if (results.some((result) => result.written)) ctx.save();

@@ -55,6 +55,32 @@ describe('sync --hook', () => {
     expect(result.stdout).toBe(`AgentSync: updated ~/${file} to Template revision 1.\n`);
   });
 
+  it('for antigravity prints {} when up to date, and injectSteps JSON when updated or offline', async () => {
+    const t = setup();
+    t.registered([{ path: '~/.gemini/config/AGENTS.md', agent: 'antigravity' }]);
+    t.server.putTemplate('one\n');
+
+    const updated = await t.cli('sync', '--hook', 'antigravity');
+    expect(updated.code).toBe(0);
+    expect(read(t.path('.gemini/config/AGENTS.md'))).toBe('one\n');
+    const body = JSON.parse(updated.stdout);
+    expect(body.injectSteps).toHaveLength(1);
+    expect(body.injectSteps[0].systemMessage.systemMessage).toContain('read ~/.gemini/config/AGENTS.md');
+    expect(body.injectSteps[0].systemMessage.metadata.user_markdown).toBe(
+      'AgentSync: updated ~/.gemini/config/AGENTS.md to Template revision 1; run `agentsync history` to see what changed.',
+    );
+
+    const quiet = await t.cli('sync', '--hook', 'antigravity');
+    expect(quiet).toMatchObject({ code: 0, stdout: '{}\n', stderr: '' });
+
+    t.server.state.offline = true;
+    const offline = await t.cli('sync', '--hook', 'antigravity');
+    expect(offline.code).toBe(0);
+    const offlineBody = JSON.parse(offline.stdout);
+    expect(offlineBody.injectSteps[0].systemMessage.systemMessage).toMatch(/^AgentSync: kept the existing instructions:/);
+    expect(offlineBody.injectSteps[0].systemMessage.metadata).toBeUndefined();
+  });
+
   it('keeps the existing files and exits 0 when the server cannot be reached', async () => {
     const t = setup();
     t.registered(undefined, { '~/.claude/CLAUDE.md': 'one\n' });

@@ -1,8 +1,9 @@
 # agentsync
 
 The AgentSync CLI. It Renders your one Template (stored on the AgentSync server) with
-this Machine's Variables into every Target, such as `~/.claude/CLAUDE.md`,
-`~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md` and `~/.config/opencode/AGENTS.md`, and keeps
+this Machine's Variables into every Target, such as `~/.claude/CLAUDE.md` (and any additional
+Claude Code config directories), `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md`,
+`~/.config/opencode/AGENTS.md` and `~/.gemini/config/AGENTS.md`, and keeps
 them current from a hook that runs when each agent's session starts. It also installs the Skills you pick on the dashboard
 with `agentsync skills sync`, and shares files through live Spaces with `agentsync space`.
 See `GLOSSARY.md` at the repo root for the terms.
@@ -72,11 +73,17 @@ and without `--yes`, `--json` or `--hook`. Prompts and spinners go to stderr; re
   `~/.config/agentsync/config.json` (or `$XDG_CONFIG_HOME/agentsync`, or
   `$AGENTSYNC_CONFIG_DIR`) with mode `0600`, and sent as `Authorization: Bearer`. The CLI
   sends no Origin header and no cookies, which is what lets it past the server's CSRF check.
-- **Agents.** Claude Code is detected by `~/.claude` (or `$CLAUDE_CONFIG_DIR`), Codex by
-  `~/.codex` (or `$CODEX_HOME`), pi by `~/.pi/agent` (or `$PI_CODING_AGENT_DIR`), OpenCode
-  by `~/.config/opencode` (or `$OPENCODE_CONFIG_DIR`, else `$XDG_CONFIG_HOME/opencode`, as
-  OpenCode itself resolves it). `--target <agent>=<path>` adds a Target for any other
-  agent. Targets are stored on the server as `~/…`, so they read the same on every Machine.
+- **Agents.** Claude Code is detected by `~/.claude`, `$CLAUDE_CONFIG_DIR`, sibling
+  `~/.claude*` config directories (such as `~/.claude_personal`) that contain Claude Code
+  files, and Claude Code provider instances configured in `~/.t3/userdata/settings.json`;
+  each instance gets its own Target, `SessionStart` hook, bundled skills and account Skills.
+  Codex is detected by `~/.codex` (or `$CODEX_HOME`), pi by `~/.pi/agent` (or
+  `$PI_CODING_AGENT_DIR`), OpenCode by `~/.config/opencode` (or `$OPENCODE_CONFIG_DIR`,
+  else `$XDG_CONFIG_HOME/opencode`, as OpenCode itself resolves it), and Antigravity by
+  `~/.gemini/config` (or `~/.gemini/antigravity*`). `--target <agent>=<path>` adds a Target
+  for any other agent (or another Claude Code directory, e.g.
+  `claude=~/work/claude/CLAUDE.md`). Targets are stored on the server as `~/…`, so they read
+  the same on every Machine.
   A Target path must be absolute or start with `~/`: hooks run in whatever project the
   agent opens, so a relative path would mean a different file each time. `sync` skips one
   (set from elsewhere) with a warning.
@@ -105,38 +112,42 @@ and without `--yes`, `--json` or `--hook`. Prompts and spinners go to stderr; re
   `<SERVER_URL>` in it with the server's origin, and every `<INSTALL_DIR>` with the folder to
   clone into.
 - **Hand-off.** At a terminal, Drift and Conflicts can be handed to an agent: the CLI
-  starts `claude`, `codex`, `pi` or `opencode` with a prompt (`opencode --prompt`, since its
-  bare argument is a project directory). Your choice is remembered per Machine.
+  starts `claude`, `codex`, `pi`, `opencode` or `agy` with a prompt (`opencode --prompt`,
+  since its bare argument is a project directory, and `agy --prompt-interactive`). Your
+  choice is remembered per Machine.
 
 ## Skills
 
 A Skill is an agent skill from a public GitHub repository, added on the dashboard and pinned
 there to an exact commit (see `GLOSSARY.md` and `docs/adr/0002-…`). The CLI installs it with the
 official [`skills`](https://github.com/vercel-labs/skills) CLI, at the exact version this package
-depends on (1.7.4, locked by the pnpm lockfile). It runs that package's own bin with this Node,
+depends on (1.9.0, locked by the pnpm lockfile). It runs that package's own bin with this Node,
 never `npx skills`, which would fetch the newest from npm on every run. Arguments go in an
 array, never through a shell, and names, `owner/repo` and SHAs are checked first, so none can
 start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
 `core.autocrlf=false` for its clone, so checked-out bytes match GitHub's.
 
 - **Installing.** `skills sync` runs `skills add <owner/repo>#<commit> --skill <names…> -g -a <agents> -y --json`,
-  once per repository and commit. The agents are those the Machine has Targets for (`claude` →
-  `claude-code`, `codex`, `pi`, `opencode`). The canonical copy goes to `~/.agents/skills/<name>`, with a
-  symlink for Claude Code; with Claude Code alone, a copy in its `skills/` directory.
+  once per repository and commit (plus one extra `skills add -g -a claude-code` per additional
+  Claude Code instance with `CLAUDE_CONFIG_DIR` set). The agents are those the Machine has Targets
+  for (`claude` → `claude-code`, `codex`, `pi`, `opencode`, `antigravity`). The canonical copy goes
+  to `~/.agents/skills/<name>`, with symlinks for each Claude Code instance's `skills/` directory
+  and Antigravity's `~/.gemini/config/skills/`.
 - **Ownership.** `skills` itself replaces any folder silently, so AgentSync keeps its own record in
   `skills.json` beside the config: each Skill it installed or adopted, with its Pin, the
-  repositories its lock entry may name, and which of the two skills directories hold its copies.
+  repositories its lock entry may name, and which skills directories hold its copies.
   It installs only where nothing is, and updates or removes a Skill only while every copy of the
   name is in a directory it recorded, the lock still names that repository, and the copies still
   hash to the Pin it installed. Anything else blocks the Skill, even with `--overwrite`. A copy
   from the Skill's own repository (by the `skills` lock) that is exactly the Pin, such as one
-  installed with `npx skills add`, is adopted without reinstalling. When a Machine gains an agent,
-  the copy that agent needs is added. One `skills sync` runs at a time (a lock file), and each
-  `skills add` is planned again from the disk just before it runs.
+  installed with `npx skills add`, is adopted without reinstalling. When a Machine gains an agent
+  or Claude Code instance, the copy it needs is added. One `skills sync` runs at a time (a lock
+  file), and each `skills add` is planned again from the disk just before it runs.
 - **Skill Drift.** A folder is hashed on disk as git would (a tree hash), leaving out what
   `skills` never copies (`metadata.json`, `.git`, `__pycache__`, `__pypackages__`), and compared
   with the Pin's installed hash from the server. The lock's own hash is never trusted.
-- **Removing.** `skills remove … -g -y -a claude-code codex pi` removes every copy, so AgentSync
+- **Removing.** `skills remove … -g -y -a claude-code codex pi antigravity` (plus `-a claude-code`
+  with `CLAUDE_CONFIG_DIR` for any additional Claude Code instance) removes every copy, so AgentSync
   only asks it to remove its own undrifted copies, and checks the disk afterwards. Never
   `-a opencode`: `skills remove` also deletes the name from each agent's own global directory, and
   OpenCode's (`~/.config/opencode/skills`) holds the person's skills, not AgentSync's. `skills` keeps
@@ -146,16 +157,17 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
   keeps that record; one `skills` wrote only part of is AgentSync's and the next sync finishes it.
 - **Reporting.** `skills sync` and `init` send a scan and their results to the server; `agentsync
   sync` and the hook only say what `skills sync` would do. The scan
-  lists every skill folder with a `SKILL.md` in `~/.agents/skills` and Claude Code's `skills/`
-  (not the CLI's own skills, `RESERVED_SKILL_NAMES`): name, the lock's GitHub source and ref, and the folder hash for
-  ones from the lock. A hand-written folder is sent by name only. File contents are never sent.
+  lists every skill folder with a `SKILL.md` in `~/.agents/skills`, every Claude Code instance's
+  `skills/` directory, and `~/.gemini/config/skills` (not the CLI's own skills, `RESERVED_SKILL_NAMES`):
+  name, the lock's GitHub source and ref, and the folder hash for ones from the lock. A hand-written
+  folder is sent by name only. File contents are never sent.
 
 ## Hooks
 
 `init` adds a hook that runs `agentsync sync --hook <agent>` when a session starts:
 
-- Claude Code: a `SessionStart` hook in `~/.claude/settings.json`. Existing settings and
-  hooks are kept.
+- Claude Code: a `SessionStart` hook in `~/.claude/settings.json` (and any additional Claude Code
+  instance's `settings.json`). Existing settings and hooks are kept.
 - Codex: a `SessionStart` hook in `~/.codex/hooks.json`. Codex skips a new hook until you
   trust it once: open Codex and run `/hooks`.
 - pi: an extension, `~/.pi/agent/extensions/agentsync.ts`, since pi has no hook config.
@@ -167,6 +179,8 @@ start with `-`. It runs with `DISABLE_TELEMETRY=1`, `GIT_TERMINAL_PROMPT=0` and
   starts in a project, not for each session, and waits for it with the same 10-second limit.
   One file serves OpenCode 1.x (`opencode-ai`, which calls the default export's `server`) and
   2.x (`@opencode/cli`, which calls its `setup`); each ignores the other's.
+- Antigravity: a flat `SessionStart` handler under the `"agentsync"` named hook in
+  `~/.gemini/config/hooks.json`. Other named hooks and handlers are kept.
 
 The hook command is `agentsync` when the CLI is installed on `PATH`, otherwise the
 absolute Node and script path (`npx`'s temporary directory does not count). The config
@@ -184,10 +198,12 @@ the Template request, within the same 2-second deadline, and sends the scan only
 a day has passed, so the dashboard knows when the Machine last checked in. For Claude Code and Codex the line is wrapped in
 SessionStart JSON: `hookSpecificOutput.additionalContext` carries it to the model, and
 `systemMessage` tells the person what changed and points at `agentsync history` (left out
-when only the model needs to know, e.g. the server was unreachable). The pi extension shows
-the line as a notice and appends it to the system prompt. The OpenCode plugin appends it to
-the system prompt of every request (`experimental.chat.system.transform` in 1.x, which also
-covers its title requests, and the session `context` hook in 2.x).
+when only the model needs to know, e.g. the server was unreachable). For Antigravity, the hook
+prints SessionStart JSON with `injectSteps` (`systemMessage.systemMessage` for the model and
+`systemMessage.metadata.user_markdown` for the person), or `{}` when there is nothing to report.
+The pi extension shows the line as a notice and appends it to the system prompt. The OpenCode plugin
+appends it to the system prompt of every request (`experimental.chat.system.transform` in 1.x, which
+also covers its title requests, and the session `context` hook in 2.x).
 
 ### Does a change apply to the current session? Not for Claude Code or Codex; yes for pi and OpenCode
 
@@ -244,8 +260,9 @@ on upload and when `get` or `pull` writes a file locally.
 `init` installs three skills from `skills/`: `agentsync-instructions` (the Template and its syntax,
 Drift, Conflicts, history and the `AgentSync:` hook lines), `agentsync-skills` (`skills sync` and
 `status`) and `agentsync-spaces` (creating, writing and reading Spaces). Each goes to
-`~/.claude/skills/<name>/` for Claude Code and `~/.agents/skills/<name>/` for Codex, pi and
-OpenCode, which all read it there. The config keeps a SHA-256 of each skill file it writes.
+`<claude-home>/skills/<name>/` for each Claude Code instance, `~/.gemini/config/skills/<name>/`
+for Antigravity, and `~/.agents/skills/<name>/` for Codex, pi and OpenCode, which all read it there.
+The config keeps a SHA-256 of each skill file it writes.
 `init` updates, and `logout` removes, only a file that still matches it. A skill file AgentSync
 did not write, or that was changed since, is left alone with a warning. A symlinked
 `skills/<name>/` directory stays: `logout` removes only the file inside it.

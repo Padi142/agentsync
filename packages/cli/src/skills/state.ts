@@ -1,15 +1,33 @@
 import { closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { CliError, EXIT } from '../exit.js';
 import { readJson, removeFile, writeJson } from '../files.js';
 import type { Io } from '../io.js';
-import { configDir } from '../paths.js';
+import { configDir, expandHome, tildify } from '../paths.js';
 
 /**
- * One of the two global skills directories: `agents` is `~/.agents/skills` (Codex, pi, OpenCode, and the
- * canonical copy), `claude` is Claude Code's `skills/`.
+ * A global skills directory:
+ * - `agents`: `~/.agents/skills` (Codex, pi, OpenCode, and the canonical copy)
+ * - `claude`: `~/.claude/skills` (the default Claude Code instance)
+ * - `claude:<dir>`: `<dir>/skills` (an additional or custom Claude Code instance, e.g. `claude:~/.claude_personal`)
+ * - `antigravity`: `~/.gemini/config/skills` (Antigravity App, CLI and IDE)
  */
-export type Place = 'agents' | 'claude';
+export type Place = 'agents' | 'claude' | 'antigravity' | `claude:${string}`;
+
+export const isClaudePlace = (place: Place): boolean => place === 'claude' || place.startsWith('claude:');
+
+/** The Place key for a Claude Code config directory (`'claude'` for `~/.claude`, else `'claude:<path>'`). */
+export function claudePlace(homeDir: string, io: Io): Place {
+  const defaultClaude = join(io.home, '.claude');
+  if (resolve(homeDir) === resolve(defaultClaude)) return 'claude';
+  return `claude:${tildify(homeDir, io)}`;
+}
+
+/** The Claude Code config directory a Claude Place refers to. */
+export function claudeHomeForPlace(place: Place, io: Io): string {
+  if (place === 'claude') return join(io.home, '.claude');
+  return expandHome(place.slice('claude:'.length), io);
+}
 
 /** A Skill AgentSync installed or adopted, at the Pin it installed, and exactly which folders are its. */
 export interface ManagedSkill {

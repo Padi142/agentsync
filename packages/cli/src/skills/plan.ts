@@ -1,6 +1,8 @@
-import type { DesiredSkill } from '@agentsync/contract';
+import type { DesiredSkill, Target } from '@agentsync/contract';
+import { agentInstances } from '../agents.js';
+import type { Io } from '../io.js';
 import type { Folder } from './scan.js';
-import { recordOf, type ManagedSkill, type Place } from './state.js';
+import { claudePlace, recordOf, type ManagedSkill, type Place } from './state.js';
 
 /**
  * What `skills sync` does with one name:
@@ -28,9 +30,19 @@ export type SkillStep =
 
 const absent: Folder = { present: [], skill: false, hash: null, lockSource: null, lockOther: false };
 
-/** The directories a Skill must be in for these `skills` agents: Claude Code reads its own, Codex, pi and OpenCode `~/.agents/skills`. */
-export function requiredPlaces(agents: readonly string[]): Place[] {
-  return [...(agents.some((agent) => agent !== 'claude-code') ? ['agents' as const] : []), ...(agents.includes('claude-code') ? ['claude' as const] : [])];
+/**
+ * The skills directories a Skill must be in for this Machine's Targets:
+ * each Claude Code instance reads its own `skills/`, Antigravity reads `~/.gemini/config/skills`,
+ * and Codex, pi and OpenCode share `~/.agents/skills`.
+ */
+export function requiredPlaces(targets: readonly Target[], io: Io): Place[] {
+  const places = new Set<Place>();
+  for (const { agent, homeDir } of agentInstances(targets, io)) {
+    if (agent.id === 'claude') places.add(claudePlace(homeDir, io));
+    else if (agent.id === 'antigravity') places.add('antigravity');
+    else places.add('agents');
+  }
+  return [...places];
 }
 
 /** Someone else's: a folder in a directory AgentSync never wrote to, or a lock entry from another source. */

@@ -1,10 +1,11 @@
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { RESERVED_SKILL_NAMES, type ScannedSkill } from '@agentsync/contract';
+import { detectClaudeHomes } from '../agents.js';
 import type { Io } from '../io.js';
 import { writeJson } from '../files.js';
 import { folderHash, HashTimeout } from './hash.js';
-import { recordOf, type ManagedSkill, type Place } from './state.js';
+import { claudeHomeForPlace, claudePlace, isClaudePlace, recordOf, type ManagedSkill, type Place } from './state.js';
 
 /** An entry of the `skills` CLI's global lock (`.skill-lock.json`, version 3). */
 interface LockEntry {
@@ -13,7 +14,7 @@ interface LockEntry {
   ref?: string;
 }
 
-/** What is on disk under one skill name, in both skills directories. */
+/** What is on disk under one skill name, across all scanned skills directories. */
 export interface Folder {
   /** Where anything at all is at `<dir>/<name>`, a folder without a SKILL.md or a dangling link included. */
   present: Place[];
@@ -33,12 +34,37 @@ export interface Scan {
   folders: Map<string, Folder>;
 }
 
-export const PLACES: readonly Place[] = ['agents', 'claude'];
-
-/** A skills directory, resolved exactly as `skills` 1.7.4 resolves it (it trims `CLAUDE_CONFIG_DIR`). */
+/** A skills directory for `place`, matching `skills` 1.9.0's layout. */
 export function skillDir(io: Io, place: Place): string {
   if (place === 'agents') return join(io.home, '.agents', 'skills');
-  return join(io.env.CLAUDE_CONFIG_DIR?.trim() || join(io.home, '.claude'), 'skills');
+  if (place === 'antigravity') return join(io.home, '.gemini', 'config', 'skills');
+  if (isClaudePlace(place)) return join(claudeHomeForPlace(place, io), 'skills');
+  return join(io.home, '.agents', 'skills');
+}
+
+/** Every skills directory to scan: shared `~/.agents/skills`, Antigravity, and every known or detected Claude Code instance. */
+export function scanPlaces(
+  io: Io,
+  managed: Readonly<Record<string, ManagedSkill>>,
+  extraPlaces: readonly Place[] = [],
+): Place[] {
+  const candidates: Place[] = [
+    'agents',
+    'claude',
+    'antigravity',
+    ...detectClaudeHomes(io).map((dir) => claudePlace(dir, io)),
+    ...extraPlaces,
+    ...Object.values(managed).flatMap((record) => record.places),
+  ];
+  const seen = new Set<string>();
+  const unique: Place[] = [];
+  for (const place of candidates) {
+    const key = resolve(skillDir(io, place));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(place);
+  }
+  return unique;
 }
 
 /** Where `skills` keeps its global lock: `$XDG_STATE_HOME/skills/` if set, else `~/.agents/`. */
@@ -58,11 +84,17 @@ const listing = async (dir: string) => (await readdir(dir).catch(() => [] as str
 const exists = (path: string) => lstat(path).then(() => true, () => false);
 const hasSkillMd = (dir: string) => stat(join(dir, 'SKILL.md')).then((found) => found.isFile(), () => false);
 
-/** Look at `name` in both directories; hash its copies only if `wantHash` (a hand-written folder's hash is never needed). */
-async function inspect(io: Io, name: string, wantHash: boolean, deadline?: number): Promise<Pick<Folder, 'present' | 'skill' | 'hash'>> {
+/** Look at `name` in all `places`; hash its copies only if `wantHash` (a hand-written folder's hash is never needed). */
+async function inspect(
+  io: Io,
+  places: readonly Place[],
+  name: string,
+  wantHash: boolean,
+  deadline?: number,
+): Promise<Pick<Folder, 'present' | 'skill' | 'hash'>> {
   const present: Place[] = [];
   const withSkill: string[] = [];
-  for (const place of PLACES) {
+  for (const place of places) {
     const path = join(skillDir(io, place), name);
     if (!(await exists(path))) continue;
     present.push(place);
@@ -81,7 +113,7 @@ async function inspect(io: Io, name: string, wantHash: boolean, deadline?: numbe
 const MAX_REPORTED = 1000;
 
 /**
- * Scan this Machine's skills in-process: read the `skills` lock, list both skills directories and hash
+ * Scan this Machine's skills in-process: read the `skills` lock, list all skills directories and hash
  * the folders that came from the lock or that AgentSync manages. `names` are looked at even if absent
  * (the Skills this Machine should have); with `only`, nothing else is. A folder without a SKILL.md is
  * not reported (Claude Code keeps its own `synced/` there), and neither are the CLI's own
@@ -91,10 +123,11 @@ export async function scanSkills(
   io: Io,
   managed: Readonly<Record<string, ManagedSkill>>,
   names: Iterable<string> = [],
-  { deadline, only = false }: { deadline?: number; only?: boolean } = {},
+  { deadline, only = false, places: extraPlaces = [] }: { deadline?: number; only?: boolean; places?: readonly Place[] } = {},
 ): Promise<Scan> {
+  const places = scanPlaces(io, managed, extraPlaces);
   const lock = await readLock(io);
-  const listed = only ? [] : [...(await Promise.all(PLACES.map((place) => listing(skillDir(io, place))))).flat(), ...Object.keys(managed)];
+  const listed = only ? [] : [...(await Promise.all(places.map((place) => listing(skillDir(io, place))))).flat(), ...Object.keys(managed)];
   const all = new Set([...listed, ...names]);
   for (const name of RESERVED_SKILL_NAMES) all.delete(name);
   const folders = new Map<string, Folder>();
@@ -104,7 +137,7 @@ export async function scanSkills(
     const entry = Object.hasOwn(lock, name) ? lock[name] : undefined;
     const source = entry?.sourceType === 'github' && typeof entry.source === 'string' ? entry.source : null;
     const isManaged = recordOf(managed, name) !== undefined;
-    const { present, skill, hash } = await inspect(io, name, source !== null || isManaged, deadline);
+    const { present, skill, hash } = await inspect(io, places, name, source !== null || isManaged, deadline);
     folders.set(name, { present, skill, hash, lockSource: source?.toLowerCase() ?? null, lockOther: entry !== undefined && source === null });
     if (!skill || items.length >= MAX_REPORTED) continue;
     items.push({

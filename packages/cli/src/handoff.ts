@@ -11,7 +11,7 @@ async function handoffAgent(ctx: Context): Promise<string> {
       ? candidates[0]!.id
       : await ctx.select(
           'Which agent should take over? AgentSync remembers this choice.',
-          candidates.map((agent) => ({ value: agent.id, label: agent.name, hint: `runs \`${agent.id}\`` })),
+          candidates.map((agent) => ({ value: agent.id, label: agent.name, hint: `runs \`${agent.command}\`` })),
           candidates[0]!.id,
         );
   ctx.config.handoffAgent = agent;
@@ -22,6 +22,7 @@ async function handoffAgent(ctx: Context): Promise<string> {
 /** Start this Machine's chosen agent in the terminal with `prompt`, and wait for it. */
 export async function handOff(ctx: Context, prompt: string): Promise<void> {
   const agent = await handoffAgent(ctx);
-  ctx.say(`Starting ${agent}…`);
-  await ctx.io.launchAgent(agent, findAgent(agent)?.launchArgs(prompt) ?? [prompt]);
+  const found = findAgent(agent);
+  ctx.say(`Starting ${found?.name ?? agent}…`);
+  await ctx.io.launchAgent(found?.command ?? agent, found?.launchArgs(prompt) ?? [prompt]);
 }

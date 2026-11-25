@@ -259,6 +259,100 @@ describe('init', () => {
     expect(existsSync(join(dir, 'plugins', 'agentsync.ts'))).toBe(true);
   });
 
+  it('sets up Antigravity with AGENTS.md, hooks.json and skills under ~/.gemini/config, and cleans up on logout', async () => {
+    const t = setup();
+    mkdirSync(t.path('.gemini/antigravity-cli'), { recursive: true });
+    t.write('.gemini/config/hooks.json', JSON.stringify({ other: { Stop: [{ type: 'command', command: './done.sh' }] } }));
+
+    const result = await t.cli('init', '--yes', '--json', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([{ path: '~/.gemini/config/AGENTS.md', agent: 'antigravity' }]);
+    const hooks = JSON.parse(readFileSync(t.path('.gemini/config/hooks.json'), 'utf8'));
+    expect(hooks).toEqual({
+      other: { Stop: [{ type: 'command', command: './done.sh' }] },
+      agentsync: { SessionStart: [{ type: 'command', command: 'agentsync sync --hook antigravity', timeout: 10 }] },
+    });
+    for (const name of SKILLS) {
+      expect(readFileSync(t.path(`.gemini/config/skills/${name}/SKILL.md`), 'utf8')).toContain(`name: ${name}\n`);
+    }
+
+    const out = await t.cli('logout', '--json');
+    expect(out.code).toBe(0);
+    expect(JSON.parse(readFileSync(t.path('.gemini/config/hooks.json'), 'utf8'))).toEqual({
+      other: { Stop: [{ type: 'command', command: './done.sh' }] },
+    });
+    for (const name of SKILLS) {
+      expect(existsSync(t.path(`.gemini/config/skills/${name}/SKILL.md`))).toBe(false);
+    }
+  });
+
+  it('does not treat a bare ~/.gemini directory (Gemini CLI only) as Antigravity', async () => {
+    const t = setup();
+    mkdirSync(t.path('.gemini'));
+    mkdirSync(t.path('.claude'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([{ path: '~/.claude/CLAUDE.md', agent: 'claude' }]);
+  });
+
+  it('detects multiple Claude Code instances (sibling ~/.claude* and T3 Code homePath) and installs hooks and skills in each', async () => {
+    const t = setup();
+    mkdirSync(t.path('.claude'));
+    t.write('.claude_personal/settings.json', JSON.stringify({ theme: 'dark' }));
+    // Unrelated ~/.claude* directory with no Claude Code markers is ignored.
+    mkdirSync(t.path('.claude-unrelated'));
+    // A T3 Code configured Claude Code instance outside ~/.claude*.
+    mkdirSync(t.path('work-claude'));
+    t.write(
+      '.t3/userdata/settings.json',
+      JSON.stringify({
+        providerInstances: {
+          claudeAgent_2: { driver: 'claudeAgent', enabled: true, config: { homePath: '~/.claude_personal' } },
+          claudeAgent_work: { driver: 'claudeAgent', enabled: true, config: { homePath: '~/work-claude' } },
+          claudeAgent_disabled: { driver: 'claudeAgent', enabled: false, config: { homePath: '~/disabled-claude' } },
+        },
+      }),
+    );
+    mkdirSync(t.path('disabled-claude'));
+    t.server.putTemplate('# Shared rules\n');
+
+    const result = await t.cli('init', '--yes', '--json', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([
+      { path: '~/.claude/CLAUDE.md', agent: 'claude' },
+      { path: '~/.claude_personal/CLAUDE.md', agent: 'claude' },
+      { path: '~/work-claude/CLAUDE.md', agent: 'claude' },
+    ]);
+    for (const dir of ['.claude', '.claude_personal', 'work-claude']) {
+      expect(readFileSync(t.path(`${dir}/CLAUDE.md`), 'utf8')).toBe('# Shared rules\n');
+      const settings = JSON.parse(readFileSync(t.path(`${dir}/settings.json`), 'utf8'));
+      expect(settings.hooks.SessionStart).toEqual([
+        { hooks: [{ type: 'command', command: 'agentsync sync --hook claude', timeout: 10 }] },
+      ]);
+      for (const name of SKILLS) {
+        expect(readFileSync(t.path(`${dir}/skills/${name}/SKILL.md`), 'utf8')).toContain(`name: ${name}\n`);
+      }
+    }
+    expect(JSON.parse(readFileSync(t.path('.claude_personal/settings.json'), 'utf8')).theme).toBe('dark');
+
+    // Logout removes hooks and bundled skills from every instance.
+    expect((await t.cli('logout')).code).toBe(0);
+    for (const dir of ['.claude', '.claude_personal', 'work-claude']) {
+      const settings = JSON.parse(readFileSync(t.path(`${dir}/settings.json`), 'utf8'));
+      expect(settings.hooks).toBeUndefined();
+      for (const name of SKILLS) {
+        expect(existsSync(t.path(`${dir}/skills/${name}/SKILL.md`))).toBe(false);
+      }
+    }
+  });
+
   it('leaves a pi extension AgentSync did not write alone, and says so', async () => {
     const t = setup();
     t.write('.pi/agent/extensions/agentsync.ts', 'export default function () {}\n');

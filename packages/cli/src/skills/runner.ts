@@ -1,3 +1,4 @@
+import { join, resolve } from 'node:path';
 import { gitShaSchema, repoNameSchema, skillNameSchema } from '@agentsync/contract';
 import type { Agent } from '../agents.js';
 import type { Context } from '../context.js';
@@ -25,11 +26,19 @@ const lastLine = (text: string) => text.trim().split('\n').filter(Boolean).at(-1
  * Install `names` from `repo` at `commit` for `agents` in one `skills add` (one clone). Returns each
  * name's outcome as `skills` reports it: `installed`, or an error to show. The caller checks the disk.
  */
-export async function addSkills(ctx: Context, repo: string, commit: string, names: readonly string[], agents: readonly string[]) {
+export async function addSkills(
+  ctx: Context,
+  repo: string,
+  commit: string,
+  names: readonly string[],
+  agents: readonly string[],
+  env?: Record<string, string>,
+) {
   checked(repo, commit, names);
-  const { code, stdout, stderr } = await ctx.io.runSkills([
-    'add', `${repo}#${commit}`, '--skill', ...names, '-g', '-a', ...agents, '-y', '--json',
-  ]);
+  const { code, stdout, stderr } = await ctx.io.runSkills(
+    ['add', `${repo}#${commit}`, '--skill', ...names, '-g', '-a', ...agents, '-y', '--json'],
+    env,
+  );
   let results: AddResult[] = [];
   try {
     const parsed: unknown = JSON.parse(stdout);
@@ -47,17 +56,27 @@ export async function addSkills(ctx: Context, repo: string, commit: string, name
 }
 
 /**
- * The `skills` agents whose global directory is one AgentSync manages: `~/.agents/skills` and Claude
- * Code's `skills/`. `skills remove -a` deletes `<name>` from each agent's global directory, so OpenCode,
- * whose own is `~/.config/opencode/skills` (the person's, never AgentSync's), must not be one of them.
+ * The `skills` agents whose global directory is one AgentSync manages: `~/.agents/skills`, Claude
+ * Code's `skills/`, and Antigravity's `~/.gemini/config/skills`. `skills remove -a` deletes `<name>`
+ * from each agent's global directory, so OpenCode, whose own is `~/.config/opencode/skills` (the
+ * person's, never AgentSync's), must not be one of them.
  */
-const REMOVE_AGENTS = ['claude-code', 'codex', 'pi'] as const satisfies readonly Agent['skillsAgent'][];
+const REMOVE_AGENTS = ['claude-code', 'codex', 'pi', 'antigravity'] as const satisfies readonly Agent['skillsAgent'][];
 
 /**
- * Remove `names` with `skills remove`, from both directories AgentSync manages, so no copy of them is left.
+ * Remove `names` with `skills remove` from every managed directory, including any additional Claude Code
+ * instance directories (`extraClaudeHomes`), so no copy of them is left.
  * It always exits 0 and has no `--json`: the caller checks the disk afterwards.
  */
-export async function removeSkills(ctx: Context, names: readonly string[]) {
+export async function removeSkills(ctx: Context, names: readonly string[], extraClaudeHomes: readonly string[] = []) {
   for (const name of names) if (!skillNameSchema.safeParse(name).success) throw new Error(`"${name}" is not a valid Skill name.`);
-  await ctx.io.runSkills(['remove', ...names, '-g', '-y', '-a', ...REMOVE_AGENTS]);
+  const defaultClaude = join(ctx.io.home, '.claude');
+  await ctx.io.runSkills(['remove', ...names, '-g', '-y', '-a', ...REMOVE_AGENTS], { CLAUDE_CONFIG_DIR: defaultClaude });
+  const seen = new Set([resolve(defaultClaude)]);
+  for (const homeDir of extraClaudeHomes) {
+    const key = resolve(homeDir);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    await ctx.io.runSkills(['remove', ...names, '-g', '-y', '-a', 'claude-code'], { CLAUDE_CONFIG_DIR: homeDir });
+  }
 }

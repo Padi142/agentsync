@@ -17,7 +17,7 @@ The session-start hook only reports waiting Skills (`N Skills to install, M upda
 Branch on the exit code of `skills sync`:
 
 - **0**: done.
-- **3**: something was left alone. A `blocked` Skill has a folder of its name that AgentSync didn't install (`~/.agents/skills/<name>` or `~/.claude/skills/<name>`), or one the `skills` lock says came from another repository; the user moves or renames it, and the folder stays until they say otherwise. `--overwrite` doesn't touch it. A `drifted` Skill was edited by hand: ask before running `agentsync skills sync --json --overwrite`, which replaces it (or removes it, if this Machine shouldn't have it).
+- **3**: something was left alone. A `blocked` Skill has a folder of its name that AgentSync didn't install (`~/.agents/skills/<name>`, a Claude Code instance's `skills/<name>`, or `~/.gemini/config/skills/<name>`), or one the `skills` lock says came from another repository; the user moves or renames it, and the folder stays until they say otherwise. `--overwrite` doesn't touch it. A `drifted` Skill was edited by hand: ask before running `agentsync skills sync --json --overwrite`, which replaces it (or removes it, if this Machine shouldn't have it).
 - **1**: an install failed; `error` says why.
 - **5**: the Machine is not registered or was revoked: `agentsync init`.
 
