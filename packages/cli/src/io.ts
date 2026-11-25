@@ -53,9 +53,9 @@ export interface Io {
   sleep(ms: number): Promise<void>;
   /**
    * Run the pinned `skills` CLI with `args` (an argument array, never a shell), with no terminal and
-   * telemetry off, and collect its output.
+   * telemetry off, and collect its output. `env` overrides environment variables (such as `CLAUDE_CONFIG_DIR`).
    */
-  runSkills(args: string[]): Promise<{ code: number; stdout: string; stderr: string }>;
+  runSkills(args: string[], env?: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }>;
   /** The shell command that runs this CLI, written into agent hooks. */
   self: string;
 }

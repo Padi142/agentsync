@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import type { Target } from '@agentsync/contract';
 import { run } from '../src/cli.js';
 import type { Io } from '../src/io.js';
@@ -10,16 +10,19 @@ import { fakeServer } from './fake-server.js';
 type SkillFiles = Record<string, string>;
 
 /**
- * A fake of the `skills` CLI with the behaviour the prototype measured for 1.7.4: `add` silently
- * replaces whatever is there, puts the canonical copy in ~/.agents/skills with a Claude Code symlink
- * (or a plain copy when Claude Code is the only agent), and records the lock; `remove` deletes every
- * copy and lock entry, managed or not, and always exits 0.
+ * A fake of the `skills` CLI with the behaviour of 1.9.0: `add` silently replaces whatever is there,
+ * puts the canonical copy in ~/.agents/skills with symlinks for Claude Code (at $CLAUDE_CONFIG_DIR or
+ * ~/.claude) and Antigravity (~/.gemini/config/skills), or a plain copy when Claude Code is the only
+ * agent, and records the lock; `remove` deletes every copy for the asked agents and always exits 0.
  */
 function fakeSkills(home: string) {
   const published = new Map<string, Map<string, SkillFiles>>();
   const calls: string[][] = [];
+  const invocations: { args: string[]; env?: Record<string, string> }[] = [];
   /** Names whose next `add` writes the canonical copy, then fails before Claude Code's link. */
   const failHalfway = new Set<string>();
+  /** Claude config dirs whose next `add` fails without touching disk. */
+  const failClaudeHome = new Set<string>();
   const lockFile = join(home, '.agents', '.skill-lock.json');
   const lock = () => {
     try {
@@ -39,22 +42,31 @@ function fakeSkills(home: string) {
       writeFileSync(join(dir, path), text);
     }
   };
+  const linkTo = (linkPath: string, target: string) => {
+    rmSync(linkPath, { recursive: true, force: true });
+    mkdirSync(dirname(linkPath), { recursive: true });
+    symlinkSync(relative(dirname(linkPath), target), linkPath);
+  };
 
-  async function run(args: string[]) {
+  async function run(args: string[], env?: Record<string, string>) {
     calls.push(args);
+    invocations.push({ args, ...(env ? { env } : {}) });
     const [command, ...rest] = args;
     const agentsAt = rest.indexOf('-a');
     const agents = agentsAt < 0 ? [] : rest.slice(agentsAt + 1).filter((arg) => !arg.startsWith('-'));
+    const claudeHome = env?.CLAUDE_CONFIG_DIR?.trim() || join(home, '.claude');
     if (command === 'remove') {
       const names = rest.slice(0, rest.findIndex((arg) => arg.startsWith('-')));
       const current = lock();
       // Like `skills`, keep the shared ~/.agents/skills copy (and its lock entry) while another agent it
       // knows, but wasn't asked about, reads that directory: here, Cursor.
       const shared = existsSync(join(home, '.cursor'));
+      const hasSharedAgent = agents.some((agent) => agent !== 'claude-code' && agent !== 'antigravity');
       for (const name of names) {
-        if (!shared) rmSync(join(home, '.agents', 'skills', name), { recursive: true, force: true });
-        rmSync(join(home, '.claude', 'skills', name), { recursive: true, force: true });
-        if (!shared) delete current.skills[name];
+        if (!shared && hasSharedAgent) rmSync(join(home, '.agents', 'skills', name), { recursive: true, force: true });
+        if (agents.includes('claude-code')) rmSync(join(claudeHome, 'skills', name), { recursive: true, force: true });
+        if (agents.includes('antigravity')) rmSync(join(home, '.gemini', 'config', 'skills', name), { recursive: true, force: true });
+        if (!shared && hasSharedAgent) delete current.skills[name];
       }
       saveLock(current);
       return { code: 0, stdout: '', stderr: '' };
@@ -66,18 +78,26 @@ function fakeSkills(home: string) {
     const results = names.map((name) => {
       const files = published.get(`${repo}#${commit}`)?.get(name);
       if (!files) return { name, status: 'skipped', reason: 'No matching skill found in source' };
+      if (agents.includes('claude-code') && failClaudeHome.delete(claudeHome)) {
+        return { name, status: 'failed', error: `EACCES: ${claudeHome}` };
+      }
       const canonical = join(home, '.agents', 'skills', name);
-      const claude = join(home, '.claude', 'skills', name);
-      if (agents.some((agent) => agent !== 'claude-code')) {
+      const claude = join(claudeHome, 'skills', name);
+      const antigravity = join(home, '.gemini', 'config', 'skills', name);
+      // In skills 1.9.0, symlink mode is chosen only when agents have >1 distinct project `skillsDir`,
+      // i.e. claude-code (`.claude/skills`) paired with any `.agents/skills` agent (codex/pi/opencode/antigravity).
+      // Other combinations (including antigravity alone or codex+antigravity) use independent copies.
+      const usesSymlink = agents.includes('claude-code') && agents.some((agent) => agent !== 'claude-code');
+      const hasUniversal = agents.some((agent) => agent !== 'claude-code' && agent !== 'antigravity');
+      if (usesSymlink) {
         writeFolder(canonical, files);
         if (failHalfway.delete(name)) return { name, status: 'failed', error: 'EACCES: Claude Code link' };
-        if (agents.includes('claude-code')) {
-          rmSync(claude, { recursive: true, force: true });
-          mkdirSync(dirname(claude), { recursive: true });
-          symlinkSync(join('..', '..', '.agents', 'skills', name), claude);
-        }
+        linkTo(claude, canonical);
+        if (agents.includes('antigravity')) linkTo(antigravity, canonical);
       } else {
-        writeFolder(claude, files);
+        if (hasUniversal) writeFolder(canonical, files);
+        if (agents.includes('claude-code')) writeFolder(claude, files);
+        if (agents.includes('antigravity')) writeFolder(antigravity, files);
       }
       current.skills[name] = { source: repo, sourceType: 'github', ref: commit, skillFolderHash: 'x'.repeat(40) };
       return { name, status: 'installed', source: repo, ref: commit };
@@ -95,8 +115,10 @@ function fakeSkills(home: string) {
 
   return {
     calls,
+    invocations,
     run,
     failHalfway,
+    failClaudeHome,
     lockSource,
     /** Make `name` installable from `repo` at `commit`, and return its installed hash (the Pin's). */
     async publish(repo: string, commit: string, name: string, files: SkillFiles) {
@@ -167,7 +189,7 @@ export function setup(options: { env?: Record<string, string> } = {}) {
       },
       launchAgent: async (agent, args) => void launched.push({ agent, args }),
       sleep: async (ms) => void sleeps.push(ms),
-      runSkills: (args) => skills.run(args),
+      runSkills: (args, env) => skills.run(args, env),
       self: 'agentsync',
     };
     const code = await run(args, io);

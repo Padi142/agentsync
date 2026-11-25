@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { opencodePlugin, piExtension, withHook, withoutHook } from '../src/hooks.js';
+import { opencodePlugin, piExtension, withAntigravityHook, withHook, withoutAntigravityHook, withoutHook } from '../src/hooks.js';
 
 const ours = { type: 'command', command: 'agentsync sync --hook claude', timeout: 10 } as const;
 const ourGroup = { hooks: [ours] };
@@ -86,6 +86,42 @@ describe('withoutHook', () => {
 
     expect(withoutHook(settings, ours)).toEqual(settings);
     expect(withoutHook({}, ours)).toEqual({});
+  });
+});
+
+describe('Antigravity hooks.json', () => {
+  const agyOurs = { type: 'command', command: 'agentsync sync --hook antigravity', timeout: 10 } as const;
+  const otherHook = { PostToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: './lint.sh' }] }] };
+  const customStart = { type: 'command', command: './my-init.sh' };
+
+  it('adds a flat SessionStart handler under "agentsync" and keeps other named hooks', () => {
+    expect(withAntigravityHook({}, agyOurs)).toEqual({ agentsync: { SessionStart: [agyOurs] } });
+    expect(withAntigravityHook({ 'lint-checker': otherHook }, agyOurs)).toEqual({
+      'lint-checker': otherHook,
+      agentsync: { SessionStart: [agyOurs] },
+    });
+  });
+
+  it('is idempotent and replaces the previous handler it installed', () => {
+    const once = withAntigravityHook({ agentsync: { SessionStart: [customStart] } }, agyOurs);
+    expect(withAntigravityHook(once, agyOurs)).toEqual(once);
+
+    const previous = { type: 'command', command: "'/old/node' '/old/index.js' sync --hook antigravity", timeout: 10 } as const;
+    expect(withAntigravityHook(withAntigravityHook({}, previous), agyOurs, previous)).toEqual({
+      agentsync: { SessionStart: [agyOurs] },
+    });
+  });
+
+  it('removes only the unchanged handler AgentSync installed and drops empty sections', () => {
+    const config = withAntigravityHook({ 'lint-checker': otherHook }, agyOurs);
+    expect(withoutAntigravityHook(config, agyOurs)).toEqual({ 'lint-checker': otherHook });
+    expect(withoutAntigravityHook(withAntigravityHook({}, agyOurs), agyOurs)).toEqual({});
+
+    const shared = { agentsync: { enabled: true, SessionStart: [customStart, agyOurs] } };
+    expect(withoutAntigravityHook(shared, agyOurs)).toEqual({ agentsync: { enabled: true, SessionStart: [customStart] } });
+
+    const edited = { agentsync: { SessionStart: [{ ...agyOurs, timeout: 30 }] } };
+    expect(withoutAntigravityHook(edited, agyOurs)).toEqual(edited);
   });
 });
 

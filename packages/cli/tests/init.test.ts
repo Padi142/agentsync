@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -257,6 +257,139 @@ describe('init', () => {
     expect((await custom.cli('init', '--yes', '--server', custom.server.url)).code).toBe(0);
     expect([...custom.server.state.machines.values()][0]!.targets).toEqual([{ path: join(dir, 'AGENTS.md'), agent: 'opencode' }]);
     expect(existsSync(join(dir, 'plugins', 'agentsync.ts'))).toBe(true);
+  });
+
+  it('sets up Antigravity with AGENTS.md, hooks.json and skills under ~/.gemini/config, and cleans up on logout', async () => {
+    const t = setup();
+    mkdirSync(t.path('.gemini/antigravity-cli'), { recursive: true });
+    t.write('.gemini/config/hooks.json', JSON.stringify({ other: { Stop: [{ type: 'command', command: './done.sh' }] } }));
+
+    const result = await t.cli('init', '--yes', '--json', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([{ path: '~/.gemini/config/AGENTS.md', agent: 'antigravity' }]);
+    const hooks = JSON.parse(readFileSync(t.path('.gemini/config/hooks.json'), 'utf8'));
+    expect(hooks).toEqual({
+      other: { Stop: [{ type: 'command', command: './done.sh' }] },
+      agentsync: { SessionStart: [{ type: 'command', command: 'agentsync sync --hook antigravity', timeout: 10 }] },
+    });
+    for (const name of SKILLS) {
+      expect(readFileSync(t.path(`.gemini/config/skills/${name}/SKILL.md`), 'utf8')).toContain(`name: ${name}\n`);
+    }
+
+    const out = await t.cli('logout', '--json');
+    expect(out.code).toBe(0);
+    expect(JSON.parse(readFileSync(t.path('.gemini/config/hooks.json'), 'utf8'))).toEqual({
+      other: { Stop: [{ type: 'command', command: './done.sh' }] },
+    });
+    for (const name of SKILLS) {
+      expect(existsSync(t.path(`.gemini/config/skills/${name}/SKILL.md`))).toBe(false);
+    }
+  });
+
+  it('does not treat a bare ~/.gemini directory (Gemini CLI only) as Antigravity', async () => {
+    const t = setup();
+    mkdirSync(t.path('.gemini'));
+    mkdirSync(t.path('.claude'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([{ path: '~/.claude/CLAUDE.md', agent: 'claude' }]);
+  });
+
+  it('detects multiple Claude Code instances (sibling ~/.claude* and T3 Code homePath) and installs hooks and skills in each', async () => {
+    const t = setup();
+    mkdirSync(t.path('.claude'));
+    t.write('.claude_personal/settings.json', JSON.stringify({ theme: 'dark' }));
+    // Unrelated ~/.claude* directory with no Claude Code markers is ignored.
+    mkdirSync(t.path('.claude-unrelated'));
+    // A T3 Code configured Claude Code instance outside ~/.claude*.
+    mkdirSync(t.path('work-claude'));
+    t.write(
+      '.t3/userdata/settings.json',
+      JSON.stringify({
+        providerInstances: {
+          claudeAgent_2: { driver: 'claudeAgent', enabled: true, config: { homePath: '~/.claude_personal' } },
+          claudeAgent_work: { driver: 'claudeAgent', enabled: true, config: { homePath: '~/work-claude' } },
+          claudeAgent_disabled: { driver: 'claudeAgent', enabled: false, config: { homePath: '~/disabled-claude' } },
+        },
+      }),
+    );
+    mkdirSync(t.path('disabled-claude'));
+    t.server.putTemplate('# Shared rules\n');
+
+    const result = await t.cli('init', '--yes', '--json', '--server', t.server.url);
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([
+      { path: '~/.claude/CLAUDE.md', agent: 'claude' },
+      { path: '~/.claude_personal/CLAUDE.md', agent: 'claude' },
+      { path: '~/work-claude/CLAUDE.md', agent: 'claude' },
+    ]);
+    for (const dir of ['.claude', '.claude_personal', 'work-claude']) {
+      expect(readFileSync(t.path(`${dir}/CLAUDE.md`), 'utf8')).toBe('# Shared rules\n');
+      const settings = JSON.parse(readFileSync(t.path(`${dir}/settings.json`), 'utf8'));
+      expect(settings.hooks.SessionStart).toEqual([
+        { hooks: [{ type: 'command', command: 'agentsync sync --hook claude', timeout: 10 }] },
+      ]);
+      for (const name of SKILLS) {
+        expect(readFileSync(t.path(`${dir}/skills/${name}/SKILL.md`), 'utf8')).toContain(`name: ${name}\n`);
+      }
+    }
+    expect(JSON.parse(readFileSync(t.path('.claude_personal/settings.json'), 'utf8')).theme).toBe('dark');
+
+    // Logout removes hooks and bundled skills from every instance.
+    expect((await t.cli('logout')).code).toBe(0);
+    for (const dir of ['.claude', '.claude_personal', 'work-claude']) {
+      const settings = JSON.parse(readFileSync(t.path(`${dir}/settings.json`), 'utf8'));
+      expect(settings.hooks).toBeUndefined();
+      for (const name of SKILLS) {
+        expect(existsSync(t.path(`${dir}/skills/${name}/SKILL.md`))).toBe(false);
+      }
+    }
+  });
+
+  it('keeps non-Claude hooks in the agent home when a custom --target path is given', async () => {
+    const t = setup();
+    mkdirSync(t.path('dotfiles'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url, '--target', 'codex=~/dotfiles/AGENTS.md');
+
+    expect(result.code).toBe(0);
+    expect(existsSync(t.path('dotfiles/hooks.json'))).toBe(false);
+    expect(JSON.parse(readFileSync(t.path('.codex/hooks.json'), 'utf8'))).toMatchObject({
+      hooks: { SessionStart: [{ hooks: [{ command: 'agentsync sync --hook codex' }] }] },
+    });
+  });
+
+  it('with --agent claude includes a not-yet-existing CLAUDE_CONFIG_DIR even when ~/.claude exists', async () => {
+    const t = setup({ env: { CLAUDE_CONFIG_DIR: '~/brand-new-claude' } });
+    mkdirSync(t.path('.claude'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url, '--agent', 'claude');
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([
+      { path: '~/.claude/CLAUDE.md', agent: 'claude' },
+      { path: '~/brand-new-claude/CLAUDE.md', agent: 'claude' },
+    ]);
+  });
+
+  it('with --agent claude does not duplicate a CLAUDE_CONFIG_DIR symlink pointing at ~/.claude', async () => {
+    const t = setup({ env: { CLAUDE_CONFIG_DIR: '~/claude-alias' } });
+    mkdirSync(t.path('.claude'));
+    symlinkSync(t.path('.claude'), t.path('claude-alias'));
+
+    const result = await t.cli('init', '--yes', '--server', t.server.url, '--agent', 'claude');
+
+    expect(result.code).toBe(0);
+    const [machine] = t.server.state.machines.values();
+    expect(machine!.targets).toEqual([{ path: '~/.claude/CLAUDE.md', agent: 'claude' }]);
   });
 
   it('leaves a pi extension AgentSync did not write alone, and says so', async () => {

@@ -5,7 +5,7 @@ import { removeOwned, writeOwned } from './owned.js';
 
 type Json = Record<string, unknown>;
 
-/** One hook handler, in the shape Claude Code's settings.json and Codex's hooks.json share. */
+/** One hook handler, in the shape Claude Code's settings.json, Codex's hooks.json and Antigravity's hooks.json share. */
 export interface Handler {
   type: string;
   command?: string;
@@ -15,6 +15,9 @@ interface Group {
   matcher?: string;
   hooks?: Handler[];
 }
+
+/** Top-level hook name AgentSync writes into Antigravity's `~/.gemini/config/hooks.json`. */
+const ANTIGRAVITY_HOOK_NAME = 'agentsync';
 
 /**
  * Seconds before the agent gives up on the hook. The CLI itself waits only ~2s for the
@@ -58,6 +61,41 @@ export function withoutHook(settings: Json, handler: Handler): Json {
   const before = ((settings.hooks ?? {}) as Record<string, Group[]>).SessionStart;
   if (!before) return settings;
   return withGroups(settings, groupsWithout(settings, [handler]));
+}
+
+const antigravityEntry = (config: Json): Json => {
+  const value = config[ANTIGRAVITY_HOOK_NAME];
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : {};
+};
+
+const flatWithout = (entry: Json, remove: Handler[]): Handler[] => {
+  const list = Array.isArray(entry.SessionStart) ? (entry.SessionStart as Handler[]) : [];
+  return list.filter((handler) => !remove.some((removed) => same(handler, removed)));
+};
+
+function withAntigravityHandlers(config: Json, handlers: Handler[]): Json {
+  const entry = antigravityEntry(config);
+  const { SessionStart: _, ...entryRest } = entry;
+  const nextEntry: Json = handlers.length ? { ...entryRest, SessionStart: handlers } : entryRest;
+  const { [ANTIGRAVITY_HOOK_NAME]: __, ...rest } = config;
+  return Object.keys(nextEntry).length ? { ...rest, [ANTIGRAVITY_HOOK_NAME]: nextEntry } : rest;
+}
+
+/**
+ * Add `handler` as a flat `SessionStart` handler under the `"agentsync"` named hook in Antigravity's
+ * `hooks.json`, replacing `previous` if it is still there unchanged. Other named hooks and any other
+ * fields or handlers inside `"agentsync"` are kept as they were.
+ */
+export function withAntigravityHook(config: Json, handler: Handler, previous?: Handler): Json {
+  const remove = previous ? [handler, previous] : [handler];
+  return withAntigravityHandlers(config, [...flatWithout(antigravityEntry(config), remove), handler]);
+}
+
+/** Remove `handler` from Antigravity's `"agentsync"` `SessionStart` list if it is there unchanged. */
+export function withoutAntigravityHook(config: Json, handler: Handler): Json {
+  const entry = antigravityEntry(config);
+  if (!Array.isArray(entry.SessionStart)) return config;
+  return withAntigravityHandlers(config, flatWithout(entry, [handler]));
 }
 
 export const hookHandler = (ctx: Context, agent: Agent): Handler => ({
@@ -184,22 +222,23 @@ export default {
 const hookFiles = {
   'pi-extension': piExtension,
   'opencode-plugin': opencodePlugin,
-} satisfies Record<Exclude<Agent['hookKind'], 'json'>, (command: string) => string>;
+} satisfies Record<Exclude<Agent['hookKind'], 'json' | 'antigravity-json'>, (command: string) => string>;
 
 /**
- * Install the hook into `agent`'s config and remember exactly what was written. Returns false
- * when a hook file was left alone because someone wrote or changed it.
+ * Install the hook into `agent`'s config (at `homeDir`, or its default home) and remember exactly
+ * what was written. Returns false when a hook file was left alone because someone wrote or changed it.
  */
-export function installHook(ctx: Context, agent: Agent): boolean {
-  const file = agent.hooksFile(ctx.io);
+export function installHook(ctx: Context, agent: Agent, homeDir?: string): boolean {
+  const file = agent.hooksFile(ctx.io, homeDir);
   const handler = hookHandler(ctx, agent);
-  if (agent.hookKind !== 'json') {
+  if (agent.hookKind === 'pi-extension' || agent.hookKind === 'opencode-plugin') {
     const written = writeOwned((ctx.config.extensions ??= {}), file, hookFiles[agent.hookKind](handler.command!));
     if (written) ctx.save();
     return written;
   }
   const hooks = (ctx.config.hooks ??= {});
-  writeJson(file, withHook(readJson<Json>(file, {}), handler, hooks[file]), { createMode: 0o600 });
+  const apply = agent.hookKind === 'antigravity-json' ? withAntigravityHook : withHook;
+  writeJson(file, apply(readJson<Json>(file, {}), handler, hooks[file]), { createMode: 0o600 });
   hooks[file] = handler;
   ctx.save();
   return true;
@@ -211,7 +250,7 @@ export function uninstallHooks(ctx: Context): { removed: string[]; kept: string[
   for (const [file, handler] of Object.entries(ctx.config.hooks ?? {})) {
     const settings = readJson<Json | null>(file, null);
     if (!settings) continue;
-    const next = withoutHook(settings, handler);
+    const next = withoutAntigravityHook(withoutHook(settings, handler), handler);
     if (JSON.stringify(next) === JSON.stringify(settings)) continue;
     writeJson(file, next);
     removed.push(file);

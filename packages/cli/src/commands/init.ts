@@ -1,8 +1,9 @@
+import { existsSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type { ContractClient, DeviceAuthorization, MachineOs, Target } from '@agentsync/contract';
 import { referencedVariables } from '@agentsync/template';
 import { ORPCError } from '@orpc/client';
-import { AGENTS, type Agent, detectAgents, findAgent, targetFor } from '../agents.js';
+import { AGENTS, type Agent, agentInstances, detectClaudeHomes, findAgent, targetFor } from '../agents.js';
 import { connect, normaliseServer } from '../client.js';
 import type { PendingLogin } from '../config.js';
 import type { Context, Outcome } from '../context.js';
@@ -24,16 +25,27 @@ export function machineOs(platform: NodeJS.Platform): MachineOs {
 }
 
 /**
- * The Targets to register: `--agent`/`--target` if given, otherwise the detected agents. At a
- * terminal, a person picks among the known agents, with the detected ones already selected.
+ * The Targets to register: `--agent`/`--target` if given, otherwise the detected agents (including
+ * every detected Claude Code instance). At a terminal, a person picks among the known agents, with
+ * the detected ones already selected.
  */
 async function chooseTargets(ctx: Context): Promise<Target[]> {
   const { flags, io } = ctx;
   const targets: Target[] = [];
+  const addTarget = (target: Target) => {
+    if (!targets.some((existing) => existing.path === target.path)) targets.push(target);
+  };
   for (const id of flags.agent) {
     const agent = findAgent(id);
     if (!agent) throw usage(`Unknown agent "${id}". Known agents: ${AGENTS.map((a) => a.id).join(', ')}. Use --target for others.`);
-    targets.push(targetFor(agent, io));
+    if (agent.id === 'claude') {
+      const homes = detectClaudeHomes(io);
+      if (homes.length) for (const dir of homes) addTarget(targetFor(agent, io, dir));
+      else addTarget(targetFor(agent, io));
+      if (io.env.CLAUDE_CONFIG_DIR?.trim() && !existsSync(agent.home(io))) addTarget(targetFor(agent, io));
+    } else {
+      addTarget(targetFor(agent, io));
+    }
   }
   for (const value of flags.target) {
     const match = /^([a-z][a-z0-9-]*)=(.+)$/.exec(value);
@@ -41,22 +53,55 @@ async function chooseTargets(ctx: Context): Promise<Target[]> {
     const path = expandHome(match[2]!, io);
     // Hooks run in whatever project the agent opens, so a relative path would mean a different file each time.
     if (!isAbsolute(path)) throw usage(`--target paths must be absolute or start with ~/, not "${match[2]}".`);
-    targets.push({ agent: match[1]!, path: tildify(path, io) });
+    addTarget({ agent: match[1]!, path: tildify(path, io) });
   }
   if (!flags.agent.length && !flags.target.length) {
-    const detected = detectAgents(io).map((agent) => agent.id);
+    const entries: { value: string; label: string; hint: string; target: Target; detected: boolean }[] = [];
+    for (const agent of AGENTS) {
+      if (agent.id === 'claude') {
+        const homes = detectClaudeHomes(io);
+        if (!homes.length) {
+          entries.push({
+            value: agent.id,
+            label: agent.name,
+            hint: `${tildify(agent.instructions(io), io)}, not found here`,
+            target: targetFor(agent, io),
+            detected: false,
+          });
+        } else {
+          homes.forEach((dir, index) => {
+            const dirLabel = tildify(dir, io);
+            entries.push({
+              value: index === 0 ? agent.id : `claude:${dirLabel}`,
+              label: index === 0 && dirLabel === '~/.claude' ? agent.name : `${agent.name} (${dirLabel})`,
+              hint: tildify(agent.instructions(io, dir), io),
+              target: targetFor(agent, io, dir),
+              detected: true,
+            });
+          });
+        }
+      } else {
+        const found = agent.detect(io);
+        entries.push({
+          value: agent.id,
+          label: agent.name,
+          hint: `${tildify(agent.instructions(io), io)}${found ? '' : ', not found here'}`,
+          target: targetFor(agent, io),
+          detected: found,
+        });
+      }
+    }
+    const detected = entries.filter((entry) => entry.detected).map((entry) => entry.value);
     const picked = ctx.canAsk
       ? await ctx.multiselect(
           'Which agents should AgentSync keep in sync?',
-          AGENTS.map((agent) => ({
-            value: agent.id,
-            label: agent.name,
-            hint: `${tildify(agent.instructions(io), io)}${detected.includes(agent.id) ? '' : ', not found here'}`,
-          })),
+          entries.map(({ value, label, hint }) => ({ value, label, hint })),
           detected,
         )
       : detected;
-    targets.push(...AGENTS.filter((agent) => picked.includes(agent.id)).map((agent) => targetFor(agent, io)));
+    for (const entry of entries) {
+      if (picked.includes(entry.value)) addTarget(entry.target);
+    }
   }
   if (!targets.length) {
     const flags = AGENTS.map((agent) => `--agent ${agent.id}`).join(', ');
@@ -244,17 +289,16 @@ export async function init(ctx: Context): Promise<Outcome> {
   const imported = revision === 0 ? await importExisting(ctx, client, machine.targets) : undefined;
   if (ctx.canAsk) await askForVariables(ctx, client, machineId);
 
-  const agents = [...new Set(machine.targets.map((target) => findAgent(target.agent)))].filter(
-    (agent): agent is Agent => !!agent,
-  );
+  const instances = agentInstances(machine.targets, ctx.io);
+  const agents = [...new Set(instances.map(({ agent }) => agent))];
   const hooks: string[] = [];
   const hooksLeftAlone: string[] = [];
   const skills: string[] = [];
   const skillsLeftAlone: string[] = [];
-  for (const agent of agents) {
+  for (const { agent, homeDir } of instances) {
     if (ctx.flags.hooks) {
-      const file = tildify(agent.hooksFile(ctx.io), ctx.io);
-      if (installHook(ctx, agent)) {
+      const file = tildify(agent.hooksFile(ctx.io, homeDir), ctx.io);
+      if (installHook(ctx, agent, homeDir)) {
         hooks.push(file);
         ctx.detail(`Installed the ${agent.name} hook in ${file}.`);
       } else {
@@ -262,7 +306,7 @@ export async function init(ctx: Context): Promise<Outcome> {
       }
     }
     if (ctx.flags.skill) {
-      for (const { file, written } of installSkills(ctx, agent)) {
+      for (const { file, written } of installSkills(ctx, agent, homeDir)) {
         const list = written ? skills : skillsLeftAlone;
         if (!list.includes(tildify(file, ctx.io))) list.push(tildify(file, ctx.io));
       }

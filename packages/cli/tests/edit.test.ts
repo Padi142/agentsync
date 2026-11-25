@@ -94,6 +94,19 @@ describe('edit', () => {
       const [conflict] = t.server.state.conflicts;
       expect(t.launched).toMatchObject([{ agent: 'codex', args: [expect.stringContaining(conflict!.id)] }]);
     });
+
+    it('launches Antigravity via agy --prompt-interactive on hand-off', async () => {
+      const t = conflicted();
+      t.answer('agent', 'antigravity');
+
+      const result = await t.cli('edit');
+
+      expect(result.code).toBe(4);
+      const [conflict] = t.server.state.conflicts;
+      expect(t.launched).toMatchObject([
+        { agent: 'agy', args: ['--prompt-interactive', expect.stringContaining(conflict!.id)] },
+      ]);
+    });
   });
 
   describe('with --file', () => {
